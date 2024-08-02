@@ -231,7 +231,7 @@ function create_core_config()
     config["simulation"]["start-date"] = "01-01-2020"
     config["simulation"]["end-date"]   = "02-15-2020"
     config["simulation"]["save_full_output"] = true
-    config["simulation"]["save_time_step"] = nothing
+    config["simulation"]["export_compartments_time_t"] = nothing
     config["simulation"]["output_folder"] = "output"
     config["simulation"]["output_format"] = "netcdf"
     

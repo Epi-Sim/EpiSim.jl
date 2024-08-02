@@ -24,7 +24,7 @@ function run_MMCACovid19Vac(config::Dict, data_path::String, instance_path::Stri
 
     output_format    = simulation_dict["output_format"]
     save_full_output = get(simulation_dict, "save_full_output", false)
-    save_time_step   = get(simulation_dict, "save_time_step", nothing)
+    save_time_step   = get(simulation_dict, "export_compartments_time_t", nothing)
     init_format      = get(simulation_dict, "init_format", "netcdf")
 
     #####################
