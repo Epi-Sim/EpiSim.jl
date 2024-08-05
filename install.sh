@@ -31,11 +31,11 @@ if in_hpc_bsc; then
     srun --unbuffered \
         -t 00:30:00 \
         -A $ACCOUNT \
-        --qos gp_bscls \
+        --qos gp_debug \
         -c 4 -n 1 \
         --output=install_log.txt \
         --error=install_log.txt \
-        julia install.jl -c
+        bash -c "module load julia && julia install.jl -c" &
 
     # Wait for the log file to be created
     while [ ! -f install_log.txt ]; do
@@ -44,6 +44,7 @@ if in_hpc_bsc; then
 
     # Read from the log file
     tail -f install_log.txt
+    wait
 else
-    julia +1.10.0 install.jl -c
+    julia install.jl -c
 fi
