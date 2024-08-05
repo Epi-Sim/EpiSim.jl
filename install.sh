@@ -11,7 +11,7 @@ MMCACovid19Vac="https://github.com/Epi-Sim/MMCACovid19Vac.jl"
 
 if ! in_hpc_bsc || in_hpc_wifi; then
     echo "Installing MMCACovid19Vac package..."
-    if julia +1.10.0 --project=${PROJDIR} -e "using Pkg; Pkg.add(url=\"${MMCACovid19Vac}\"); Pkg.instantiate(); Pkg.precompile()"; then
+    if julia --project=${PROJDIR} -e "using Pkg; Pkg.add(url=\"${MMCACovid19Vac}\"); Pkg.instantiate(); Pkg.precompile()"; then
         echo "Engine installed successfully."
     else
         echo "Engine installation failed. Please check the error messages above."
