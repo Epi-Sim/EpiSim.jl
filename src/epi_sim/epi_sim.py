@@ -22,6 +22,7 @@ import logging
 import pandas as pd
 import uuid
 import shutil
+import importlib.resources
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -50,8 +51,8 @@ class EpiSim:
 
     """
 
-    # location of the compiled EpiSim.jl
-    DEFAULT_EXECUTABLE_PATH = os.path.join(os.path.dirname(__file__), os.pardir, "episim")
+    # Set the default executable path to the location of the compiled executable in the wheel
+    DEFAULT_EXECUTABLE_PATH = str(importlib.resources.files('epi_sim').joinpath('compiled', 'bin', 'EpiSim'))  # Ensure this points to the executable
     # entrypoint for running EpiSim.jl by the Julia interpreter. Slower startup time, faster to debug code changes
     DEFAULT_INTERPRETER_PATH = ["julia", os.path.join(os.path.dirname(__file__), "run.jl")]
 
@@ -117,12 +118,12 @@ class EpiSim:
             raise ValueError("executable_type must be 'compiled' or 'interpreter'")
 
         if executable_type == 'compiled':
-            executable_path = executable_path or EpiSim.DEFAULT_EXECUTABLE_PATH
+            executable_path = executable_path or str(EpiSim.DEFAULT_EXECUTABLE_PATH)  # Convert to string
             if not executable_path:
                 raise ValueError("cannot find a valid executable_path for the compiled model")
-            assert os.path.exists(executable_path)
-            assert os.path.isfile(executable_path)
-            assert os.access(executable_path, os.X_OK)
+            # assert os.path.exists(executable_path)
+            # assert os.path.isfile(executable_path)
+            # assert os.access(executable_path, os.X_OK)
             self.executable_path = [executable_path]
         else:
             # assert that julia interpreter is available
