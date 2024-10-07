@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "epi_sim"
+version = "0.1.0"
+description = "A wrapper for EpiSim.jl"
+authors = [
+    { name = "Lewis Knox", email = "lknoxstr@bsc.es" }
+]
+license = { text = "MIT" }
+readme = "README.md"
+
+packages = [
+    { include = "epi_sim", from = "src" },
+]
+
+dependencies = [
+    "pandas",
+]
+
+[tool.hatch.build.targets.sdist]
+exclude = ["*"]
+
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "pre_build.py"
+
+[tool.hatch.build.targets.wheel.force-include]
+"episim_build" = "epi_sim/compiled"
