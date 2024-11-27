@@ -25,8 +25,8 @@ end
 
 args = parse_commandline()
 if args["compile"]
-    build_folder = "build"
-    create_app(pwd(), build_folder, force=true)
+    build_folder = "episim_build"
+    create_app(pwd(), build_folder, force=true, incremental=true)
     bin_path = abspath(joinpath(build_folder, "bin", "EpiSim"))
     symlink_path = joinpath(args["target"], "episim")
     if !islink(symlink_path)
