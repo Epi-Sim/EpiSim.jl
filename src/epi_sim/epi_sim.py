@@ -23,6 +23,7 @@ import pandas as pd
 import uuid
 import shutil
 import importlib.resources
+from typing import Self
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -52,9 +53,9 @@ class EpiSim:
     """
 
     # Set the default executable path to the location of the compiled executable in the wheel
-    DEFAULT_EXECUTABLE_PATH = str(importlib.resources.files('epi_sim').joinpath('compiled', 'bin', 'EpiSim'))  # Ensure this points to the executable
+    DEFAULT_EXECUTABLE_PATH = str(importlib.resources.files('epi_sim').joinpath('episim_build', 'bin', 'EpiSim'))  # Ensure this points to the executable
     # entrypoint for running EpiSim.jl by the Julia interpreter. Slower startup time, faster to debug code changes
-    DEFAULT_INTERPRETER_PATH = ["julia", os.path.join(os.path.dirname(__file__), "run.jl")]
+    DEFAULT_INTERPRETER_PATH = ["julia", os.path.join(os.path.dirname(os.path.dirname(__file__)), "run.jl")]
 
     DEFAULT_BACKEND_ENGINE = 'MMCACovid19Vac'
     BACKEND_ENGINES = [
@@ -103,7 +104,7 @@ class EpiSim:
 
         logger.info(f"Model wrapper init complete. UUID: {self.uuid}")
 
-    def setup(self, executable_type='interpreter', executable_path=None):
+    def setup(self, executable_type='interpreter', executable_path=None) -> Self:
         """
         Set up the execution environment for EpiSim.
 
@@ -121,9 +122,9 @@ class EpiSim:
             executable_path = executable_path or str(EpiSim.DEFAULT_EXECUTABLE_PATH)  # Convert to string
             if not executable_path:
                 raise ValueError("cannot find a valid executable_path for the compiled model")
-            # assert os.path.exists(executable_path)
-            # assert os.path.isfile(executable_path)
-            # assert os.access(executable_path, os.X_OK)
+            assert os.path.exists(executable_path)
+            assert os.path.isfile(executable_path)
+            assert os.access(executable_path, os.X_OK)
             self.executable_path = [executable_path]
         else:
             # assert that julia interpreter is available
@@ -139,7 +140,7 @@ class EpiSim:
         if not self.setup_complete:
             raise RuntimeError("EpiSim not set up. Call setup() first.")
 
-    def step(self, start_date, length_days):
+    def step(self, start_date, length_days=7):
         """
         Run the model for a given number of days starting from a given start date.
 
@@ -159,10 +160,11 @@ class EpiSim:
 
         logger.debug(f"Running model from {start_date} to {end_date}")
         self.run_model(
-            length_days=length_days,
-            start_date=start_date,
-            end_date=end_date,
-            model_state=self.model_state,
+            override_config=dict(
+                start_date=start_date,
+                end_date=end_date,
+            ),
+            override_model_state=self.model_state,
         )
 
         self.model_state = self.model_state_filename(end_date)
@@ -178,7 +180,6 @@ class EpiSim:
         Run the compiled model for a specific time period.
 
         Args:
-            length_days (int): Number of days to simulate.
             start_date (str): Start date for the simulation (format: 'YYYY-MM-DD').
             end_date (str): End date for the simulation (format: 'YYYY-MM-DD').
             model_state (str, optional): Path to the initial model state file.
@@ -198,15 +199,15 @@ class EpiSim:
         cmd.extend(["--instance-folder", self.model_state_folder])
 
         if override_model_state:
-            cmd.extend(["--initial-conditions", override_model_state])
+            cmd.extend(["--initial-condition", override_model_state])
 
         if override_config and isinstance(override_config, dict):
-            if override_config['save_time_step']:
+            if override_config.get('save_time_step'):
                 # save the model state at a specific time step
                 cmd.extend(["--export-compartments-time-t", str(override_config['save_time_step'])])
-            if override_config['start_date']:
+            if override_config.get('start_date'):
                 cmd.extend(["--start-date", override_config['start_date']])
-            if override_config['end_date']:
+            if override_config.get('end_date'):
                 cmd.extend(["--end-date", override_config['end_date']])
 
         cmdstr = " ".join(cmd)
@@ -320,26 +321,25 @@ def run_model_example():
 
 def agent_flow_example():
     "Run steps and update the policy"
-    executable_path = os.path.join(pardir(), "episim")
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+    model_config_folder = os.path.join(project_root, "models/mitma")
 
-    initial_conditions = os.path.join(pardir(), "models/mitma/initial_conditions.nc")
+    executable_path = os.path.join(project_root, "episim")
+
+    config_path = os.path.join(model_config_folder, "config.json")
+    initial_conditions = os.path.join(model_config_folder, "initial_conditions.nc")
 
     # read the config file sample to dict
-    with open(os.path.join(pardir(), "models/mitma/config.json"), 'r') as f:
+    with open(config_path, 'r') as f:
         config = json.load(f)
 
-    data_folder = os.path.join(pardir(), "models/mitma")
-    instance_folder = os.path.join(pardir(), "runs")
+    instance_folder = os.path.join(project_root, "runs")
 
-    model = EpiSim(
-        config, data_folder, instance_folder, initial_conditions
+    model = (
+        EpiSim(config, model_config_folder, instance_folder, initial_conditions)
+        # .setup(executable_type='compiled', executable_path=executable_path)
+        .setup(executable_type='interpreter')
     )
-    
-    # Set up with compiled executable
-    # model.setup(executable_type='compiled', executable_path=os.path.join(pardir(), "episim"))
-    
-    # Or set up with Julia interpreter
-    model.setup(executable_type='interpreter', executable_path=os.path.join(pardir(), "run.jl"))
 
     logger.debug("debug Model wrapper init complete")
 
