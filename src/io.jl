@@ -180,7 +180,7 @@ function _save_full(engine::MMCACovid19Engine,
         @error "Error saving simulation output" exception=(e, catch_backtrace())
         rethrow(e)
     end
-    @info "done saving ??"
+    @info "- Done saving"
 
 end
 
@@ -220,7 +220,7 @@ function _save_full(engine::MMCACovid19Engine,
     output_path::String, ::HDF5Format; kwargs...)
     
     filename = joinpath(output_path, "compartments_full.h5")
-    @info "Storing full simulation output in HDF5: $filename"
+    @info "- Storing full simulation output in HDF5: $filename"
     compartments = create_compartments_array(engine, epi_params, population)
 
     isfile(filename) && rm(filename)
@@ -255,7 +255,7 @@ function save_observables(engine::MMCACovid19Engine,
     G_coords=String[], M_coords=String[], T_coords=String[])
 
     filename = joinpath(output_path, "observables.nc")
-    @info "Storing simulation observables output in NetCDF: $filename"
+    @info "- Storing simulation observables output in NetCDF: $filename"
     try
         G = population.G
         M = population.M
@@ -302,5 +302,5 @@ function save_observables(engine::MMCACovid19Engine,
         @error "Error saving simulation observables" exception=(e, catch_backtrace())
         rethrow(e)
     end
-    @info "done saving ??"
+    @info "Done saving"
 end

@@ -22,3 +22,4 @@ Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 
 [compat]
 MMCACovid19Vac = "0.1.1"
+MMCAcovid19 = "0.1.4"
