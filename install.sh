@@ -7,11 +7,13 @@ PROJDIR=$(dirname $0)
 
 source hpc_utils.sh
 
+MMCACovid19="https://github.com/Epi-Sim/MMCAcovid19.jl"
 MMCACovid19Vac="https://github.com/Epi-Sim/MMCACovid19Vac.jl"
+JULIA_CMD_LINE="using Pkg; Pkg.add([PackageSpec(url=\"${MMCACovid19}\"), PackageSpec(url=\"${MMCACovid19Vac}\")]); Pkg.instantiate(); Pkg.precompile()"
 
 if ! in_hpc_bsc || in_hpc_wifi; then
     echo "Installing MMCACovid19Vac package..."
-    if julia --project=${PROJDIR} -e "using Pkg; Pkg.add(url=\"${MMCACovid19Vac}\"); Pkg.instantiate(); Pkg.precompile()"; then
+    if julia --project=${PROJDIR} -e "${JULIA_CMD_LINE}"; then
         echo "Engine installed successfully."
     else
         echo "Engine installation failed. Please check the error messages above."
