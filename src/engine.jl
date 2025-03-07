@@ -36,7 +36,6 @@ function read_input_files(::AbstractEngine, config::Dict, data_path::String, ins
     simulation_dict = config["simulation"]
     pop_params_dict = config["population_params"]
     npi_params_dict = config["NPI"]
-    init_format      = get(simulation_dict, "init_format", "netcdf")
 
     #########################
     # Simulation output 
@@ -66,18 +65,12 @@ function read_input_files(::AbstractEngine, config::Dict, data_path::String, ins
     end
 
     # use initial compartments matrix to initialize simulations
-    if init_format == "netcdf"
-        @info "Reading initial conditions from: $(init_condition_path)"
-        initial_compartments = ncread(init_condition_path, "data")
-    elseif init_format == "hdf5"
-        # TODO: does this path work?
-        initial_compartments = h5open(init_condition_path, "r") do file
-            read(file, "data")
-        end
-    else
-        @error "init_format must be one of : netcdf/hdf5"
-        return 1
-    end
+    @info "Reading initial conditions from: $(init_condition_path)"
+    initial_compartments = NCDataset(init_condition_path)["data"]
+    @info "Initial compartments shape", dimsize(initial_compartments)
+
+    # check the order of the epi states for later
+    # NCDatasets(init_condition_path)["epi_states"][:]
 
     # Loading mobility network
     mobility_matrix_filename = joinpath(data_path, data_dict["mobility_matrix_filename"])
@@ -114,7 +107,19 @@ function run_engine_io(engine::AbstractEngine, config::Dict, data_path::String, 
 
     npi_params, network_df, metapop_df, initial_compartments = read_input_files(engine, config, data_path, instance_path, init_condition_path)
 
-    epi_params, population, coords = run_engine(engine, config, npi_params, network_df, metapop_df, initial_compartments)
+    if engine == MMCACovid19VacEngine()
+        @assert "V" in dimnames(initial_compartments)
+        epi_params, population, coords = run_engine(engine, config, npi_params, network_df, metapop_df, Array{Float64, 4}(initial_compartments))
+    elseif engine == MMCACovid19Engine()
+        if "V" in dimnames(initial_compartments)
+            @warn "Vaccination dimension found in initial conditions but engine does not support it. Dropping vaccination dimension."
+            # sum across vaccination states
+            initial_compartments = dropdims(sum(initial_compartments, dims=3), dims=3)
+        end
+        epi_params, population, coords = run_engine(engine, config, npi_params, network_df, metapop_df, Array{Float64, 3}(initial_compartments))
+    else
+        @error "Unsupported engine: $engine"
+    end
 
     @info "\t- Save full output = $(save_full_output)" 
     if save_full_output
@@ -216,7 +221,9 @@ function run_engine(engine::MMCACovid19VacEngine, config::Dict, npi_params::NPI_
     ########################################################
 
     MMCACovid19Vac.set_compartments!(epi_params, population, initial_compartments)
+    MMCACovid19Vac.set_compartments!(epi_params, population, initial_compartments)
 
+    MMCACovid19Vac.run_epidemic_spreading_mmca!(epi_params, population, npi_params, tᵛs, ϵᵍs; verbose = true )
     MMCACovid19Vac.run_epidemic_spreading_mmca!(epi_params, population, npi_params, tᵛs, ϵᵍs; verbose = true )
 
     return epi_params, population, Dict(:T_coords => T_coords, :G_coords => G_coords, :M_coords => M_coords)
@@ -237,35 +244,31 @@ function run_engine(engine::MMCACovid19Engine, config::Dict, npi_params::NPI_Par
     ###########################################
     
     simulation_dict = config["simulation"]
-    data_dict       = config["data"]
     epi_params_dict = config["epidemic_params"]
     pop_params_dict = config["population_params"]
-    npi_params_dict = config["NPI"]
 
     ########################################
     ####### VARIABLES INITIALIZATION #######
     ########################################
     @info "Initializing variables"
+    @info "Initializing variables"
 
     # Reading simulation start and end dates
     first_day = Date(simulation_dict["start_date"])
     last_day  = Date(simulation_dict["end_date"])
-    # Converting dates to time steps
     T = (last_day - first_day).value + 1
-    # Array with time coordinates (dates)
     T_coords  = string.(collect(first_day:last_day))
 
-    # Metapopulations patches coordinates (labels)
-    M_coords = map(String,metapop_df[:, "id"])
+    M_coords = map(String, metapop_df[:, "id"])
     M = length(M_coords)
 
-    # Coordinates for each age strata (labels)
     G_coords = map(String, pop_params_dict["G_labels"])
     G = length(G_coords)
 
     ####################################################
     #####   INITIALIZATION OF DATA Structures   ########
     ####################################################
+    @info "Initializing data structures"
     @info "Initializing data structures"
 
 
