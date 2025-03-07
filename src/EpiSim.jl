@@ -34,7 +34,7 @@ function julia_main()::Cint
         elseif command == "setup"
             execute_setup(args["setup"], engine)
         elseif command == "init"
-            execute_init(args["init"])
+            execute_init(args["init"], engine)
         end
         @info "done in main"
 
