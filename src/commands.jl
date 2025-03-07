@@ -145,7 +145,7 @@ function execute_setup(args)
 
 end
 
-function execute_init(args)
+function execute_init(args, engine)
     config_fname  = args["config"]
     data_path   = args["data-folder"]
     output_fname = args["output"]
