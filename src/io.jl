@@ -43,14 +43,14 @@ function _save_full(engine::MMCACovid19VacEngine,
     
     
     filename = joinpath(output_path, "compartments_full.nc")
-    @info "Storing full simulation output in NetCDF: $filename"
+    @info "- Storing full simulation output in NetCDF: $filename"
     try
         MMCACovid19Vac.save_simulation_netCDF(epi_params, population, filename; G_coords, M_coords, T_coords)
     catch e
         @error "Error saving simulation output" exception=(e, catch_backtrace())
         rethrow(e)
     end
-    @info "done saving ??"
+    @info "- Done saving"
 end
 
 function _save_full(engine::MMCACovid19VacEngine, 

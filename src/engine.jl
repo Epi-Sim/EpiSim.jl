@@ -264,7 +264,7 @@ function init_population_struct(engine::MMCACovid19Engine, G::Int, M::Int,
     σ = pop_params_dict["σ"]
 
     edgelist = Array{Int64, 2}(network_df[:, 1:2])
-    Rᵢⱼ      = copy(network_df[:, 3])
+    Rᵢⱼ      = Array{Float64,1}(network_df[:, 3])
     edgelist, Rᵢⱼ = correct_self_loops(edgelist, Rᵢⱼ, M)
     
     population = MMCAcovid19.Population_Params(G, M, nᵢᵍ, kᵍ, kᵍ_h, kᵍ_w, C, pᵍ, edgelist, Rᵢⱼ, sᵢ, ξ, σ)
