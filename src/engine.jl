@@ -13,6 +13,16 @@ function get_engine(engine_name::String)
     return engine_type()
 end
 
+function validate_config(config)
+    @assert haskey(config, "simulation")
+    simulation_dict = config["simulation"]
+    @assert haskey(simulation_dict, "engine")
+    engine_name = simulation_dict["engine"]
+    engine = get_engine(engine_name)
+    validate_config(config, engine)
+    return engine
+end
+
 function validate_config(config, ::MMCACovid19VacEngine)
     @assert haskey(config, "simulation")
     @assert haskey(config, "data")
