@@ -123,133 +123,8 @@ function run_engine_io(engine::AbstractEngine, config::Dict, data_path::String, 
         mkpath(output_path)
     end
 
-    npi_params, network_df, metapop_df, initial_compartments = read_input_files(engine, config, data_path, instance_path, init_condition_path)
-    @info "Running simulation using: $(engine)"
-    epi_params, population, coords = run_engine(engine, config, npi_params, network_df, metapop_df, initial_compartments)
-
-    @info "\t- Save full output = $(save_full_output)" 
-    if save_full_output
-        save_full(engine, epi_params, population, output_path, output_format; coords...)
-    end
-    if save_obs_output
-        save_observables(engine, epi_params, population, output_path; coords...)
-    end
-    if time_step_tosave !== nothing
-        export_date = first_day + Day(time_step_tosave - 1)
-        if  time_step_tosave <= epi_params.T
-            @info "Storing compartments at single date $(export_date):"
-            @info "\t- Simulation step: $(time_step_tosave)"
-            save_time_step(engine, epi_params, population, output_path, time_step_tosave, export_date)
-        else
-            @error "Can't save simulation step ($(time_step_tosave)) larget then the last time step ($(params.T))"
-        end
-    end
-
-    @info "done running engine io"
-end
-
-"""
-Run the engine using Julia data structures as inputs. Does not save the output to file.
-
-TODO: decouple from MMCACovid19Vac.jl (NPI_Params)
-"""
-function run_engine(engine::MMCACovid19VacEngine, config::Dict, 
-                    npi_params::NPI_Params, network_df::DataFrame, 
-                    metapop_df::DataFrame, initial_compartments::Array{Float64, 4})
     
-    simulation_dict = config["simulation"]
-    epi_params_dict = config["epidemic_params"]
-    pop_params_dict = config["population_params"]
-    vac_params_dict = config["vaccination"]
-
-    ########################################
-    ####### VARIABLES INITIALIZATION #######
-    ########################################
-    @info "Initializing variables"
-
-    # Reading simulation start and end dates
-    first_day = Date(simulation_dict["start_date"])
-    last_day  = Date(simulation_dict["end_date"])
-    # Converting dates to time steps
-    T = (last_day - first_day).value + 1
-    # Array with time coordinates (dates)
-    T_coords  = string.(collect(first_day:last_day))
-
-    # Metapopulations patches coordinates (labels)
-    M_coords = map(String,metapop_df[:, "id"])
-    M = length(M_coords)
-
-    # Coordinates for each age strata (labels)
-    G_coords = map(String, pop_params_dict["G_labels"])
-    G = length(G_coords)
-
-    ####################################################
-    #####   INITIALIZATION OF DATA Structures   ########
-    ####################################################
-    @info "Initializing data structures"
-
-    ## POPULATION PARAMETERS
-    population = MMCACovid19Vac.init_pop_param_struct(G, M, G_coords, pop_params_dict, metapop_df, network_df)
-    ## EPIDEMIC PARAMETERS 
-    epi_params = MMCACovid19Vac.init_epi_parameters_struct(G, M, T, G_coords, epi_params_dict)
-
-    @assert size(initial_compartments) == (G, M, epi_params.V, epi_params.NumComps)
-
-
-    #########################################################
-    # Vaccination parameters
-    #########################################################
-    @info "Initializing vaccination parameters"
-
-    # vaccionation dates
-    start_vacc = vac_params_dict["start_vacc"]
-    dur_vacc   = vac_params_dict["dur_vacc"]
-    end_vacc   = start_vacc + dur_vacc
-
-    # total vaccinations per age strata
-    total_population = sum(population.nᵢᵍ)
-    ϵᵍ = vac_params_dict["ϵᵍ"] * round( total_population * vac_params_dict["percentage_of_vacc_per_day"] )
-    tᵛs = [start_vacc, end_vacc, T]
-    ϵᵍs = ϵᵍ .* [0  Int(vac_params_dict["are_there_vaccines"])  0] 
-
-    ##################################################
-
-    @info "- Initializing MMCA epidemic simulations for engine $(engine)"
-    @info "\t- N. of epi compartments = $(epi_params.NumComps)" 
-    @info "\t- G (agent class) = $(G)"
-    @info "\t- M (n. of metapopulations) = $(M)"
-    @info "\t- T (simulation steps) = $(T)"
-    @info "\t- V (vaccination states) = $(epi_params.V)"
-    @info "\t- first_day_simulation = $(first_day)"  
-    @info "\t- last_day_simulation = $(last_day)"
-
-
-    ########################################################
-    ################ RUN THE SIMULATION ####################
-    ########################################################
-
-    MMCACovid19Vac.set_compartments!(epi_params, population, initial_compartments)
-
-    MMCACovid19Vac.run_epidemic_spreading_mmca!(epi_params, population, npi_params, tᵛs, ϵᵍs; verbose = true )
-
-    return epi_params, population, Dict(:T_coords => T_coords, :G_coords => G_coords, :M_coords => M_coords)
-end
-
-
-function run_engine(engine::MMCACovid19Engine, config::Dict, 
-                    npi_params::NPI_Params, network_df::DataFrame, 
-                    metapop_df::DataFrame, initial_compartments::Array{Float64, 3})
-    
-    n_compartments = 10
-
-    @info "Running MMCACovid19Engine"
-    simulation_dict = config["simulation"]
-    epi_params_dict = config["epidemic_params"]
-    pop_params_dict = config["population_params"]
-
-    ###########################################
-    ############# FILE READING ################
-    ###########################################
+    @info "Running EpiSim.jl using: $(engine)"
     
     simulation_dict = config["simulation"]
     data_dict       = config["data"]
@@ -257,10 +132,16 @@ function run_engine(engine::MMCACovid19Engine, config::Dict,
     pop_params_dict = config["population_params"]
     npi_params_dict = config["NPI"]
 
+    ###########################################
+    ############# FILE READING ################
+    ###########################################
+    @info "- Loading data from files"
+    npi_params, network_df, metapop_df, initial_compartments = read_input_files(engine, config, data_path, instance_path, init_condition_path)
+
     ########################################
     ####### VARIABLES INITIALIZATION #######
     ########################################
-    @info "Initializing variables"
+    @info "- Initializing variables"
 
     # Reading simulation start and end dates
     first_day = Date(simulation_dict["start_date"])
@@ -271,28 +152,102 @@ function run_engine(engine::MMCACovid19Engine, config::Dict,
     T_coords  = string.(collect(first_day:last_day))
 
     # Metapopulations patches coordinates (labels)
-    M_coords = map(String,metapop_df[:, "id"])
+    M_coords = map(String, metapop_df[:, "id"])
     M = length(M_coords)
 
     # Coordinates for each age strata (labels)
     G_coords = map(String, pop_params_dict["G_labels"])
     G = length(G_coords)
 
+    coords = Dict(:T_coords => T_coords, :G_coords => G_coords, :M_coords => M_coords)
+
     ####################################################
     #####   INITIALIZATION OF DATA Structures   ########
     ####################################################
-    @info "Initializing data structures"
+    @info "- Initializing data structures"
 
+    population = init_population_struct(engine, G, M, G_coords, pop_params_dict, network_df, metapop_df)
+    epi_params = init_epidemic_parameters_struct(engine, G, M, T, G_coords, epi_params_dict)
 
-    #######################################################
-    ## POPULATION PARAMETERS
-    #######################################################
+    vac_params_dict = get(config, "vaccination", nothing)
+
+    set_compartments!(engine, epi_params, population, initial_compartments)
+
+    @info "- Initializing MMCA epidemic simulations for engine $(engine)"
+    @info "\t* N. of epi compartments = 10" 
+    @info "\t* G (agent class) = $(G)"
+    @info "\t* M (n. of metapopulations) = $(M)"
+    @info "\t* T (simulation steps) = $(T)"
+    @info "\t* first_day_simulation = $(first_day)"
+    @info "\t* last_day_simulation = $(last_day)"
+    @info "\t* output_path = $(output_path)"
+ 
+    run_engine!(engine, population, epi_params, npi_params; verbose = false, vac_params_dict = vac_params_dict)
+
+    if save_full_output
+        @info "- Save¡ing full compartments" 
+        save_full(engine, epi_params, population, output_path, output_format; coords...)
+    end
+    if save_obs_output
+        @info "- Saving observables"
+        save_observables(engine, epi_params, population, output_path; coords...)
+    end
+    if time_step_tosave !== nothing
+        export_date = first_day + Day(time_step_tosave - 1)
+        if  time_step_tosave <= epi_params.T
+            @info "- Storing compartments at single date $(export_date):"
+            @info "\t* Simulation step: $(time_step_tosave)"
+            save_time_step(engine, epi_params, population, output_path, time_step_tosave, export_date)
+        else
+            @error "- Can't save simulation step ($(time_step_tosave)) largest then the last time step ($(params.T))"
+        end
+    end
+
+    @info "done running engine io"
+end
+
+"""
+Function to initialize the population parameters structure for the engine MMCACovid19VacEngine
+    Params:
+        engine: MMCACovid19VacEngine
+        G: Int
+        M: Int
+        G_coords: Array{String, 1}
+        pop_params_dict: Dict
+    Returns:    
+        population: MMCACovid19Vac.Population_Params
+"""
+function init_population_struct(engine::MMCACovid19VacEngine, G::Int, M::Int, 
+                                G_coords::Array{String, 1}, pop_params_dict::Dict, 
+                                network_df::DataFrame, metapop_df::DataFrame)
     
+    population = MMCACovid19Vac.init_pop_param_struct(G, M, G_coords, pop_params_dict, metapop_df, network_df)
+    return population
+end
+
+"""
+Funtion to initialize the epidemic parameters structure for the engine MMCACovid19Engine
+    Params:
+        engine: MMCACovid19VacEngine
+        G: Int
+        M: Int
+        T: Int
+        G_coords: Array{String, 1}
+        epi_params_dict: Dict
+    Returns:    
+        epi_params: MMCACovid19.Epidemic_Params
+"""
+function init_population_struct(engine::MMCACovid19Engine, G::Int, M::Int, 
+                                G_coords::Array{String, 1}, pop_params_dict::Dict, 
+                                network_df::DataFrame, metapop_df::DataFrame)
+
     # Subpopulations' patch surface
     sᵢ = metapop_df[:, "area"]
     # Subpopulation by age strata
     nᵢᵍ = copy(transpose(Array{Float64,2}(metapop_df[:, G_coords])))
+    
     nᵢᵍ = round.( nᵢᵍ)
+
     # Age Contact Matrix
     C = Float64.(mapreduce(permutedims, vcat, pop_params_dict["C"]))
     # Average number of contacts per strata
@@ -313,12 +268,44 @@ function run_engine(engine::MMCACovid19Engine, config::Dict,
     edgelist, Rᵢⱼ = correct_self_loops(edgelist, Rᵢⱼ, M)
     
     population = MMCAcovid19.Population_Params(G, M, nᵢᵍ, kᵍ, kᵍ_h, kᵍ_w, C, pᵍ, edgelist, Rᵢⱼ, sᵢ, ξ, σ)
+    
+    return population
+end
 
+"""
+Funtion to initialize the epidemic parameters structure for the engine MMCACovid19VacEngine
+    Params:
+        engine: MMCACovid19VacEngine
+        G: Int
+        M: Int
+        T: Int
+        G_coords: Array{String, 1}
+        epi_params_dict: Dict
+    Returns:    
+        epi_params: MMCACovid19Vac.Epidemic_Params
+"""
+function init_epidemic_parameters_struct(engine::MMCACovid19VacEngine, G::Int, M::Int, T::Int, 
+    G_coords::Array{String, 1}, epi_params_dict::Dict)
 
-    #######################################################
-    ## EPIDEMIC PARAMETERS
-    #######################################################
+    epi_params = MMCACovid19Vac.init_epi_parameters_struct(G, M, T, G_coords, epi_params_dict)
+    return epi_params
+end
 
+"""
+Function to initialize the epidemic parameters structure for the engine MMCACovid19Engine
+    Params:
+        engine: MMCACovid19Engine
+        G: Int
+        M: Int
+        T: Int
+        G_coords: Array{String, 1}
+        epi_params_dict: Dict
+    Returns:    
+        epi_params: MMCAcovid19.Epidemic_Params
+"""
+function init_epidemic_parameters_struct(engine::MMCACovid19Engine, G::Int, M::Int, T::Int, 
+                                         G_coords::Array{String, 1}, epi_params_dict::Dict)
+    
     # Scaling of the asymptomatic infectivity
     scale_β = Float64.(epi_params_dict["scale_β"])
     # Infectivity of Symptomatic
@@ -357,32 +344,39 @@ function run_engine(engine::MMCACovid19Engine, config::Dict,
     kᵥ = Float64.(epi_params_dict["kᵥ"])
 
     epi_params = MMCAcovid19.Epidemic_Params(βᴵ, βᴬ, ηᵍ, αᵍ, μᵍ, θᵍ, γᵍ, ζᵍ, λᵍ, ωᵍ, ψᵍ, χᵍ, G, M, T)
-    
-    @assert size(initial_compartments) == (G, M, n_compartments)
+    return epi_params
+end
 
-    #########################################################
-    # Containment measures
-    #########################################################
+"""
+Function to set the initial compartments for the engine MMCACovid19VacEngine
+    Params:
+        engine: MMCACovid19VacEngine
+        epi_params: MMCACovid19Vac.Epidemic_Params
+        population: MMCACovid19Vac.Population_Params
+        initial_compartments: Array{Float64, 4}
+"""
+function set_compartments!(engine::MMCACovid19VacEngine, epi_params::MMCACovid19Vac.Epidemic_Params, 
+                          population::MMCACovid19Vac.Population_Params, initial_compartments::Array{Float64, 4})
 
-    # Timesteps when the containment measures will be applied
-    tᶜs = npi_params.tᶜs
-    # Array of level of confinement
-    κ₀s = npi_params.κ₀s
-    # Array of premeabilities of confined households
-    ϕs = npi_params.ϕs
-    # Array of social distancing measures
-    δs = npi_params.δs
+    @assert size(initial_compartments) == (population.G, population.M, epi_params.V, epi_params.NumComps)
+    MMCACovid19Vac.set_compartments!(epi_params, population, initial_compartments)
+end
 
-    ##################################################
+"""
+Function to set the initial compartments for the engine MMCACovid19Engine
+    Params:
+        engine: MMCACovid19Engine
+        epi_params: MMCAcovid19.Epidemic_Params
+        population: MMCAcovid19.Population_Params
+        initial_compartments: Array{Float64, 3}
+"""
+function set_compartments!(engine::MMCACovid19Engine, epi_params::MMCAcovid19.Epidemic_Params, 
+                          population::MMCAcovid19.Population_Params, initial_compartments::Array{Float64, 3})
 
-    @info "- Initializing MMCA epidemic simulations for engine $(engine)"
-    @info "\t- N. of epi compartments = $(n_compartments)" 
-    @info "\t- G (agent class) = $(G)"
-    @info "\t- M (n. of metapopulations) = $(M)"
-    @info "\t- T (simulation steps) = $(T)"
-    @info "\t- first_day_simulation = $(first_day)"  
-    @info "\t- last_day_simulation = $(last_day)"
-    
+    n_compartments = 10
+
+    @assert size(initial_compartments) == (population.G, population.M, n_compartments)
+                       
     t₀ = 1
     epi_params.ρˢᵍ[:,:,t₀]  .= initial_compartments[:, :, 1] ./ population.nᵢᵍ
     epi_params.ρᴱᵍ[:,:,t₀]  .= initial_compartments[:, :, 2] ./ population.nᵢᵍ
@@ -406,11 +400,61 @@ function run_engine(engine::MMCACovid19Engine, config::Dict,
     epi_params.ρᴿᵍ[isnan.(epi_params.ρᴿᵍ)]   .= 0
     epi_params.ρᴰᵍ[isnan.(epi_params.ρᴰᵍ)]   .= 0
 
-    ########################################################
-    ################ RUN THE SIMULATION ####################
-    ########################################################
+end
 
-    MMCAcovid19.run_epidemic_spreading_mmca!(epi_params, population, tᶜs, κ₀s, ϕs, δs, verbose=false)
+"""
+Run the engine using Julia data structures as inputs. Does not save the output to file.
+"""
+function run_engine!(engine::MMCACovid19VacEngine, population::MMCACovid19Vac.Population_Params, 
+                     epi_params::MMCACovid19Vac.Epidemic_Params, npi_params::NPI_Params; 
+                     verbose = false, vac_params_dict = nothing)
+    
 
-    return epi_params, population, Dict(:T_coords => T_coords, :G_coords => G_coords, :M_coords => M_coords)
+    #########################################################
+    # Vaccination parameters
+    #########################################################
+    @info "- Initializing vaccination parameters"
+
+    # vaccionation dates
+    start_vacc = vac_params_dict["start_vacc"]
+    dur_vacc   = vac_params_dict["dur_vacc"]
+    end_vacc   = start_vacc + dur_vacc
+
+    # total vaccinations per age strata
+    total_population = sum(population.nᵢᵍ)
+    ϵᵍ = vac_params_dict["ϵᵍ"] * round( total_population * vac_params_dict["percentage_of_vacc_per_day"] )
+    tᵛs = [start_vacc, end_vacc, epi_params.T]
+    ϵᵍs = ϵᵍ .* [0  Int(vac_params_dict["are_there_vaccines"])  0]
+
+    @info "\t* start_vaccination = $(start_vacc)"
+    @info "\t* end_vaccination = $(end_vacc)"
+
+    ########################################################
+    ##               RUN THE SIMULATION                    #
+    ########################################################
+    MMCACovid19Vac.run_epidemic_spreading_mmca!(epi_params, population, npi_params, tᵛs, ϵᵍs; verbose=verbose )
+end
+
+"""
+Run the engine using Julia data structures as inputs. Does not save the output to file.
+"""
+function run_engine!(engine::MMCACovid19Engine, population::MMCAcovid19.Population_Params, 
+                     epi_params::MMCAcovid19.Epidemic_Params, npi_params::NPI_Params; 
+                     verbose = false, vac_params_dict = nothing)
+    
+    
+    #########################################################
+    # Containment measures
+    #########################################################
+
+    # Timesteps when the containment measures will be applied
+    tᶜs = npi_params.tᶜs
+    # Array of level of confinement
+    κ₀s = npi_params.κ₀s
+    # Array of premeabilities of confined households
+    ϕs = npi_params.ϕs
+    # Array of social distancing measures
+    δs = npi_params.δs
+
+    MMCAcovid19.run_epidemic_spreading_mmca!(epi_params, population, tᶜs, κ₀s, ϕs, δs, verbose=verbose)
 end
