@@ -75,9 +75,9 @@ function read_input_files(::AbstractEngine, config::Dict, data_path::String, ins
         init_condition_path = joinpath(data_path, get(data_dict, "initial_condition_filename", nothing))
     end
 
+    @info "- Reading initial conditions from: $(init_condition_path)"
     # use initial compartments matrix to initialize simulations
     if init_format == "netcdf"
-        @info "Reading initial conditions from: $(init_condition_path)"
         initial_compartments = ncread(init_condition_path, "data")
     elseif init_format == "hdf5"
         # TODO: does this path work?
@@ -93,13 +93,14 @@ function read_input_files(::AbstractEngine, config::Dict, data_path::String, ins
     mobility_matrix_filename = joinpath(data_path, data_dict["mobility_matrix_filename"])
     network_df  = CSV.read(mobility_matrix_filename, DataFrame)
 
-    G_coords = map(String, pop_params_dict["G_labels"])
-    # use G_coords to guess the columns of the metapopulation file
-    type_dict = Dict()
+    G_labels = map(String, pop_params_dict["G_labels"])
+
     # Loading metapopulation patches info (surface, label, population by age)
+
+    dtypes = Dict(vcat("id" => String, "area" => Float64, [i => Float64 for i in G_labels], "total" => Float64))
+    
     metapop_data_filename = joinpath(data_path, data_dict["metapopulation_data_filename"])
-    metapop_df = CSV.read(metapop_data_filename, DataFrame, types=Dict("id" => String, 
-    "area"=>Float64, "Y"=>Float64, "M"=>Float64, "O"=>Float64, "Total"=>Float64))
+    metapop_df = CSV.read(metapop_data_filename, DataFrame, types=dtypes)
 
     return npi_params, network_df, metapop_df, initial_compartments
 end
@@ -123,7 +124,7 @@ function run_engine_io(engine::AbstractEngine, config::Dict, data_path::String, 
     end
 
     npi_params, network_df, metapop_df, initial_compartments = read_input_files(engine, config, data_path, instance_path, init_condition_path)
-
+    @info "Running simulation using: $(engine)"
     epi_params, population, coords = run_engine(engine, config, npi_params, network_df, metapop_df, initial_compartments)
 
     @info "\t- Save full output = $(save_full_output)" 
@@ -152,8 +153,10 @@ Run the engine using Julia data structures as inputs. Does not save the output t
 
 TODO: decouple from MMCACovid19Vac.jl (NPI_Params)
 """
-function run_engine(engine::MMCACovid19VacEngine, config::Dict, npi_params::NPI_Params, network_df::DataFrame, metapop_df::DataFrame, initial_compartments::Array{Float64, 4})
-    @info "Running MMCACovid19VacEngine"
+function run_engine(engine::MMCACovid19VacEngine, config::Dict, 
+                    npi_params::NPI_Params, network_df::DataFrame, 
+                    metapop_df::DataFrame, initial_compartments::Array{Float64, 4})
+    
     simulation_dict = config["simulation"]
     epi_params_dict = config["epidemic_params"]
     pop_params_dict = config["population_params"]
@@ -233,7 +236,9 @@ function run_engine(engine::MMCACovid19VacEngine, config::Dict, npi_params::NPI_
 end
 
 
-function run_engine(engine::MMCACovid19Engine, config::Dict, npi_params::NPI_Params, network_df::DataFrame, metapop_df::DataFrame, initial_compartments::Array{Float64, 3})
+function run_engine(engine::MMCACovid19Engine, config::Dict, 
+                    npi_params::NPI_Params, network_df::DataFrame, 
+                    metapop_df::DataFrame, initial_compartments::Array{Float64, 3})
     
     n_compartments = 10
 
