@@ -12,6 +12,9 @@ struct HDF5Format <: AbstractOutputFormat end
 const ENGINES  = ["MMCACovid19Vac", "MMCACovid19"]
 const COMMANDS = ["run", "setup", "init"]
 
+const BASE_CONFIG_NAME = "config.json"
+const BASE_METAPOP_NAME = "metapopulation_data.csv"
+
 
 # Define a dictionary to map engine names to their types
 const ENGINE_TYPES = Dict(
