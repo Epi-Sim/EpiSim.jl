@@ -1,5 +1,6 @@
 {
 	"simulation": {
+		"engine": "MMCACovid19Vac",
 		"start_date": "2020-03-10",
 		"end_date": "2020-04-15",
 		"save_full_output": true,
