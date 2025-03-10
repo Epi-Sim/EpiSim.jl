@@ -43,14 +43,14 @@ function _save_full(engine::MMCACovid19VacEngine,
     
     
     filename = joinpath(output_path, "compartments_full.nc")
-    @info "Storing full simulation output in NetCDF: $filename"
+    @info "- Storing full simulation output in NetCDF: $filename"
     try
         MMCACovid19Vac.save_simulation_netCDF(epi_params, population, filename; G_coords, M_coords, T_coords)
     catch e
         @error "Error saving simulation output" exception=(e, catch_backtrace())
         rethrow(e)
     end
-    @info "done saving ??"
+    @info "- Done saving"
 end
 
 function _save_full(engine::MMCACovid19VacEngine, 
@@ -130,16 +130,16 @@ function _save_full(engine::MMCACovid19Engine,
         t_dim = NcDim("T", T, atts=Dict("description" => "Time", "Unit" => "unitless"), values=T_coords, unlimited=false)
         dimlist = [g_dim, m_dim, t_dim]
 
-        S  = NcVar("S" , dimlist; atts=Dict("description" => "Suceptibles"), t=Float64, compress=-1)
-        E  = NcVar("E" , dimlist; atts=Dict("description" => "Exposed"), t=Float64, compress=-1)
-        A  = NcVar("A" , dimlist; atts=Dict("description" => "Asymptomatic"), t=Float64, compress=-1)
-        I  = NcVar("I" , dimlist; atts=Dict("description" => "Infected"), t=Float64, compress=-1)
-        PH = NcVar("PH", dimlist; atts=Dict("description" => "Pre-hospitalized"), t=Float64, compress=-1)
-        PD = NcVar("PD", dimlist; atts=Dict("description" => "Pre-deceased"), t=Float64, compress=-1)
-        HR = NcVar("HR", dimlist; atts=Dict("description" => "Hospitalized-good"), t=Float64, compress=-1)
-        HD = NcVar("HD", dimlist; atts=Dict("description" => "Hospitalized-bad"), t=Float64, compress=-1)
-        R  = NcVar("R" , dimlist; atts=Dict("description" => "Recovered"), t=Float64, compress=-1)
-        D  = NcVar("D" , dimlist; atts=Dict("description" => "Dead"), t=Float64, compress=-1)
+        S  = NcVar("S" , dimlist; atts=atts=Dict("description" => "Suceptibles"), t=Float64, compress=-1)
+        E  = NcVar("E" , dimlist; atts=atts=Dict("description" => "Exposed"), t=Float64, compress=-1)
+        A  = NcVar("A" , dimlist; atts=atts=Dict("description" => "Asymptomatic"), t=Float64, compress=-1)
+        I  = NcVar("I" , dimlist; atts=atts=Dict("description" => "Infected"), t=Float64, compress=-1)
+        PH = NcVar("PH", dimlist; atts=atts=Dict("description" => "Pre-hospitalized"), t=Float64, compress=-1)
+        PD = NcVar("PD", dimlist; atts=atts=Dict("description" => "Pre-deceased"), t=Float64, compress=-1)
+        HR = NcVar("HR", dimlist; atts=atts=Dict("description" => "Hospitalized-good"), t=Float64, compress=-1)
+        HD = NcVar("HD", dimlist; atts=atts=Dict("description" => "Hospitalized-bad"), t=Float64, compress=-1)
+        R  = NcVar("R" , dimlist; atts=atts=Dict("description" => "Recovered"), t=Float64, compress=-1)
+        D  = NcVar("D" , dimlist; atts=atts=Dict("description" => "Dead"), t=Float64, compress=-1)
         varlist = [S, E, A, I, PH, PD, HR, HD, R, D]
 
         data_dict = Dict()
@@ -276,9 +276,9 @@ function save_observables(engine::MMCACovid19Engine,
         t_dim = NcDim("T", T, atts=Dict("description" => "Time", "Unit" => "unitless"), values=T_coords, unlimited=false)
         dimlist = [g_dim, m_dim, t_dim]
     
-        newI  = NcVar("new_infected" , dimlist; atts=Dict("description" => "Suceptibles"), t=Float64, compress=-1)
-        newH  = NcVar("new_hospitalized" , dimlist; atts=Dict("description" => "Exposed"), t=Float64, compress=-1)
-        newD  = NcVar("new_deaths" , dimlist; atts=Dict("description" => "Asymptomatic"), t=Float64, compress=-1)
+        newI  = NcVar("new_infected" , dimlist; atts=atts=Dict("description" => "Suceptibles"), t=Float64, compress=-1)
+        newH  = NcVar("new_hospitalized" , dimlist; atts=atts=Dict("description" => "Exposed"), t=Float64, compress=-1)
+        newD  = NcVar("new_deaths" , dimlist; atts=atts=Dict("description" => "Asymptomatic"), t=Float64, compress=-1)
         varlist = [newI, newH, newD]
      
         data_dict = Dict()
@@ -295,7 +295,8 @@ function save_observables(engine::MMCACovid19Engine,
         
         isfile(filename) && rm(filename)
         NetCDF.create(filename, varlist, mode=NC_NETCDF4)
-        for (var_label, data) in data_dict
+        for var_label in keys(data_dict)
+            data = data_dict[var_label]
             ncwrite(data, filename, var_label)
         end
     catch e

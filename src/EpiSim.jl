@@ -18,7 +18,6 @@ function julia_main()::Cint
     try
         args = parse_command_line()
         command = args["%COMMAND%"]
-        engine = args["engine"]
     
         # Check if the provided command is in the list of accepted commands
         if !(command in COMMANDS)
@@ -27,12 +26,10 @@ function julia_main()::Cint
             return 1
         end
 
-        engine = get_engine(engine)
-
         if command == "run"
-            execute_run(args["run"], engine)
+            execute_run(args["run"])
         elseif command == "setup"
-            execute_setup(args["setup"], engine)
+            execute_setup(args["setup"])
         elseif command == "init"
             execute_init(args["init"], engine)
         end
