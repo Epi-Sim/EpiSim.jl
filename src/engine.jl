@@ -185,7 +185,7 @@ function run_engine_io(engine::AbstractEngine, config::Dict, data_path::String, 
     run_engine!(engine, population, epi_params, npi_params; verbose = false, vac_params_dict = vac_params_dict)
 
     if save_full_output
-        @info "- Save¡ing full compartments" 
+        @info "- Saving full compartments" 
         save_full(engine, epi_params, population, output_path, output_format; coords...)
     end
     if save_obs_output
@@ -203,7 +203,7 @@ function run_engine_io(engine::AbstractEngine, config::Dict, data_path::String, 
         end
     end
 
-    @info "done running engine io"
+    @info "- Done running simulations"
 end
 
 """
@@ -338,10 +338,7 @@ function init_epidemic_parameters_struct(engine::MMCACovid19Engine, G::Int, M::I
     ψᵍ = Float64.(epi_params_dict["ψᵍ"])
     # ICU discharge rate
     χᵍ = Float64.(epi_params_dict["χᵍ"])
-    # Relative risk reduction of the probability of infection
-    rᵥ = Float64.(epi_params_dict["rᵥ"])
-    # Relative risk reduction of the probability of transmission
-    kᵥ = Float64.(epi_params_dict["kᵥ"])
+
 
     epi_params = MMCAcovid19.Epidemic_Params(βᴵ, βᴬ, ηᵍ, αᵍ, μᵍ, θᵍ, γᵍ, ζᵍ, λᵍ, ωᵍ, ψᵍ, χᵍ, G, M, T)
     return epi_params
