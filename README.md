@@ -1,7 +1,25 @@
-# EpiSim.jl
-A Julia-based simulator for simulating epidemics. Currently, it implements MMCA for simulating an extended SEIR in a metapopulation with different agent types which can be used to model different age strata. EpiSim.jl is a general interface to access different simulation engines/models. In this sense, EpiSim.jl works as a stand-alone simulator that allows running simulations using different engines/models. 
+```========================================================================
 
-Currently, EpiSim supports the use of two engines:
+ /$$$$$$$$           /$$  /$$$$$$  /$$                       /$$
+| $$_____/          |__/ /$$__  $$|__/                      | $$
+| $$        /$$$$$$  /$$| $$  \__/ /$$ /$$$$$$/$$$$      /$$| $$
+| $$$$$    /$$__  $$| $$|  $$$$$$ | $$| $$_  $$_  $$    |__/| $$
+| $$__/   | $$  \ $$| $$ \____  $$| $$| $$ \ $$ \ $$     /$$| $$
+| $$      | $$  | $$| $$ /$$  \ $$| $$| $$ | $$ | $$    | $$| $$
+| $$$$$$$$| $$$$$$$/| $$|  $$$$$$/| $$| $$ | $$ | $$ /$$| $$| $$
+|________/| $$____/ |__/ \______/ |__/|__/ |__/ |__/|__/| $$|__/
+          | $$                                     /$$  | $$    
+          | $$                                    |  $$$$$$/    
+          |__/                                     \______/     
+
+
+A Julia package for simulating epidemic spreading in metapopulations
+
+========================================================================
+
+EpiSim.jl is a general interface to access different simulation engines/models. In this sense, EpiSim.jl works as a stand-alone simulator that allows running simulations using different engines/models. Currently, it implements MMCA approach for simulating an extended SEIR in a meta-population with different agent types which can be used to model different age strata. The different populations are connect through a network that represent the daily mobility patterns of agents that commute to work to different regions.
+
+Currently supported engines:
 * MMCAcovid19 Julia package [https://docs.juliahub.com/MMCAcovid19/]([url](https://docs.juliahub.com/MMCAcovid19/))
 * MMCAcovid19-Vac Julia package, [https://github.com/Epi-Sim/MMCACovid19Vac.jl]([url](https://github.com/Epi-Sim/MMCACovid19Vac.jl))
 
@@ -12,7 +30,7 @@ Additionally, EpiSim.jl uses the NetCDF format to store simulation outputs. [Net
 <img src="https://github.com/user-attachments/assets/f4a44223-3377-47d5-9212-e79252300343" width="600">
 
   
-Currently, this version provides a standard configuration format for defining a model and a simple set of command-line scripts to generate configuration templates and run the model.
+EpiSim.jl also provides a standard configuration format for defining a model and a simple set of command-line scripts to generate configuration templates and run the model.
 
 
 ### Installing
