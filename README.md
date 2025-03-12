@@ -16,8 +16,8 @@
 _EpiSim.jl_ is a general interface to access different simulation engines/models. In this sense, _EpiSim.jl_ works as a stand-alone simulator that allows running simulations using different engines/models. Currently, it implements MMCA approach for simulating an extended SEIR in a meta-population with different agent types which can be used to model different age strata [1-4]. The different populations are connect through a network that represent the daily mobility patterns of agents that commute to work to different regions.
 
 Currently supported engines:
-* **MMCAcovid19** Julia package [https://docs.juliahub.com/MMCAcovid19/]([url](https://docs.juliahub.com/MMCAcovid19/)) [1]
-* **MMCAcovid19-Vac** Julia package, [https://github.com/Epi-Sim/MMCACovid19Vac.jl]([url](https://github.com/Epi-Sim/MMCACovid19Vac.jl))
+* **MMCAcovid19** Julia package, [https://docs.juliahub.com/MMCAcovid19/]([url](https://docs.juliahub.com/MMCAcovid19/)) [2].
+* **MMCAcovid19-Vac** Julia package, [https://github.com/Epi-Sim/MMCACovid19Vac.jl]([url](https://github.com/Epi-Sim/MMCACovid19Vac.jl)) [3]
 
 As a novel feature, _EpiSim.jl_ uses a standard configuration format for setting or defining specific instances of a model, for instance, defining the number and sizes of the different metapopulations, providing the structure of the mobility network and setting values for the epidemiological transition rates.
 
