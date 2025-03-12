@@ -49,7 +49,7 @@ function parse_command_line()
             required = true
             arg_type = String
         "--metapop", "-M"
-            help = "Number of metapopulation compartments"
+            help = "Number of metapopulation compartments or regions"
             required = true
             arg_type = Int
         "--agents", "-G"
@@ -66,20 +66,19 @@ function parse_command_line()
 
     @add_arg_table s["init"] begin
         "--config", "-c"
-            help = "config file (json file)"
+            help = "Config file (json file)"
             required = true
         "--data-folder", "-d"
-            help = "data folder"
+            help = "Data folder. Folder where the data files are stored"
             required = true
         "--seeds"
-            help = "compartments to initialize simulation. If missing, use the seeds to initialize the simulations"
+            help = "CSV file with initial seeds (initial infected individuals). It is used to create the initial condition file"
             required = true
         "--out", "-o"
-            help = "output file name for the conditon"
+            help = "Output file name for storing the condition in NetCDF format"
             required = false
             default = "initial_conditions.nc"
     end
-
     return parse_args(s)
 end
 
