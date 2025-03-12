@@ -303,5 +303,5 @@ function save_observables(engine::MMCACovid19Engine,
         @error "Error saving simulation observables" exception=(e, catch_backtrace())
         rethrow(e)
     end
-    @info "Done saving"
+    @info "- Done saving"
 end
