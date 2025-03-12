@@ -11,11 +11,35 @@ import CSV
 
 include("commands.jl")
 
+function print_banner()
+    println()
+    println("========================================================================\n")
+    print(raw"""
+     /$$$$$$$$           /$$  /$$$$$$  /$$                       /$$
+    | $$_____/          |__/ /$$__  $$|__/                      | $$
+    | $$        /$$$$$$  /$$| $$  \__/ /$$ /$$$$$$/$$$$      /$$| $$
+    | $$$$$    /$$__  $$| $$|  $$$$$$ | $$| $$_  $$_  $$    |__/| $$
+    | $$__/   | $$  \ $$| $$ \____  $$| $$| $$ \ $$ \ $$     /$$| $$
+    | $$      | $$  | $$| $$ /$$  \ $$| $$| $$ | $$ | $$    | $$| $$
+    | $$$$$$$$| $$$$$$$/| $$|  $$$$$$/| $$| $$ | $$ | $$ /$$| $$| $$
+    |________/| $$____/ |__/ \______/ |__/|__/ |__/ |__/|__/| $$|__/
+              | $$                                     /$$  | $$    
+              | $$                                    |  $$$$$$/    
+              |__/                                     \______/     
+
+    """)
+    println()
+    println("  A Julia package for simulating epidemic spreading in meta-populations\n")
+    println("========================================================================\n")
+end
+
+
 function julia_main()::Cint
     """
     This is the entrypoint for the compiled version of EpiSim.
     """
     try
+        print_banner()
         args = parse_command_line()
         command = args["%COMMAND%"]
     
@@ -44,8 +68,6 @@ function julia_main()::Cint
 end
 
 function main()
-    "alias for convenience"
-    @info "main"
     try
         return julia_main()
     catch e
