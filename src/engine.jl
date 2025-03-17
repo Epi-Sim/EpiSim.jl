@@ -389,6 +389,19 @@ function run_engine(engine::MMCACovid19Engine, config::Dict, npi_params::NPI_Par
     @info "\t- first_day_simulation = $(first_day)"  
     @info "\t- last_day_simulation = $(last_day)"
     
+    if tᶜs[1] == 1
+        @info "The initial conditions correspond to a time step with NPI"
+        diff = population.nᵢᵍ - sum(initial_compartments, dims = 3)[:,:,1]
+        @info "Initializing the CH compartment "
+        mask = isapprox.(diff, 0.0, atol=9e-9)
+        CH = zeros(Float64, G, M)
+        aux_pop = sum(initial_compartments, dims = 3)[:,:,1]
+        CH[.!mask] .= population.nᵢᵍ[.!mask] .- aux_pop[.!mask] 
+        CH[CH .< 0] .= 0
+    else
+        CH = zeros(Float64, G, M)
+    end
+    
     t₀ = 1
     epi_params.ρˢᵍ[:,:,t₀]  .= initial_compartments[:, :, 1] ./ population.nᵢᵍ
     epi_params.ρᴱᵍ[:,:,t₀]  .= initial_compartments[:, :, 2] ./ population.nᵢᵍ
@@ -400,6 +413,7 @@ function run_engine(engine::MMCACovid19Engine, config::Dict, npi_params::NPI_Par
     epi_params.ρᴴᴰᵍ[:,:,t₀] .= initial_compartments[:, :, 8] ./ population.nᵢᵍ
     epi_params.ρᴿᵍ[:,:,t₀]  .= initial_compartments[:, :, 9] ./ population.nᵢᵍ
     epi_params.ρᴰᵍ[:,:,t₀]  .= initial_compartments[:, :, 10] ./ population.nᵢᵍ
+    epi_params.CHᵢᵍ[:,:]    .= CH ./ population.nᵢᵍ
 
     epi_params.ρˢᵍ[isnan.(epi_params.ρˢᵍ)]   .= 0
     epi_params.ρᴱᵍ[isnan.(epi_params.ρᴱᵍ)]   .= 0
@@ -411,6 +425,7 @@ function run_engine(engine::MMCACovid19Engine, config::Dict, npi_params::NPI_Par
     epi_params.ρᴴᴰᵍ[isnan.(epi_params.ρᴴᴰᵍ)] .= 0
     epi_params.ρᴿᵍ[isnan.(epi_params.ρᴿᵍ)]   .= 0
     epi_params.ρᴰᵍ[isnan.(epi_params.ρᴰᵍ)]   .= 0
+    epi_params.CHᵢᵍ[isnan.(epi_params.CHᵢᵍ)]   .= 0
 
     ########################################################
     ################ RUN THE SIMULATION ####################
