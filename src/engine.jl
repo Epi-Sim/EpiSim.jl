@@ -194,8 +194,8 @@ function run_engine(engine::MMCACovid19VacEngine, config::Dict, npi_params::NPI_
             CH[:,:,i]    .= initial_compartments[:,:,i,11] 
         end        
     else
-    @assert size(initial_compartments) == (G, M, epi_params.V, epi_params.NumComps)
-
+        @assert size(initial_compartments) == (G, M, epi_params.V, epi_params.NumComps)
+        
     end
 
 
@@ -388,7 +388,7 @@ function run_engine(engine::MMCACovid19Engine, config::Dict, npi_params::NPI_Par
     @info "\t- T (simulation steps) = $(T)"
     @info "\t- first_day_simulation = $(first_day)"  
     @info "\t- last_day_simulation = $(last_day)"
-    
+
     if tᶜs[1] == 1
         @info "The initial conditions correspond to a time step with NPI"
         diff = population.nᵢᵍ - sum(initial_compartments, dims = 3)[:,:,1]

@@ -318,8 +318,8 @@ function _save_full(engine::MMCACovid19Engine,
 end
 
 
-function save_time_step(engine::MMCACovid19Engine,
-    epi_params::MMCAcovid19.Epidemic_Params, 
+function save_time_step(engine::MMCACovid19Engine, 
+    epi_params::MMCAcovid19.Epidemic_Params,
     population::MMCAcovid19.Population_Params,
     output_path::String, output_format::Union{String,AbstractOutputFormat}, 
     export_time_t::Int, export_date::Date, save_CH::Bool)
