@@ -292,13 +292,6 @@ function create_compartments_array(engine::MMCACovid19Engine,
     compartments[:, :, :, 9]  .= epi_params.ρᴿᵍ .* population.nᵢᵍ
     compartments[:, :, :, 10] .= epi_params.ρᴰᵍ .* population.nᵢᵍ
 
-    sim_pop = sum(compartments, dims=4)[:, :, :, 1]
-    
-    @simd for t in 1:T
-        CH = population.nᵢᵍ - sim_pop[:, :, t]
-        compartments[:, :, t, 1] += CH
-    end
-
     return compartments
 end
 
@@ -311,6 +304,13 @@ function _save_full(engine::MMCACovid19Engine,
     @info "- Storing full simulation output in HDF5: $filename"
     compartments = create_compartments_array(engine, epi_params, population)
 
+    sim_pop = sum(compartments, dims=4)[:, :, :, 1]
+    
+    @simd for t in 1:T
+        CH = population.nᵢᵍ - sim_pop[:, :, t]
+        compartments[:, :, t, 1] += CH
+    end
+
     isfile(filename) && rm(filename)
     h5open(filename, "w") do file
         write(file, "data", compartments[:,:,:,:,:])
@@ -321,7 +321,52 @@ end
 function save_time_step(engine::MMCACovid19Engine,
     epi_params::MMCAcovid19.Epidemic_Params, 
     population::MMCAcovid19.Population_Params,
-    output_path::String, export_time_t::Int, export_date::Date) 
+    output_path::String, output_format::Union{String,AbstractOutputFormat}, 
+    export_time_t::Int, export_date::Date, save_CH::Bool)
+
+    format = output_format isa String ? get_output_format(output_format) : output_format
+    _save_time_step(engine, epi_params, population, output_path, format, export_time_t, export_date)
+end
+
+
+function _save_time_step(engine::MMCACovid19Engine,
+    epi_params::MMCAcovid19.Epidemic_Params, 
+    population::MMCAcovid19.Population_Params,
+    output_path::String, ::NetCDFFormat, export_time_t::Int, export_date::Date)
+    
+    G = population.G
+    M = population.M
+    S = 10
+    S_coords = ["S", "E", "A", "I", "PH", "PD", "HR", "HD", "R", "D"]
+
+    G_coords = String[]
+    M_coords = String[]
+
+    if isnothing(G_coords)
+        G_coords = collect(1:G)
+    end
+    if isnothing(M_coords)
+        M_coords = collect(1:M)
+    end
+
+    
+    filename = joinpath(output_path, "compartments_t_$(export_date).nc")
+    @info "\t- filename: $(filename)"
+    
+    compartments = create_compartments_array(engine, epi_params, population)
+
+    isfile(filename) && rm(filename)
+
+    nccreate(filename, "data", "G", G_coords, "M", M_coords,  "epi_states", S_coords)
+    ncwrite(compartments[:,:,export_time_t,:], filename, "data")
+
+    
+end
+
+function _save_time_step(engine::MMCACovid19Engine,
+    epi_params::MMCAcovid19.Epidemic_Params, 
+    population::MMCAcovid19.Population_Params,
+    output_path::String, ::HDF5Format, export_time_t::Int, export_date::Date) 
     
     filename = joinpath(output_path, "compartments_t_$(export_date).h5")
     @info "\t- filename: $(filename)"
