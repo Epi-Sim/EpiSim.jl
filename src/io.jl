@@ -106,13 +106,61 @@ end
 function save_time_step(engine::MMCACovid19VacEngine, 
     epi_params::MMCACovid19Vac.Epidemic_Params,
     population::MMCACovid19Vac.Population_Params,
-    output_path::String, export_compartments_time_t::Int, export_date::Date) 
+    output_path::String, output_format::Union{String,AbstractOutputFormat}, 
+    export_time_t::Int, export_date::Date, save_CH::Bool)
+    
+    format = output_format isa String ? get_output_format(output_format) : output_format
+    _save_time_step(engine, epi_params, population, output_path, format, export_time_t, export_date, save_CH)
+end
+
+function _save_time_step(engine::MMCACovid19VacEngine, 
+    epi_params::MMCACovid19Vac.Epidemic_Params,
+    population::MMCACovid19Vac.Population_Params,
+    output_path::String, ::HDF5Format, export_compartments_time_t::Int, 
+    export_date::Date, save_CH::Bool) 
     
     filename = joinpath(output_path, "compartments_t_$(export_date).h5")
     @info "\t- filename: $(filename)"
     MMCACovid19Vac.save_simulation_hdf5(epi_params, population, filename; 
                         export_time_t = export_compartments_time_t)
 end
+
+function _save_time_step(engine::MMCACovid19VacEngine, 
+    epi_params::MMCACovid19Vac.Epidemic_Params,
+    population::MMCACovid19Vac.Population_Params,
+    output_path::String, ::NetCDFFormat, export_compartments_time_t::Int, 
+    export_date::Date, save_CH::Bool) 
+
+    G = population.G
+    M = population.M
+    V = epi_params.V
+    S = epi_params.NumComps
+    S_coords = epi_params.CompLabels
+    V_coords = epi_params.VaccLabels
+
+    G_coords = String[]
+    M_coords = String[]
+
+    if isnothing(G_coords)
+        G_coords = collect(1:G)
+    end
+    if isnothing(M_coords)
+        M_coords = collect(1:M)
+    end
+    
+    filename = joinpath(output_path, "compartments_t_$(export_date).nc")
+    @info "\t- filename: $(filename)"
+    
+    compartments = create_compartments_array(engine, epi_params, population, save_CH)
+    if save_CH
+        push!(S_coords, "CH")
+    end
+    isfile(filename) && rm(filename)
+
+    nccreate(filename, "data", "G", G_coords, "M", M_coords, "V", V_coords, "epi_states", S_coords)
+    ncwrite(compartments[:,:,export_compartments_time_t, :,:], filename, "data")
+end
+
 
 function save_observables(engine::MMCACovid19VacEngine, 
     epi_params::MMCACovid19Vac.Epidemic_Params,
@@ -128,7 +176,7 @@ function save_observables(engine::MMCACovid19VacEngine,
         @error "Error saving simulation observables" exception=(e, catch_backtrace())
         rethrow(e)
     end
-    @info "done saving ??"
+    @info "done saving observables"
 end
 
 
