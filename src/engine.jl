@@ -185,7 +185,18 @@ function run_engine(engine::MMCACovid19VacEngine, config::Dict, npi_params::NPI_
     ## EPIDEMIC PARAMETERS 
     epi_params = MMCACovid19Vac.init_epi_parameters_struct(G, M, T, G_coords, epi_params_dict)
 
+    CH = zeros(Float64, G, M, epi_params.V)
+    if npi_params.tᶜs[1] == 1
+        @assert size(initial_compartments) == (G, M, epi_params.V, epi_params.NumComps + 1)
+        @info "The initial conditions correspond to a time step with NPI"
+        @info "Initializing the CH compartment "
+        for i in 1:epi_params.V
+            CH[:,:,i]    .= initial_compartments[:,:,i,11] 
+        end        
+    else
     @assert size(initial_compartments) == (G, M, epi_params.V, epi_params.NumComps)
+
+    end
 
 
     #########################################################
@@ -221,6 +232,11 @@ function run_engine(engine::MMCACovid19VacEngine, config::Dict, npi_params::NPI_
     ########################################################
 
     MMCACovid19Vac.set_compartments!(epi_params, population, initial_compartments)
+    t₀ = 1
+    for i in 1:epi_params.V
+        epi_params.CHᵢᵍᵥ[:,:,t₀,i]    .= CH[:,:,i] ./ population.nᵢᵍ[:,:]
+    end
+    epi_params.CHᵢᵍᵥ[isnan.(epi_params.CHᵢᵍᵥ)]   .= 0
 
     MMCACovid19Vac.run_epidemic_spreading_mmca!(epi_params, population, npi_params, tᵛs, ϵᵍs; verbose = true )
 
