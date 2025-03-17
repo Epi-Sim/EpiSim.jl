@@ -50,7 +50,7 @@ function _save_full(engine::MMCACovid19VacEngine,
         @error "Error saving simulation output" exception=(e, catch_backtrace())
         rethrow(e)
     end
-    @info "done saving ??"
+    @info "done saving full simulation"
 end
 
 function _save_full(engine::MMCACovid19VacEngine, 
@@ -61,6 +61,46 @@ function _save_full(engine::MMCACovid19VacEngine,
     filename = joinpath(output_path, "compartments_full.h5")
     @info "Storing full simulation output in HDF5: $filename"
     MMCACovid19Vac.save_simulation_hdf5(epi_params, population, filename)
+end
+
+function create_compartments_array(engine::MMCACovid19VacEngine, 
+    epi_params::MMCACovid19Vac.Epidemic_Params, 
+    population::MMCACovid19Vac.Population_Params,
+    save_CH::Bool)
+    G = population.G
+    M = population.M
+    T = epi_params.T
+    V = epi_params.V
+    N = 10
+
+    if save_CH
+        compartments = zeros(Float64, G, M, T, V, N + 1);
+        compartments[:, :, :, :, 1]  .= epi_params.ρˢᵍᵥ  .* population.nᵢᵍ
+        compartments[:, :, :, :, 2]  .= epi_params.ρᴱᵍᵥ .* population.nᵢᵍ
+        compartments[:, :, :, :, 3]  .= epi_params.ρᴬᵍᵥ .* population.nᵢᵍ
+        compartments[:, :, :, :, 4]  .= epi_params.ρᴵᵍᵥ .* population.nᵢᵍ
+        compartments[:, :, :, :, 5]  .= epi_params.ρᴾᴴᵍᵥ .* population.nᵢᵍ
+        compartments[:, :, :, :, 6]  .= epi_params.ρᴾᴰᵍᵥ .* population.nᵢᵍ
+        compartments[:, :, :, :, 7]  .= epi_params.ρᴴᴿᵍᵥ .* population.nᵢᵍ
+        compartments[:, :, :, :, 8]  .= epi_params.ρᴴᴰᵍᵥ .* population.nᵢᵍ
+        compartments[:, :, :, :, 9]  .= epi_params.ρᴿᵍᵥ .* population.nᵢᵍ
+        compartments[:, :, :, :, 10] .= epi_params.ρᴰᵍᵥ .* population.nᵢᵍ
+        compartments[:, :, :, :, 11] .= epi_params.CHᵢᵍᵥ .* population.nᵢᵍ
+    elseif !save_CH
+        compartments = zeros(Float64, G, M, T, V, N);
+        compartments[:, :, :, :, 1]  .= epi_params.ρˢᵍ  .* population.nᵢᵍ
+        compartments[:, :, :, :, 2]  .= epi_params.ρᴱᵍ  .* population.nᵢᵍ
+        compartments[:, :, :, :, 3]  .= epi_params.ρᴬᵍ  .* population.nᵢᵍ
+        compartments[:, :, :, :, 4]  .= epi_params.ρᴵᵍ  .* population.nᵢᵍ
+        compartments[:, :, :, :, 5]  .= epi_params.ρᴾᴴᵍ .* population.nᵢᵍ
+        compartments[:, :, :, :, 6]  .= epi_params.ρᴾᴰᵍ .* population.nᵢᵍ
+        compartments[:, :, :, :, 7]  .= epi_params.ρᴴᴿᵍ .* population.nᵢᵍ
+        compartments[:, :, :, :, 8]  .= epi_params.ρᴴᴰᵍ .* population.nᵢᵍ
+        compartments[:, :, :, :, 9]  .= epi_params.ρᴿᵍ  .* population.nᵢᵍ
+        compartments[:, :, :, :, 10] .= epi_params.ρᴰᵍ  .* population.nᵢᵍ
+    end
+
+    return compartments
 end
 
 function save_time_step(engine::MMCACovid19VacEngine, 
