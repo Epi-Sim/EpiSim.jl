@@ -110,9 +110,8 @@ Run the engine using input files (which must be available in the data_path and i
 and save the output to the output folder.
 """
 function run_engine_io(engine::AbstractEngine, config::Dict, data_path::String, instance_path::String, init_condition_path::String)
-    simulation_dict  = config["simulation"]
+    simulation_dict = config["simulation"]
     output_format    = simulation_dict["output_format"]
-    first_day        = Date(simulation_dict["start_date"])
     save_full_output = get(simulation_dict, "save_full_output", false)
     save_obs_output  = get(simulation_dict, "save_observables", false)
     time_step_tosave = get(simulation_dict, "save_time_step", nothing)
@@ -126,7 +125,7 @@ function run_engine_io(engine::AbstractEngine, config::Dict, data_path::String, 
     
     @info "Running EpiSim.jl using: $(engine)"
     
-    simulation_dict = config["simulation"]
+    
     data_dict       = config["data"]
     epi_params_dict = config["epidemic_params"]
     pop_params_dict = config["population_params"]
@@ -171,7 +170,7 @@ function run_engine_io(engine::AbstractEngine, config::Dict, data_path::String, 
 
     vac_params_dict = get(config, "vaccination", nothing)
 
-    set_compartments!(engine, epi_params, population, initial_compartments)
+    set_compartments!(engine, epi_params, population, npi_params, initial_compartments)
 
     @info "- Initializing MMCA epidemic simulations for engine $(engine)"
     @info "\t* N. of epi compartments = 10" 
@@ -358,7 +357,8 @@ Function to set the initial compartments for the engine MMCACovid19VacEngine
         initial_compartments: Array{Float64, 4}
 """
 function set_compartments!(engine::MMCACovid19VacEngine, epi_params::MMCACovid19Vac.Epidemic_Params, 
-                          population::MMCACovid19Vac.Population_Params, initial_compartments::Array{Float64, 4})
+                          population::MMCACovid19Vac.Population_Params, npi_params::NPI_Params,
+                           initial_compartments::Array{Float64, 4})
     G = population.G
     M = population.M
     V = epi_params.V
@@ -393,14 +393,15 @@ Function to set the initial compartments for the engine MMCACovid19Engine
         initial_compartments: Array{Float64, 3}
 """
 function set_compartments!(engine::MMCACovid19Engine, epi_params::MMCAcovid19.Epidemic_Params, 
-                          population::MMCAcovid19.Population_Params, initial_compartments::Array{Float64, 3})
+                          population::MMCAcovid19.Population_Params, npi_params::NPI_Params,
+                          initial_compartments::Array{Float64, 3})
 
     n_compartments = 10
     G = population.G
     M = population.M
     @assert size(initial_compartments) == (G, M, n_compartments)
 
-    if tᶜs[1] == 1
+    if npi_params.tᶜs[1] == 1
         @info "The initial conditions correspond to a time step with NPI"
         diff = population.nᵢᵍ - sum(initial_compartments, dims = 3)[:,:,1]
         @info "Initializing the CH compartment "
@@ -437,35 +438,6 @@ function set_compartments!(engine::MMCACovid19Engine, epi_params::MMCAcovid19.Ep
     epi_params.ρᴿᵍ[isnan.(epi_params.ρᴿᵍ)]   .= 0
     epi_params.ρᴰᵍ[isnan.(epi_params.ρᴰᵍ)]   .= 0
     epi_params.CHᵢᵍ[isnan.(epi_params.CHᵢᵍ)]   .= 0
-
-end
-
-"""
-Run the engine using Julia data structures as inputs. Does not save the output to file.
-"""
-function run_engine!(engine::MMCACovid19VacEngine, population::MMCACovid19Vac.Population_Params, 
-                     epi_params::MMCACovid19Vac.Epidemic_Params, npi_params::NPI_Params; 
-                     verbose = false, vac_params_dict = nothing)
-    
-
-    #########################################################
-    # Vaccination parameters
-    #########################################################
-    @info "- Initializing vaccination parameters"
-
-    # vaccionation dates
-    start_vacc = vac_params_dict["start_vacc"]
-    dur_vacc   = vac_params_dict["dur_vacc"]
-    end_vacc   = start_vacc + dur_vacc
-
-    # total vaccinations per age strata
-    total_population = sum(population.nᵢᵍ)
-    ϵᵍ = vac_params_dict["ϵᵍ"] * round( total_population * vac_params_dict["percentage_of_vacc_per_day"] )
-    tᵛs = [start_vacc, end_vacc, epi_params.T]
-    ϵᵍs = ϵᵍ .* [0  Int(vac_params_dict["are_there_vaccines"])  0]
-
-    @info "\t* start_vaccination = $(start_vacc)"
-    @info "\t* end_vaccination = $(end_vacc)"
 
 end
 
