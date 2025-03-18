@@ -11,14 +11,37 @@ import CSV
 
 include("commands.jl")
 
+function print_banner()
+    println()
+    println("========================================================================\n")
+    print(raw"""
+     /$$$$$$$$           /$$  /$$$$$$  /$$                       /$$
+    | $$_____/          |__/ /$$__  $$|__/                      | $$
+    | $$        /$$$$$$  /$$| $$  \__/ /$$ /$$$$$$/$$$$      /$$| $$
+    | $$$$$    /$$__  $$| $$|  $$$$$$ | $$| $$_  $$_  $$    |__/| $$
+    | $$__/   | $$  \ $$| $$ \____  $$| $$| $$ \ $$ \ $$     /$$| $$
+    | $$      | $$  | $$| $$ /$$  \ $$| $$| $$ | $$ | $$    | $$| $$
+    | $$$$$$$$| $$$$$$$/| $$|  $$$$$$/| $$| $$ | $$ | $$ /$$| $$| $$
+    |________/| $$____/ |__/ \______/ |__/|__/ |__/ |__/|__/| $$|__/
+              | $$                                     /$$  | $$    
+              | $$                                    |  $$$$$$/    
+              |__/                                     \______/     
+
+    """)
+    println()
+    println("  A Julia package for simulating epidemic spreading in meta-populations\n")
+    println("========================================================================\n")
+end
+
+
 function julia_main()::Cint
     """
     This is the entrypoint for the compiled version of EpiSim.
     """
     try
+        print_banner()
         args = parse_command_line()
         command = args["%COMMAND%"]
-        engine = args["engine"]
     
         # Check if the provided command is in the list of accepted commands
         if !(command in COMMANDS)
@@ -27,12 +50,10 @@ function julia_main()::Cint
             return 1
         end
 
-        engine = get_engine(engine)
-
         if command == "run"
-            execute_run(args["run"], engine)
+            execute_run(args["run"])
         elseif command == "setup"
-            execute_setup(args["setup"], engine)
+            execute_setup(args["setup"])
         elseif command == "init"
             execute_init(args["init"], engine)
         end
@@ -47,8 +68,6 @@ function julia_main()::Cint
 end
 
 function main()
-    "alias for convenience"
-    @info "main"
     try
         return julia_main()
     catch e

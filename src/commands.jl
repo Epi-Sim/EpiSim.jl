@@ -13,9 +13,6 @@ function parse_command_line()
         "init"
             help = "Create an initial condition for the given engine"
             action = :command
-        "--engine", "-e"
-            help = "Simulator Engine"
-            default = "MMCACovid19Vac"
     end
 
     @add_arg_table s["run"] begin
@@ -52,7 +49,7 @@ function parse_command_line()
             required = true
             arg_type = String
         "--metapop", "-M"
-            help = "Number of metapopulation compartments"
+            help = "Number of metapopulation compartments or regions"
             required = true
             arg_type = Int
         "--agents", "-G"
@@ -62,24 +59,26 @@ function parse_command_line()
         "--output", "-o"
             help = "Path where template model will be created"
             default = "models"
+        "--engine", "-e"
+            help = "Simulator Engine"
+            default = "MMCACovid19Vac"
     end
 
     @add_arg_table s["init"] begin
         "--config", "-c"
-            help = "config file (json file)"
+            help = "Config file (json file)"
             required = true
         "--data-folder", "-d"
-            help = "data folder"
+            help = "Data folder. Folder where the data files are stored"
             required = true
         "--seeds"
-            help = "compartments to initialize simulation. If missing, use the seeds to initialize the simulations"
+            help = "CSV file with initial seeds (initial infected individuals). It is used to create the initial condition file"
             required = true
         "--output", "-o"
-            help = "output file name for the conditions"
+            help = "Output file name for storing the condition in NetCDF format"
             required = false
             default = "initial_conditions.nc"
     end
-
     return parse_args(s)
 end
 
@@ -91,7 +90,7 @@ end
 ## Command function
 ## ----------------------------------------
 
-function execute_run(args, engine)
+function execute_run(args)
 
     data_path     = args["data-folder"]
     config_fname  = args["config"]
@@ -106,14 +105,19 @@ function execute_run(args, engine)
     @assert isdir(data_path);
     @assert isdir(instance_path);
     
-    validate_config(config, engine)
+    engine = validate_config(config)
 
     run_engine_io(engine, config, data_path, instance_path, init_condition_path)
     @info "done executing run command"
 end
 
-function execute_setup(args, engine)
+function execute_setup(args)
     name = args["name"]
+
+    
+    engine = get_engine(args["engine"])
+    @info "Creating config file for engine: $engine"
+
     M = args["metapop"]
     G = args["agents"]
     
@@ -121,24 +125,31 @@ function execute_setup(args, engine)
     @assert ispath(output_path)
     model_path = joinpath(output_path, name)
     if !ispath(model_path)
+        @info "Creating folder for storing model: $model_path"
         mkdir(model_path)
     end
     
-    config_fname = joinpath(model_path, "config.json")
+    config_fname = joinpath(model_path, BASE_CONFIG_NAME)
     config = create_config_template(engine, M, G)
+    @info "Writing model definition (JSON): $config_fname"
     open(config_fname, "w") do fh
-        JSON.print(fh, config)
+        JSON.print(fh, config, 4)
     end
-    # cols = copy(c["population_params"]["labels"])
-    # df = DataFrame(Dict(i=>ones(M) for i in cols));
-    # df[!, "Total"] = sum(eachcol(df))
+    G_labels = copy(config["population_params"]["G_labels"])
+    cols = vcat("area", G_labels)
+
+    df = DataFrame([i=>ones(M) for i in cols])
+    df[!, :total] = ones(M) * G
+    metapop_fname = joinpath(model_path, BASE_METAPOP_NAME)
+    CSV.write(metapop_fname, df)
+
 end
 
 function execute_init(args, engine)
     config_fname  = args["config"]
     data_path   = args["data-folder"]
     output_fname = args["output"]
-    seeds_fname = args["seeds"]
+    seeds_fname   = args["seeds"]
 
     config          = JSON.parsefile(config_fname);
     output_path  = joinpath(data_path, output_fname)
@@ -354,8 +365,52 @@ function create_core_config()
     return config
 end
 
+function create_config_template(::MMCACovid19Engine, M::Int, G::Int)
+    config = create_core_config()
+    config["simulation"]["engine"] = "MMCACovid19"
+
+    epiparams_dict = Dict()
+    epiparams_dict["scale_β"] = 0.5
+    epiparams_dict["βᴬ"] = 0.05
+    epiparams_dict["βᴵ"] = 0.09
+    epiparams_dict["ηᵍ"] = ones(G) * 0.275
+    epiparams_dict["αᵍ"] = ones(G) * 0.65
+    epiparams_dict["μᵍ"] = ones(G) * 0.3
+    epiparams_dict["θᵍ"] = zeros(G)
+    epiparams_dict["γᵍ"] = ones(G) * 0.03
+    epiparams_dict["ζᵍ"] = ones(G) * 0.12
+    epiparams_dict["λᵍ"] = ones(G) * 0.275
+    epiparams_dict["ωᵍ"] = ones(G) * 0.1
+    epiparams_dict["ψᵍ"] = ones(G) * 0.14
+    epiparams_dict["χᵍ"] = ones(G) * 0.047
+
+    population = Dict()
+    population["G_labels"] = ["G" * string(i) for i in 1:G]
+    population["C"] = ones(G,G) * 1/G
+    population["kᵍ"] = ones(G) * 10
+    population["kᵍ_h"] = ones(G) * 3
+    population["kᵍ_w"] = ones(G) 
+    population["pᵍ"] = ones(G) 
+    population["ξ"] = 0.01
+    population["σ"] = 2.5
+
+    npiparams_dict = Dict()
+    npiparams_dict["κ₀s"] = [0.0]
+    npiparams_dict["ϕs"] = [1.0]
+    npiparams_dict["δs"] = [0.0]
+    npiparams_dict["tᶜs"] =  [1]
+    npiparams_dict["are_there_npi"] = true
+
+    config["epidemic_params"] = epiparams_dict
+    config["population_params"] = population
+    config["NPI"] = npiparams_dict
+
+    return config
+end
+
 function create_config_template(::MMCACovid19VacEngine, M::Int, G::Int)
     config = create_core_config()
+    config["simulation"]["engine"] = "MMCACovid19Vac"
     config = merge(config, MMCACovid19Vac.create_config_template(G))
     return config
 end
