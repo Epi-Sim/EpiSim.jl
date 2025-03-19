@@ -145,7 +145,7 @@ function execute_setup(args)
 
 end
 
-function execute_init(args, engine)
+function execute_init(args)
     config_fname  = args["config"]
     data_path   = args["data-folder"]
     output_fname = args["output"]
@@ -155,6 +155,8 @@ function execute_init(args, engine)
     output_path  = joinpath(data_path, output_fname)
     @assert isfile(config_fname);
     @assert isdir(data_path);
+
+    engine = validate_config(config)
 
     create_initial_conditions(engine, config, data_path, seeds_fname, output_path)
     
