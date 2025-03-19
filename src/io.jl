@@ -211,7 +211,8 @@ function _save_full(engine::MMCACovid19Engine,
         HD = NcVar("HD", dimlist; atts=Dict("description" => "Hospitalized-bad"), t=Float64, compress=-1)
         R  = NcVar("R" , dimlist; atts=Dict("description" => "Recovered"), t=Float64, compress=-1)
         D  = NcVar("D" , dimlist; atts=Dict("description" => "Dead"), t=Float64, compress=-1)
-        varlist = [S, E, A, I, PH, PD, HR, HD, R, D]
+        CH  = NcVar("CH" , dimlist; atts=Dict("description" => "Confined"), t=Float64, compress=-1)
+        varlist = [S, E, A, I, PH, PD, HR, HD, R, D, CH]
 
         data_dict = Dict()
         data_dict["S"]  = epi_params.ρˢᵍ  .* population.nᵢᵍ
@@ -224,22 +225,13 @@ function _save_full(engine::MMCACovid19Engine,
         data_dict["HD"] = epi_params.ρᴴᴰᵍ .* population.nᵢᵍ
         data_dict["R"]  = epi_params.ρᴿᵍ  .* population.nᵢᵍ
         data_dict["D"]  = epi_params.ρᴰᵍ  .* population.nᵢᵍ
+        data_dict["CH"] = epi_params.CHᵢᵍ .* population.nᵢᵍ
 
         # the next steps are needed to guarantee the the total population
         # remains constant and for this we need to calculate the number
         # of confined individuals at every time step and the sum that 
-        # value to the suceptible comparment.
+        # value to the susceptible compartment.
 
-        sim_pop = ( epi_params.ρˢᵍ + epi_params.ρᴱᵍ + epi_params.ρᴬᵍ + 
-                    epi_params.ρᴵᵍ + epi_params.ρᴾᴴᵍ + epi_params.ρᴾᴰᵍ + 
-                    epi_params.ρᴴᴿᵍ + epi_params.ρᴴᴰᵍ + epi_params.ρᴿᵍ + 
-                    epi_params.ρᴰᵍ ) .* population.nᵢᵍ
-        
-    
-        @simd for t in 1:T
-            CH = population.nᵢᵍ - sim_pop[:, :, t]
-            data_dict["S"][:, :, t] .+= CH
-        end
 
         isfile(filename) && rm(filename)
 
@@ -261,7 +253,7 @@ function create_compartments_array(engine::MMCACovid19Engine,
     G = population.G
     M = population.M
     T = epi_params.T
-    N = 10
+    N = 11
 
     compartments = zeros(Float64, G, M, T, N);
     compartments[:, :, :, 1]  .= epi_params.ρˢᵍ .* population.nᵢᵍ
@@ -274,6 +266,7 @@ function create_compartments_array(engine::MMCACovid19Engine,
     compartments[:, :, :, 8]  .= epi_params.ρᴴᴰᵍ .* population.nᵢᵍ
     compartments[:, :, :, 9]  .= epi_params.ρᴿᵍ .* population.nᵢᵍ
     compartments[:, :, :, 10] .= epi_params.ρᴰᵍ .* population.nᵢᵍ
+    compartments[:, :, :, 11] .= epi_params.CHᵢᵍ .* population.nᵢᵍ
 
     return compartments
 end
@@ -288,11 +281,6 @@ function _save_full(engine::MMCACovid19Engine,
     compartments = create_compartments_array(engine, epi_params, population)
 
     sim_pop = sum(compartments, dims=4)[:, :, :, 1]
-    
-    @simd for t in 1:T
-        CH = population.nᵢᵍ - sim_pop[:, :, t]
-        compartments[:, :, t, 1] += CH
-    end
 
     isfile(filename) && rm(filename)
     h5open(filename, "w") do file
@@ -319,8 +307,8 @@ function _save_time_step(engine::MMCACovid19Engine,
     
     G = population.G
     M = population.M
-    S = 10
-    S_coords = ["S", "E", "A", "I", "PH", "PD", "HR", "HD", "R", "D"]
+    S = 11
+    S_coords = ["S", "E", "A", "I", "PH", "PD", "HR", "HD", "R", "D", "CH"]
 
     G_coords = String[]
     M_coords = String[]
