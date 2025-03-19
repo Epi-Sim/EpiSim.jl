@@ -65,41 +65,26 @@ end
 
 function create_compartments_array(engine::MMCACovid19VacEngine, 
     epi_params::MMCACovid19Vac.Epidemic_Params, 
-    population::MMCACovid19Vac.Population_Params,
-    save_CH::Bool)
+    population::MMCACovid19Vac.Population_Params)
     G = population.G
     M = population.M
     T = epi_params.T
     V = epi_params.V
-    N = 10
-
-    if save_CH
-        compartments = zeros(Float64, G, M, T, V, N + 1);
-        compartments[:, :, :, :, 1]  .= epi_params.ρˢᵍᵥ  .* population.nᵢᵍ
-        compartments[:, :, :, :, 2]  .= epi_params.ρᴱᵍᵥ .* population.nᵢᵍ
-        compartments[:, :, :, :, 3]  .= epi_params.ρᴬᵍᵥ .* population.nᵢᵍ
-        compartments[:, :, :, :, 4]  .= epi_params.ρᴵᵍᵥ .* population.nᵢᵍ
-        compartments[:, :, :, :, 5]  .= epi_params.ρᴾᴴᵍᵥ .* population.nᵢᵍ
-        compartments[:, :, :, :, 6]  .= epi_params.ρᴾᴰᵍᵥ .* population.nᵢᵍ
-        compartments[:, :, :, :, 7]  .= epi_params.ρᴴᴿᵍᵥ .* population.nᵢᵍ
-        compartments[:, :, :, :, 8]  .= epi_params.ρᴴᴰᵍᵥ .* population.nᵢᵍ
-        compartments[:, :, :, :, 9]  .= epi_params.ρᴿᵍᵥ .* population.nᵢᵍ
-        compartments[:, :, :, :, 10] .= epi_params.ρᴰᵍᵥ .* population.nᵢᵍ
-        compartments[:, :, :, :, 11] .= epi_params.CHᵢᵍᵥ .* population.nᵢᵍ
-    elseif !save_CH
-        compartments = zeros(Float64, G, M, T, V, N);
-        compartments[:, :, :, :, 1]  .= epi_params.ρˢᵍ  .* population.nᵢᵍ
-        compartments[:, :, :, :, 2]  .= epi_params.ρᴱᵍ  .* population.nᵢᵍ
-        compartments[:, :, :, :, 3]  .= epi_params.ρᴬᵍ  .* population.nᵢᵍ
-        compartments[:, :, :, :, 4]  .= epi_params.ρᴵᵍ  .* population.nᵢᵍ
-        compartments[:, :, :, :, 5]  .= epi_params.ρᴾᴴᵍ .* population.nᵢᵍ
-        compartments[:, :, :, :, 6]  .= epi_params.ρᴾᴰᵍ .* population.nᵢᵍ
-        compartments[:, :, :, :, 7]  .= epi_params.ρᴴᴿᵍ .* population.nᵢᵍ
-        compartments[:, :, :, :, 8]  .= epi_params.ρᴴᴰᵍ .* population.nᵢᵍ
-        compartments[:, :, :, :, 9]  .= epi_params.ρᴿᵍ  .* population.nᵢᵍ
-        compartments[:, :, :, :, 10] .= epi_params.ρᴰᵍ  .* population.nᵢᵍ
-    end
-
+    N = epi_params.NumComps
+    
+    compartments = zeros(Float64, G, M, T, V, N);
+    compartments[:, :, :, :, 1]  .= epi_params.ρˢᵍᵥ  .* population.nᵢᵍ
+    compartments[:, :, :, :, 2]  .= epi_params.ρᴱᵍᵥ .* population.nᵢᵍ
+    compartments[:, :, :, :, 3]  .= epi_params.ρᴬᵍᵥ .* population.nᵢᵍ
+    compartments[:, :, :, :, 4]  .= epi_params.ρᴵᵍᵥ .* population.nᵢᵍ
+    compartments[:, :, :, :, 5]  .= epi_params.ρᴾᴴᵍᵥ .* population.nᵢᵍ
+    compartments[:, :, :, :, 6]  .= epi_params.ρᴾᴰᵍᵥ .* population.nᵢᵍ
+    compartments[:, :, :, :, 7]  .= epi_params.ρᴴᴿᵍᵥ .* population.nᵢᵍ
+    compartments[:, :, :, :, 8]  .= epi_params.ρᴴᴰᵍᵥ .* population.nᵢᵍ
+    compartments[:, :, :, :, 9]  .= epi_params.ρᴿᵍᵥ .* population.nᵢᵍ
+    compartments[:, :, :, :, 10] .= epi_params.ρᴰᵍᵥ .* population.nᵢᵍ
+    compartments[:, :, :, :, 11] .= epi_params.CHᵢᵍᵥ .* population.nᵢᵍ
+    
     return compartments
 end
 
@@ -107,17 +92,17 @@ function save_time_step(engine::MMCACovid19VacEngine,
     epi_params::MMCACovid19Vac.Epidemic_Params,
     population::MMCACovid19Vac.Population_Params,
     output_path::String, output_format::Union{String,AbstractOutputFormat}, 
-    export_time_t::Int, export_date::Date, save_CH::Bool)
+    export_time_t::Int, export_date::Date)
     
     format = output_format isa String ? get_output_format(output_format) : output_format
-    _save_time_step(engine, epi_params, population, output_path, format, export_time_t, export_date, save_CH)
+    _save_time_step(engine, epi_params, population, output_path, format, export_time_t, export_date)
 end
 
 function _save_time_step(engine::MMCACovid19VacEngine, 
     epi_params::MMCACovid19Vac.Epidemic_Params,
     population::MMCACovid19Vac.Population_Params,
     output_path::String, ::HDF5Format, export_compartments_time_t::Int, 
-    export_date::Date, save_CH::Bool) 
+    export_date::Date) 
     
     filename = joinpath(output_path, "compartments_t_$(export_date).h5")
     @info "\t- filename: $(filename)"
@@ -129,7 +114,7 @@ function _save_time_step(engine::MMCACovid19VacEngine,
     epi_params::MMCACovid19Vac.Epidemic_Params,
     population::MMCACovid19Vac.Population_Params,
     output_path::String, ::NetCDFFormat, export_compartments_time_t::Int, 
-    export_date::Date, save_CH::Bool) 
+    export_date::Date) 
 
     G = population.G
     M = population.M
@@ -151,10 +136,8 @@ function _save_time_step(engine::MMCACovid19VacEngine,
     filename = joinpath(output_path, "compartments_t_$(export_date).nc")
     @info "\t- filename: $(filename)"
     
-    compartments = create_compartments_array(engine, epi_params, population, save_CH)
-    if save_CH
-        push!(S_coords, "CH")
-    end
+    compartments = create_compartments_array(engine, epi_params, population)
+    
     isfile(filename) && rm(filename)
 
     nccreate(filename, "data", "G", G_coords, "M", M_coords, "V", V_coords, "epi_states", S_coords)
@@ -322,7 +305,7 @@ function save_time_step(engine::MMCACovid19Engine,
     epi_params::MMCAcovid19.Epidemic_Params,
     population::MMCAcovid19.Population_Params,
     output_path::String, output_format::Union{String,AbstractOutputFormat}, 
-    export_time_t::Int, export_date::Date, save_CH::Bool)
+    export_time_t::Int, export_date::Date)
 
     format = output_format isa String ? get_output_format(output_format) : output_format
     _save_time_step(engine, epi_params, population, output_path, format, export_time_t, export_date)
