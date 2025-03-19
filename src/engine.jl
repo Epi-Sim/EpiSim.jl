@@ -376,7 +376,7 @@ function set_compartments!(engine::MMCACovid19Engine, epi_params::MMCAcovid19.Ep
                           population::MMCAcovid19.Population_Params, npi_params::NPI_Params,
                           initial_compartments::Array{Float64, 3})
 
-    n_compartments = 10
+    n_compartments = 11
     G = population.G
     M = population.M
     @assert size(initial_compartments) == (G, M, n_compartments)
@@ -393,7 +393,7 @@ function set_compartments!(engine::MMCACovid19Engine, epi_params::MMCAcovid19.Ep
     epi_params.ρᴴᴰᵍ[:,:,t₀] .= initial_compartments[:, :, 8] ./ population.nᵢᵍ
     epi_params.ρᴿᵍ[:,:,t₀]  .= initial_compartments[:, :, 9] ./ population.nᵢᵍ
     epi_params.ρᴰᵍ[:,:,t₀]  .= initial_compartments[:, :, 10] ./ population.nᵢᵍ
-    epi_params.CHᵢᵍ[:,:]    .= CH ./ population.nᵢᵍ
+    epi_params.CHᵢᵍ[:,:,t₀] .= initial_compartments[:, :, 11] ./ population.nᵢᵍ
 
     epi_params.ρˢᵍ[isnan.(epi_params.ρˢᵍ)]   .= 0
     epi_params.ρᴱᵍ[isnan.(epi_params.ρᴱᵍ)]   .= 0
