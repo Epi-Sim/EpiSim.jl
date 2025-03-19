@@ -257,11 +257,11 @@ function create_initial_conditions(engine::MMCACovid19Engine,config::Dict, data_
 
     T = 1
 
-    population = init_pop_param_struct(G, M, G_coords, pop_params_dict, metapop_df, network_df)
-    epi_params = init_epi_parameters_struct(G, M, T, G_coords, epi_params_dict)
+    population = init_population_struct(engine, G, M, G_coords, pop_params_dict, network_df, metapop_df)
+    epi_params = init_epidemic_parameters_struct(engine, G, M, T, G_coords, epi_params_dict)
 
-    S = epi_params.NumComps
-    comp_coords = epi_params.CompLabels
+    S = 11
+    comp_coords = ["S", "E", "A", "I", "PH", "PD", "HR", "HD", "R", "D", "CH"]
 
     conditions₀ = CSV.read(seeds_fname, DataFrame)
     patches_idxs = Int.(conditions₀[:, "idx"])
