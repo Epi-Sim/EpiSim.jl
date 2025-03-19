@@ -196,12 +196,7 @@ function run_engine_io(engine::AbstractEngine, config::Dict, data_path::String, 
         if  time_step_tosave <= epi_params.T
             @info "- Storing compartments at single date $(export_date):"
             @info "\t* Simulation step: $(time_step_tosave)"
-            if time_step_tosave in npi_params.tᶜs
-                save_CH = true
-            else
-                save_CH = false
-            end
-            save_time_step(engine, epi_params, population, output_path, output_format, time_step_tosave, export_date, save_CH)
+            save_time_step(engine, epi_params, population, output_path, output_format, time_step_tosave, export_date)
         else
             @error "Can't save simulation step ($(time_step_tosave)) larger than the last time step ($(params.T))"
         end
@@ -363,25 +358,10 @@ function set_compartments!(engine::MMCACovid19VacEngine, epi_params::MMCACovid19
     M = population.M
     V = epi_params.V
     S = epi_params.NumComps
-    CH = zeros(Float64, G, M, V)
-    if npi_params.tᶜs[1] == 1
-        @assert size(initial_compartments) == (G, M, V, S + 1)
-        @info "The initial conditions correspond to a time step with NPI"
-        @info "Initializing the CH compartment "
-        for i in 1:epi_params.V
-            CH[:, :, i] .= initial_compartments[:, :, i, 11]
-        end
-    else
+    
         @assert size(initial_compartments) == (G, M, V, S)
 
-    end
     MMCACovid19Vac.set_compartments!(epi_params, population, initial_compartments)
-
-    t₀ = 1
-    for i in 1:V
-        epi_params.CHᵢᵍᵥ[:,:,t₀,i]    .= CH[:,:,i] ./ population.nᵢᵍ[:,:]
-    end
-    epi_params.CHᵢᵍᵥ[isnan.(epi_params.CHᵢᵍᵥ)]   .= 0
 end
 
 """
@@ -401,18 +381,6 @@ function set_compartments!(engine::MMCACovid19Engine, epi_params::MMCAcovid19.Ep
     M = population.M
     @assert size(initial_compartments) == (G, M, n_compartments)
 
-    if npi_params.tᶜs[1] == 1
-        @info "The initial conditions correspond to a time step with NPI"
-        diff = population.nᵢᵍ - sum(initial_compartments, dims = 3)[:,:,1]
-        @info "Initializing the CH compartment "
-        mask = isapprox.(diff, 0.0, atol=9e-9)
-        CH = zeros(Float64, G, M)
-        aux_pop = sum(initial_compartments, dims = 3)[:,:,1]
-        CH[.!mask] .= population.nᵢᵍ[.!mask] .- aux_pop[.!mask] 
-        CH[CH .< 0] .= 0
-    else
-        CH = zeros(Float64, G, M)
-    end
                        
     t₀ = 1
     epi_params.ρˢᵍ[:,:,t₀]  .= initial_compartments[:, :, 1] ./ population.nᵢᵍ
