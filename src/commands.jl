@@ -169,14 +169,12 @@ end
 ## Auxiliary functions
 ## ------------------------------------------------------------
 
-function create_initial_conditions(::MMCACovid19VacEngine,config::Dict, data_path::String, seeds_fname::String, output_path::String)
+function create_initial_conditions(engine::MMCACovid19VacEngine,config::Dict, data_path::String, seeds_fname::String, output_path::String)
     
     @info "Generating initial conditions for MMCACovid19VacEngine"
     data_dict       = config["data"]
     pop_params_dict = config["population_params"]
     epi_params_dict = config["epidemic_params"]
-
-    
 
     # Reading metapopulation Dataframe
     metapop_data_filename = joinpath(data_path, data_dict["metapopulation_data_filename"])
@@ -230,9 +228,9 @@ function create_initial_conditions(::MMCACovid19VacEngine,config::Dict, data_pat
 
 end
 
-function create_initial_conditions(::MMCACovid19Engine,config::Dict, data_path::String, seeds_fname::String, output_path::String)
+function create_initial_conditions(engine::MMCACovid19Engine,config::Dict, data_path::String, seeds_fname::String, output_path::String)
     
-    @info "Generating initial conditions for MMCACovid19VacEngine"
+    @info "Generating initial conditions for MMCACovid19Engine"
     data_dict       = config["data"]
     pop_params_dict = config["population_params"]
     epi_params_dict = config["epidemic_params"]
