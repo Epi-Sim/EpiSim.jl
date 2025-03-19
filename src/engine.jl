@@ -359,7 +359,7 @@ function set_compartments!(engine::MMCACovid19VacEngine, epi_params::MMCACovid19
     V = epi_params.V
     S = epi_params.NumComps
     
-        @assert size(initial_compartments) == (G, M, V, S)
+    @assert size(initial_compartments) == (G, M, V, S)
 
     MMCACovid19Vac.set_compartments!(epi_params, population, initial_compartments)
 end
