@@ -359,7 +359,9 @@ function set_compartments!(engine::MMCACovid19VacEngine, epi_params::MMCACovid19
     G = population.G
     M = population.M
     V = epi_params.V
-    S = epi_params.NumComps
+    # there are a total of 11 compartments: (S, E, A, I, PH, PD, HR, HD, R, D) plus an extra compartment (CH) for confined households)
+    # TODO: move this value into a constant inside the epidemic_params struct
+    S = 11
     
     @assert size(initial_compartments) == (G, M, V, S)
 
