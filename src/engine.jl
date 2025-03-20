@@ -405,7 +405,7 @@ function set_compartments!(engine::MMCACovid19Engine, epi_params::MMCAcovid19.Ep
     epi_params.ρᴴᴰᵍ[isnan.(epi_params.ρᴴᴰᵍ)] .= 0
     epi_params.ρᴿᵍ[isnan.(epi_params.ρᴿᵍ)]   .= 0
     epi_params.ρᴰᵍ[isnan.(epi_params.ρᴰᵍ)]   .= 0
-    epi_params.CHᵢᵍ[isnan.(epi_params.CHᵢᵍ)]   .= 0
+    epi_params.CHᵢᵍ[isnan.(epi_params.CHᵢᵍ)] .= 0
 
 end
 
