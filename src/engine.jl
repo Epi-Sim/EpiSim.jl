@@ -160,6 +160,8 @@ function run_engine_io(engine::AbstractEngine, config::Dict, data_path::String, 
 
     coords = Dict(:T_coords => T_coords, :G_coords => G_coords, :M_coords => M_coords)
 
+    n_compartments = 11
+
     ####################################################
     #####   INITIALIZATION OF DATA Structures   ########
     ####################################################
@@ -173,7 +175,7 @@ function run_engine_io(engine::AbstractEngine, config::Dict, data_path::String, 
     set_compartments!(engine, epi_params, population, npi_params, initial_compartments)
 
     @info "- Initializing MMCA epidemic simulations for engine $(engine)"
-    @info "\t* N. of epi compartments = 10" 
+    @info "\t* N. of epi compartments = $(n_compartments)" 
     @info "\t* G (agent class) = $(G)"
     @info "\t* M (n. of metapopulations) = $(M)"
     @info "\t* T (simulation steps) = $(T)"
