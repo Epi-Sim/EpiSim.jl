@@ -33,3 +33,6 @@ runs/*
 episim
 
 output/*.nc
+
+test/
+pruebas/

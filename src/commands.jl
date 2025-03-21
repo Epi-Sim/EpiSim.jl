@@ -74,7 +74,7 @@ function parse_command_line()
         "--seeds"
             help = "CSV file with initial seeds (initial infected individuals). It is used to create the initial condition file"
             required = true
-        "--out", "-o"
+        "--output", "-o"
             help = "Output file name for storing the condition in NetCDF format"
             required = false
             default = "initial_conditions.nc"
@@ -145,26 +145,45 @@ function execute_setup(args)
 
 end
 
-function execute_init(args)
+function execute_init(args, engine)
     config_fname  = args["config"]
-    data_folder   = args["data-folder"]
-    output_folder = args["out"]
+    data_path   = args["data-folder"]
+    output_fname = args["output"]
     seeds_fname   = args["seeds"]
 
     config          = JSON.parsefile(config_fname);
+    output_path  = joinpath(data_path, output_fname)
+    @assert isfile(config_fname);
+    @assert isdir(data_path);
+
+    engine = validate_config(config)
+
+    create_initial_conditions(engine, config, data_path, seeds_fname, output_path)
+    
+    
+end
+
+
+
+## ------------------------------------------------------------
+## Auxiliary functions
+## ------------------------------------------------------------
+
+function create_initial_conditions(engine::MMCACovid19VacEngine,config::Dict, data_path::String, seeds_fname::String, output_path::String)
+    
+    @info "Generating initial conditions for MMCACovid19VacEngine"
     data_dict       = config["data"]
     pop_params_dict = config["population_params"]
     epi_params_dict = config["epidemic_params"]
 
-    output_fname = joinpath(output_folder, "initial_conditions_10.nc")
-
     # Reading metapopulation Dataframe
-    metapop_data_filename = joinpath(data_folder, data_dict["metapopulation_data_filename"])
-    metapop_df = CSV.read(metapop_data_filename, DataFrame, types=Dict("id" => String, 
-    "area"=>Float64, "Y"=>Float64, "M"=>Float64, "O"=>Float64, "Total"=>Float64))
+    dtypes = Dict(vcat("id" => String, "area" => Float64, [i => Float64 for i in pop_params_dict["G_labels"]], "total" => Float64))
+    
+    metapop_data_filename = joinpath(data_path, data_dict["metapopulation_data_filename"])
+    metapop_df = CSV.read(metapop_data_filename, DataFrame, types=dtypes)
 
     # Loading mobility network
-    mobility_matrix_filename = joinpath(data_folder, data_dict["mobility_matrix_filename"])
+    mobility_matrix_filename = joinpath(data_path, data_dict["mobility_matrix_filename"])
     network_df  = CSV.read(mobility_matrix_filename, DataFrame)
 
     # Metapopulations patches coordinates (labels)
@@ -202,19 +221,71 @@ function execute_init(args)
     compartments[3, patches_idxs, 1, A_idx] .= G_fractions[3] .* conditions₀[:, "seed"]
     
     compartments[:, :, 1, S_idx]  .= population.nᵢᵍ - compartments[:, :, 1, A_idx]
+
     @printf("- Setting remaining population %.1f in compartment S\n", sum(compartments[:, :, 1, S_idx]))
-    @printf("- Saving intital conditions in '%s' \n", output_fname)
-    nccreate(output_fname, "data", "G", G_coords, "M", M_coords, "V", V_coords, "epi_states", collect(comp_coords))
-    ncwrite(compartments, output_fname, "data")
+    @printf("- Saving initial conditions in '%s' \n", output_path)
+    nccreate(output_path, "data", "G", G_coords, "M", M_coords, "V", V_coords, "epi_states", collect(comp_coords))
+    ncwrite(compartments, output_path, "data")
+
 end
 
+function create_initial_conditions(engine::MMCACovid19Engine,config::Dict, data_path::String, seeds_fname::String, output_path::String)
+    
+    @info "Generating initial conditions for MMCACovid19Engine"
+    data_dict       = config["data"]
+    pop_params_dict = config["population_params"]
+    epi_params_dict = config["epidemic_params"]
+    
 
+    # Reading metapopulation Dataframe
+    dtypes = Dict(vcat("id" => String, "area" => Float64, [i => Float64 for i in pop_params_dict["G_labels"]], "total" => Float64))
+    
+    metapop_data_filename = joinpath(data_path, data_dict["metapopulation_data_filename"])
+    metapop_df = CSV.read(metapop_data_filename, DataFrame, types=dtypes)
 
+    # Loading mobility network
+    mobility_matrix_filename = joinpath(data_path, data_dict["mobility_matrix_filename"])
+    network_df  = CSV.read(mobility_matrix_filename, DataFrame)
 
+    # Metapopulations patches coordinates (labels)
+    M_coords = map(String,metapop_df[:, "id"])
+    M = length(M_coords)
 
-## ------------------------------------------------------------
-## Auxiliary functions
-## ------------------------------------------------------------
+    # Coordinates for each age strata (labels)
+    G_coords = map(String, pop_params_dict["G_labels"])
+    G = length(G_coords)
+
+    T = 1
+
+    population = init_population_struct(engine, G, M, G_coords, pop_params_dict, network_df, metapop_df)
+    epi_params = init_epidemic_parameters_struct(engine, G, M, T, G_coords, epi_params_dict)
+
+    S = 11
+    comp_coords = ["S", "E", "A", "I", "PH", "PD", "HR", "HD", "R", "D", "CH"]
+
+    conditions₀ = CSV.read(seeds_fname, DataFrame)
+    patches_idxs = Int.(conditions₀[:, "idx"])
+    
+    G_fractions = [0.12 0.16 0.72]
+    
+    println("- Creating compartment array")
+    compartments = zeros(Float64, G, M, S);
+    
+    S_idx = 1
+    A_idx = 3
+     @printf("- Setting infected %.1f seeds in compartment A\n", sum(conditions₀[:, "seed"]))
+    compartments[1, patches_idxs, A_idx] .= G_fractions[1] .* conditions₀[:, "seed"]
+    compartments[2, patches_idxs, A_idx] .= G_fractions[2] .* conditions₀[:, "seed"]
+    compartments[3, patches_idxs, A_idx] .= G_fractions[3] .* conditions₀[:, "seed"]
+    
+    compartments[:, :, S_idx]  .= population.nᵢᵍ - compartments[:, :, A_idx]
+
+    @printf("- Setting remaining population %.1f in compartment S\n", sum(compartments[:, :, 1, S_idx]))
+    @printf("- Saving initial conditions in '%s' \n", output_path)
+    nccreate(output_path, "data", "G", G_coords, "M", M_coords, "epi_states", collect(comp_coords))
+    ncwrite(compartments, output_path, "data")
+
+end
 
 function read_config()
     
