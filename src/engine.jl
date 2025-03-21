@@ -196,8 +196,8 @@ function run_engine_io(engine::AbstractEngine, config::Dict, data_path::String, 
     if time_step_tosave !== nothing
         export_date = first_day + Day(time_step_tosave - 1)
         if  time_step_tosave <= epi_params.T
-            @info "- Storing compartments at single date $(export_date):"
-            @info "\t* Simulation step: $(time_step_tosave)"
+            @info "- Storing compartments at single date (step):"
+            @info "\t* Simulation date (step): $(export_date) ($(time_step_tosave))"
             save_time_step(engine, epi_params, population, output_path, output_format, time_step_tosave, export_date)
         else
             @error "Can't save simulation step ($(time_step_tosave)) larger than the last time step ($(params.T))"
