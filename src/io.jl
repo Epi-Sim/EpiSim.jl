@@ -59,7 +59,7 @@ function _save_full(engine::MMCACovid19VacEngine,
     output_path::String, ::HDF5Format; kwargs...)
 
     filename = joinpath(output_path, "compartments_full.h5")
-    @info "Storing full simulation output in HDF5: $filename"
+    @info "- Storing full simulation output in HDF5: $filename"
     MMCACovid19Vac.save_simulation_hdf5(epi_params, population, filename)
 end
 
@@ -70,9 +70,11 @@ function create_compartments_array(engine::MMCACovid19VacEngine,
     M = population.M
     T = epi_params.T
     V = epi_params.V
-    N = epi_params.NumComps
+    # there are a total of 11 compartments: (S, E, A, I, PH, PD, HR, HD, R, D) plus an extra compartment (CH) for confined households)
+    # TODO: move this value into a constant inside the epidemic_params struct
+    S = 11
     
-    compartments = zeros(Float64, G, M, T, V, N);
+    compartments = zeros(Float64, G, M, T, V, S);
     compartments[:, :, :, :, 1]  .= epi_params.ρˢᵍᵥ  .* population.nᵢᵍ
     compartments[:, :, :, :, 2]  .= epi_params.ρᴱᵍᵥ .* population.nᵢᵍ
     compartments[:, :, :, :, 3]  .= epi_params.ρᴬᵍᵥ .* population.nᵢᵍ
@@ -105,7 +107,7 @@ function _save_time_step(engine::MMCACovid19VacEngine,
     export_date::Date) 
     
     filename = joinpath(output_path, "compartments_t_$(export_date).h5")
-    @info "\t- filename: $(filename)"
+    @info "\t* Filename: $(filename)"
     MMCACovid19Vac.save_simulation_hdf5(epi_params, population, filename; 
                         export_time_t = export_compartments_time_t)
 end
@@ -120,7 +122,7 @@ function _save_time_step(engine::MMCACovid19VacEngine,
     M = population.M
     V = epi_params.V
     S = epi_params.NumComps
-    S_coords = epi_params.CompLabels
+    S_coords = vcat(epi_params.CompLabels, ["CH"])
     V_coords = epi_params.VaccLabels
 
     G_coords = String[]
@@ -134,7 +136,7 @@ function _save_time_step(engine::MMCACovid19VacEngine,
     end
     
     filename = joinpath(output_path, "compartments_t_$(export_date).nc")
-    @info "\t- filename: $(filename)"
+    @info "\t* Filename: $(filename)"
     
     compartments = create_compartments_array(engine, epi_params, population)
     
@@ -152,14 +154,14 @@ function save_observables(engine::MMCACovid19VacEngine,
     G_coords=String[], M_coords=String[], T_coords=String[])
 
     filename = joinpath(output_path, "observables.nc")
-    @info "Storing simulation observables output in NetCDF: $filename"
+    @info "- Storing simulation observables output in NetCDF: $filename"
     try
         MMCACovid19Vac.save_observables_netCDF(epi_params, population, filename; G_coords, M_coords, T_coords)
     catch e
         @error "Error saving simulation observables" exception=(e, catch_backtrace())
         rethrow(e)
     end
-    @info "done saving observables"
+    @info "- Done saving observables"
 end
 
 
@@ -180,7 +182,7 @@ function _save_full(engine::MMCACovid19Engine,
     
     
     filename = joinpath(output_path, "compartments_full.nc")
-    @info "Storing full simulation output in NetCDF: $filename"
+    @info "- Storing full simulation output in NetCDF: $filename"
     try
         G = population.G
         M = population.M
@@ -211,7 +213,8 @@ function _save_full(engine::MMCACovid19Engine,
         HD = NcVar("HD", dimlist; atts=Dict("description" => "Hospitalized-bad"), t=Float64, compress=-1)
         R  = NcVar("R" , dimlist; atts=Dict("description" => "Recovered"), t=Float64, compress=-1)
         D  = NcVar("D" , dimlist; atts=Dict("description" => "Dead"), t=Float64, compress=-1)
-        CH  = NcVar("CH" , dimlist; atts=Dict("description" => "Confined"), t=Float64, compress=-1)
+        CH = NcVar("CH", dimlist; atts=Dict("description" => "Confined"), t=Float64, compress=-1)
+
         varlist = [S, E, A, I, PH, PD, HR, HD, R, D, CH]
 
         data_dict = Dict()
@@ -226,12 +229,6 @@ function _save_full(engine::MMCACovid19Engine,
         data_dict["R"]  = epi_params.ρᴿᵍ  .* population.nᵢᵍ
         data_dict["D"]  = epi_params.ρᴰᵍ  .* population.nᵢᵍ
         data_dict["CH"] = epi_params.CHᵢᵍ .* population.nᵢᵍ
-
-        # the next steps are needed to guarantee the the total population
-        # remains constant and for this we need to calculate the number
-        # of confined individuals at every time step and the sum that 
-        # value to the susceptible compartment.
-
 
         isfile(filename) && rm(filename)
 
@@ -322,7 +319,7 @@ function _save_time_step(engine::MMCACovid19Engine,
 
     
     filename = joinpath(output_path, "compartments_t_$(export_date).nc")
-    @info "\t- filename: $(filename)"
+    @info "\t* Filename: $(filename)"
     
     compartments = create_compartments_array(engine, epi_params, population)
 
@@ -340,7 +337,7 @@ function _save_time_step(engine::MMCACovid19Engine,
     output_path::String, ::HDF5Format, export_time_t::Int, export_date::Date) 
     
     filename = joinpath(output_path, "compartments_t_$(export_date).h5")
-    @info "\t- filename: $(filename)"
+    @info "\t* Filename: $(filename)"
     
     compartments = create_compartments_array(engine, epi_params, population)
 
