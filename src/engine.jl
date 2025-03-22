@@ -202,11 +202,9 @@ function run_engine_io(engine::AbstractEngine, config::Dict, data_path::String, 
         save_full(engine, epi_params, population, output_path, output_format; coords...)
     end
     if save_obs_output
-        @info "- Saving observables"
         save_observables(engine, epi_params, population, output_path; coords...)
     end
     if export_date !== nothing
-        @info "- Saving simulation state at time step: $(time_step_tosave) ($(export_date))"
         save_time_step(engine, epi_params, population, output_path, time_step_tosave, export_date)
     end
 

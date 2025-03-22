@@ -43,7 +43,7 @@ function _save_full(engine::MMCACovid19VacEngine,
     
     
     filename = joinpath(output_path, "compartments_full.nc")
-    @info "- Storing full simulation output in NetCDF: $filename"
+    @info "- Saving full simulation output in NetCDF: $filename"
     try
         MMCACovid19Vac.save_simulation_netCDF(epi_params, population, filename; G_coords, M_coords, T_coords)
     catch e
@@ -59,7 +59,7 @@ function _save_full(engine::MMCACovid19VacEngine,
     output_path::String, ::HDF5Format; kwargs...)
 
     filename = joinpath(output_path, "compartments_full.h5")
-    @info "Storing full simulation output in HDF5: $filename"
+    @info "- Saving full simulation output in HDF5: $filename"
     MMCACovid19Vac.save_simulation_hdf5(epi_params, population, filename)
 end
 
@@ -69,6 +69,8 @@ function save_time_step(engine::MMCACovid19VacEngine,
     output_path::String, export_compartments_time_t::Int, export_date::Date) 
     
     filename = joinpath(output_path, "compartments_t_$(export_date).h5")
+
+    @info "- Saving simulation state at time step: $(time_step_tosave) ($(export_date))"
     @info "\t- filename: $(filename)"
     MMCACovid19Vac.save_simulation_hdf5(epi_params, population, filename; 
                         export_time_t = export_compartments_time_t)
@@ -109,7 +111,7 @@ function _save_full(engine::MMCACovid19Engine,
     
     
     filename = joinpath(output_path, "compartments_full.nc")
-    @info "Storing full simulation output in NetCDF: $filename"
+    @info "- Saving full simulation output in NetCDF: $filename"
     try
         G = population.G
         M = population.M
