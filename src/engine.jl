@@ -161,6 +161,20 @@ function run_engine_io(engine::AbstractEngine, config::Dict, data_path::String, 
 
     coords = Dict(:T_coords => T_coords, :G_coords => G_coords, :M_coords => M_coords)
 
+    export_date = nothing
+    if time_step_tosave !== nothing
+        if time_step_tosave == -1
+            time_step_tosave = T
+        end
+        if time_step_tosave > T
+            @error "Can't save simulation step ($(time_step_tosave)) largest then the last time step ($(T))"
+            return 1
+        elseif time_step_tosave < 1
+            @error "Can't save simulation step ($(time_step_tosave)) smaller then the first time step (1)"
+            return 1
+        end
+        export_date = first_day + Day(time_step_tosave - 1)
+    end
     ####################################################
     #####   INITIALIZATION OF DATA Structures   ########
     ####################################################
@@ -185,22 +199,15 @@ function run_engine_io(engine::AbstractEngine, config::Dict, data_path::String, 
     run_engine!(engine, population, epi_params, npi_params; verbose = false, vac_params_dict = vac_params_dict)
 
     if save_full_output
-        @info "- Saving full compartments" 
         save_full(engine, epi_params, population, output_path, output_format; coords...)
     end
     if save_obs_output
         @info "- Saving observables"
         save_observables(engine, epi_params, population, output_path; coords...)
     end
-    if time_step_tosave !== nothing
-        export_date = first_day + Day(time_step_tosave - 1)
-        if  time_step_tosave <= epi_params.T
-            @info "- Storing compartments at single date $(export_date):"
-            @info "\t* Simulation step: $(time_step_tosave)"
-            save_time_step(engine, epi_params, population, output_path, time_step_tosave, export_date)
-        else
-            @error "- Can't save simulation step ($(time_step_tosave)) largest then the last time step ($(params.T))"
-        end
+    if export_date !== nothing
+        @info "- Saving simulation state at time step: $(time_step_tosave) ($(export_date))"
+        save_time_step(engine, epi_params, population, output_path, time_step_tosave, export_date)
     end
 
     @info "- Done running simulations"
@@ -368,23 +375,38 @@ Function to set the initial compartments for the engine MMCACovid19Engine
         initial_compartments: Array{Float64, 3}
 """
 function set_compartments!(engine::MMCACovid19Engine, epi_params::MMCAcovid19.Epidemic_Params, 
-                          population::MMCAcovid19.Population_Params, initial_compartments::Array{Float64, 3})
+                          population::MMCAcovid19.Population_Params, initial_compartments::Array{Float64, 3}; scale_by_population = true)
 
     n_compartments = 10
 
     @assert size(initial_compartments) == (population.G, population.M, n_compartments)
                        
     t₀ = 1
-    epi_params.ρˢᵍ[:,:,t₀]  .= initial_compartments[:, :, 1] ./ population.nᵢᵍ
-    epi_params.ρᴱᵍ[:,:,t₀]  .= initial_compartments[:, :, 2] ./ population.nᵢᵍ
-    epi_params.ρᴬᵍ[:,:,t₀]  .= initial_compartments[:, :, 3] ./ population.nᵢᵍ
-    epi_params.ρᴵᵍ[:,:,t₀]  .= initial_compartments[:, :, 4] ./ population.nᵢᵍ
-    epi_params.ρᴾᴴᵍ[:,:,t₀] .= initial_compartments[:, :, 5] ./ population.nᵢᵍ
-    epi_params.ρᴾᴰᵍ[:,:,t₀] .= initial_compartments[:, :, 6] ./ population.nᵢᵍ
-    epi_params.ρᴴᴿᵍ[:,:,t₀] .= initial_compartments[:, :, 7] ./ population.nᵢᵍ
-    epi_params.ρᴴᴰᵍ[:,:,t₀] .= initial_compartments[:, :, 8] ./ population.nᵢᵍ
-    epi_params.ρᴿᵍ[:,:,t₀]  .= initial_compartments[:, :, 9] ./ population.nᵢᵍ
-    epi_params.ρᴰᵍ[:,:,t₀]  .= initial_compartments[:, :, 10] ./ population.nᵢᵍ
+
+    epi_params.ρˢᵍ[:,:,t₀]  .= initial_compartments[:, :, 1]
+    epi_params.ρᴱᵍ[:,:,t₀]  .= initial_compartments[:, :, 2]
+    epi_params.ρᴬᵍ[:,:,t₀]  .= initial_compartments[:, :, 3]
+    epi_params.ρᴵᵍ[:,:,t₀]  .= initial_compartments[:, :, 4]
+    epi_params.ρᴾᴴᵍ[:,:,t₀] .= initial_compartments[:, :, 5]
+    epi_params.ρᴾᴰᵍ[:,:,t₀] .= initial_compartments[:, :, 6]
+    epi_params.ρᴴᴿᵍ[:,:,t₀] .= initial_compartments[:, :, 7]
+    epi_params.ρᴴᴰᵍ[:,:,t₀] .= initial_compartments[:, :, 8]
+    epi_params.ρᴿᵍ[:,:,t₀]  .= initial_compartments[:, :, 9]
+    epi_params.ρᴰᵍ[:,:,t₀]  .= initial_compartments[:, :, 10]
+
+
+    if scale_by_population
+        epi_params.ρˢᵍ[:,:,t₀]  .= epi_params.ρˢᵍ[:,:,t₀] ./ population.nᵢᵍ
+        epi_params.ρᴱᵍ[:,:,t₀]  .= epi_params.ρᴱᵍ[:,:,t₀] ./ population.nᵢᵍ
+        epi_params.ρᴬᵍ[:,:,t₀]  .= epi_params.ρᴬᵍ[:,:,t₀] ./ population.nᵢᵍ
+        epi_params.ρᴵᵍ[:,:,t₀]  .= epi_params.ρᴵᵍ[:,:,t₀] ./ population.nᵢᵍ
+        epi_params.ρᴾᴴᵍ[:,:,t₀] .= epi_params.ρᴾᴴᵍ[:,:,t₀] ./ population.nᵢᵍ
+        epi_params.ρᴾᴰᵍ[:,:,t₀] .= epi_params.ρᴾᴰᵍ[:,:,t₀] ./ population.nᵢᵍ
+        epi_params.ρᴴᴿᵍ[:,:,t₀] .= epi_params.ρᴴᴿᵍ[:,:,t₀] ./ population.nᵢᵍ
+        epi_params.ρᴴᴰᵍ[:,:,t₀] .= epi_params.ρᴴᴰᵍ[:,:,t₀] ./ population.nᵢᵍ
+        epi_params.ρᴿᵍ[:,:,t₀]  .= epi_params.ρᴿᵍ[:,:,t₀] ./ population.nᵢᵍ
+        epi_params.ρᴰᵍ[:,:,t₀]  .= epi_params.ρᴰᵍ[:,:,t₀] ./ population.nᵢᵍ
+    end
 
     epi_params.ρˢᵍ[isnan.(epi_params.ρˢᵍ)]   .= 0
     epi_params.ρᴱᵍ[isnan.(epi_params.ρᴱᵍ)]   .= 0
