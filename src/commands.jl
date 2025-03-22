@@ -41,6 +41,10 @@ function parse_command_line()
         "--end-date"
             help = "end date of simulation. Overwrites the one provided in config.json"
             default = nothing
+        "--log-level", "-l"
+            help = "Logging level (debug, info, warn, error)"
+            arg_type = String
+            default = "info"
     end
 
     @add_arg_table s["setup"] begin
@@ -62,6 +66,10 @@ function parse_command_line()
         "--engine", "-e"
             help = "Simulator Engine"
             default = "MMCACovid19Vac"
+        "--log-level", "-l"
+            help = "Logging level (debug, info, warn, error)"
+            arg_type = String
+            default = "info"
     end
 
     @add_arg_table s["init"] begin
@@ -78,9 +86,33 @@ function parse_command_line()
             help = "Output file name for storing the condition in NetCDF format"
             required = false
             default = "initial_conditions.nc"
+        "--log-level", "-l"
+            help = "Logging level (debug, info, warn, error)"
+            arg_type = String
+            default = "info"
     end
     return parse_args(s)
 end
+
+
+function set_log_level(level::String)
+    if level == "debug"
+        global_logger(ConsoleLogger(stderr, Logging.Debug))
+    elseif level == "info"
+        global_logger(ConsoleLogger(stderr, Logging.Info))
+    elseif level == "warn"
+        global_logger(ConsoleLogger(stderr, Logging.Warn))
+    elseif level == "error"
+        global_logger(ConsoleLogger(stderr, Logging.Error))
+    elseif level == "off"
+        global_logger(ConsoleLogger(stderr, Logging.Error + 1))  # Effectively disables logging
+    else
+        @warn "Invalid log level: $level, defaulting to Info"
+        global_logger(ConsoleLogger(stderr, Logging.Info))
+    end
+end
+
+
 
 
 
@@ -95,6 +127,8 @@ function execute_run(args)
     data_path     = args["data-folder"]
     config_fname  = args["config"]
     instance_path = args["instance-folder"]
+
+    
 
     init_condition_path = args["initial-condition"]
     
