@@ -1,5 +1,4 @@
-```========================================================================
-
+```
  /$$$$$$$$           /$$  /$$$$$$  /$$                       /$$
 | $$_____/          |__/ /$$__  $$|__/                      | $$
 | $$        /$$$$$$  /$$| $$  \__/ /$$ /$$$$$$/$$$$      /$$| $$
@@ -11,19 +10,16 @@
           | $$                                     /$$  | $$    
           | $$                                    |  $$$$$$/    
           |__/                                     \______/     
+```
+## A Julia package for simulating epidemic spreading in metapopulations
 
-
-A Julia package for simulating epidemic spreading in metapopulations
-
-========================================================================
-
-EpiSim.jl is a general interface to access different simulation engines/models. In this sense, EpiSim.jl works as a stand-alone simulator that allows running simulations using different engines/models. Currently, it implements MMCA approach for simulating an extended SEIR in a meta-population with different agent types which can be used to model different age strata. The different populations are connect through a network that represent the daily mobility patterns of agents that commute to work to different regions.
+_EpiSim.jl_ is a general interface to access different simulation engines/models. In this sense, _EpiSim.jl_ works as a stand-alone simulator that allows running simulations using different engines/models. Currently, it implements MMCA approach for simulating an extended SEIR in a meta-population with different agent types which can be used to model different age strata [1-4]. The different populations are connect through a network that represent the daily mobility patterns of agents that commute to work to different regions.
 
 Currently supported engines:
-* MMCAcovid19 Julia package [https://docs.juliahub.com/MMCAcovid19/]([url](https://docs.juliahub.com/MMCAcovid19/))
-* MMCAcovid19-Vac Julia package, [https://github.com/Epi-Sim/MMCACovid19Vac.jl]([url](https://github.com/Epi-Sim/MMCACovid19Vac.jl))
+* **MMCAcovid19** Julia package, [https://docs.juliahub.com/MMCAcovid19/]([url](https://docs.juliahub.com/MMCAcovid19/)) [2].
+* **MMCAcovid19-Vac** Julia package, [https://github.com/Epi-Sim/MMCACovid19Vac.jl]([url](https://github.com/Epi-Sim/MMCACovid19Vac.jl)) [3]
 
-As a novel feature, EpiSim.jl uses a standard configuration format for setting or defining specific instances of a model, for instance, defining the number and sizes of the different metapopulations, providing the structure of the mobility network and setting values for the epidemiological transition rates.
+As a novel feature, _EpiSim.jl_ uses a standard configuration format for setting or defining specific instances of a model, for instance, defining the number and sizes of the different metapopulations, providing the structure of the mobility network and setting values for the epidemiological transition rates.
 
 Additionally, EpiSim.jl uses the NetCDF format to store simulation outputs. [NetCDF]([url](https://www.unidata.ucar.edu/software/netcdf/)) enables storing multi-dimensional arrays with labelled coordinates. Working with multi-dimensional arrays in a standard format helps the interoperability, the post-processing of the results and the exchange of results between modellers. The following figures show an example of the multi-dimensional structure of a simulation:
 
@@ -142,12 +138,9 @@ The source of the initial version can be found in the following link: MMCA_with_
 
 
 ## References
+1. Jesús Gómez-Gardeñes, David Soriano-Paños and Alex Arenas: Critical regimes driven by recurrent mobility patterns of reaction-diffusion processes in networks, _Nature Physics_ **14** (2018) 391–395.
+  
+3. Alex Arenas, Wesley Cota, Jesús Gómez-Gardeñes, Sergio Gómez, Clara Granell, Joan T. Matamalas, David Soriano-Paños and Benjamin Steinegger: Modeling the spatiotemporal epidemic spreading of COVID-19 and the impact of mobility and social distancing interventions, _Physical Review X_ **10** (2020) 041055.
 
-1. Alex Arenas, Wesley Cota, Jesús Gómez-Gardeñes, Sergio Gómez, Clara Granell, Joan T. Matamalas, David Soriano-Paños and Benjamin Steinegger: Modeling the spatiotemporal epidemic spreading of COVID-19 and the impact of mobility and social distancing interventions, _Physical Review X_ **10** (2020) 041055 ([doi](https://doi.org/10.1103/PhysRevX.10.041055))
-
-2. Sergio Gómez, Alex Arenas, Javier Borge-Holthoefer, Sandro Meloni and Yamir Moreno: Discrete-time Markov chain approach to contact-based disease spreading in complex networks, _Europhysics Letters_ **89** (2010) 38009 ([doi](https://doi.org/10.1209/0295-5075/89/38009))
-
-3. Jesús Gómez-Gardeñes, David Soriano-Paños and Alex Arenas: Critical regimes driven by recurrent mobility patterns of reaction-diffusion processes in networks, _Nature Physics_ **14** (2018) 391–395 ([doi](https://doi.org/10.1101/2020.03.21.20040022))
-
-4. David Soriano-Paños, L. Lotero, Alex Arenas and Jesús Gómez-Gardeñes: Spreading processes in multiplex metapopulations containing different mobility networks, _Physical Review X_ **8** (2018) 031039 ([doi](https://doi.org/10.1103/PhysRevX.8.031039))
+4. Castioni, P., Gómez, S., Granell, C., & Arenas, A. (2024). Rebound in epidemic control: How misaligned vaccination timing amplifies infection peaks. npj Complexity, 1(1), 20.
 

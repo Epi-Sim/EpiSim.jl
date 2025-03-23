@@ -110,9 +110,8 @@ Run the engine using input files (which must be available in the data_path and i
 and save the output to the output folder.
 """
 function run_engine_io(engine::AbstractEngine, config::Dict, data_path::String, instance_path::String, init_condition_path::String)
-    simulation_dict  = config["simulation"]
+    simulation_dict = config["simulation"]
     output_format    = simulation_dict["output_format"]
-    first_day        = Date(simulation_dict["start_date"])
     save_full_output = get(simulation_dict, "save_full_output", false)
     save_obs_output  = get(simulation_dict, "save_observables", false)
     time_step_tosave = get(simulation_dict, "save_time_step", nothing)
@@ -126,7 +125,7 @@ function run_engine_io(engine::AbstractEngine, config::Dict, data_path::String, 
     
     @info "Running EpiSim.jl using: $(engine)"
     
-    simulation_dict = config["simulation"]
+    
     data_dict       = config["data"]
     epi_params_dict = config["epidemic_params"]
     pop_params_dict = config["population_params"]
@@ -161,6 +160,8 @@ function run_engine_io(engine::AbstractEngine, config::Dict, data_path::String, 
 
     coords = Dict(:T_coords => T_coords, :G_coords => G_coords, :M_coords => M_coords)
 
+    n_compartments = 11
+
     export_date = nothing
     if time_step_tosave !== nothing
         if time_step_tosave == -1
@@ -185,10 +186,10 @@ function run_engine_io(engine::AbstractEngine, config::Dict, data_path::String, 
 
     vac_params_dict = get(config, "vaccination", nothing)
 
-    set_compartments!(engine, epi_params, population, initial_compartments)
+    set_compartments!(engine, epi_params, population, npi_params, initial_compartments)
 
     @info "- Initializing MMCA epidemic simulations for engine $(engine)"
-    @info "\t* N. of epi compartments = 10" 
+    @info "\t* N. of epi compartments = $(n_compartments)" 
     @info "\t* G (agent class) = $(G)"
     @info "\t* M (n. of metapopulations) = $(M)"
     @info "\t* T (simulation steps) = $(T)"
@@ -358,9 +359,17 @@ Function to set the initial compartments for the engine MMCACovid19VacEngine
         initial_compartments: Array{Float64, 4}
 """
 function set_compartments!(engine::MMCACovid19VacEngine, epi_params::MMCACovid19Vac.Epidemic_Params, 
-                          population::MMCACovid19Vac.Population_Params, initial_compartments::Array{Float64, 4})
+                          population::MMCACovid19Vac.Population_Params, npi_params::NPI_Params,
+                           initial_compartments::Array{Float64, 4})
+    G = population.G
+    M = population.M
+    V = epi_params.V
+    # there are a total of 11 compartments: (S, E, A, I, PH, PD, HR, HD, R, D) plus an extra compartment (CH) for confined households)
+    # TODO: move this value into a constant inside the epidemic_params struct
+    S = 11
+    
+    @assert size(initial_compartments) == (G, M, V, S)
 
-    @assert size(initial_compartments) == (population.G, population.M, epi_params.V, epi_params.NumComps)
     MMCACovid19Vac.set_compartments!(epi_params, population, initial_compartments)
 end
 
@@ -373,11 +382,14 @@ Function to set the initial compartments for the engine MMCACovid19Engine
         initial_compartments: Array{Float64, 3}
 """
 function set_compartments!(engine::MMCACovid19Engine, epi_params::MMCAcovid19.Epidemic_Params, 
-                          population::MMCAcovid19.Population_Params, initial_compartments::Array{Float64, 3}; scale_by_population = true)
+                          population::MMCAcovid19.Population_Params, npi_params::NPI_Params,
+                          initial_compartments::Array{Float64, 3}; scale_by_population = true)
 
-    n_compartments = 10
+    n_compartments = 11
+    G = population.G
+    M = population.M
+    @assert size(initial_compartments) == (G, M, n_compartments)
 
-    @assert size(initial_compartments) == (population.G, population.M, n_compartments)
                        
     t₀ = 1
 
@@ -391,6 +403,7 @@ function set_compartments!(engine::MMCACovid19Engine, epi_params::MMCAcovid19.Ep
     epi_params.ρᴴᴰᵍ[:,:,t₀] .= initial_compartments[:, :, 8]
     epi_params.ρᴿᵍ[:,:,t₀]  .= initial_compartments[:, :, 9]
     epi_params.ρᴰᵍ[:,:,t₀]  .= initial_compartments[:, :, 10]
+    epi_params.CHᵢᵍ[:,:,t₀] .= initial_compartments[:, :, 11]
 
 
     if scale_by_population
@@ -404,7 +417,9 @@ function set_compartments!(engine::MMCACovid19Engine, epi_params::MMCAcovid19.Ep
         epi_params.ρᴴᴰᵍ[:,:,t₀] .= epi_params.ρᴴᴰᵍ[:,:,t₀] ./ population.nᵢᵍ
         epi_params.ρᴿᵍ[:,:,t₀]  .= epi_params.ρᴿᵍ[:,:,t₀] ./ population.nᵢᵍ
         epi_params.ρᴰᵍ[:,:,t₀]  .= epi_params.ρᴰᵍ[:,:,t₀] ./ population.nᵢᵍ
+        epi_params.CHᵢᵍ[:,:,t₀] .= epi_params.CHᵢᵍ[:,:,t₀] ./ population.nᵢᵍ
     end
+    
 
     epi_params.ρˢᵍ[isnan.(epi_params.ρˢᵍ)]   .= 0
     epi_params.ρᴱᵍ[isnan.(epi_params.ρᴱᵍ)]   .= 0
@@ -416,6 +431,7 @@ function set_compartments!(engine::MMCACovid19Engine, epi_params::MMCAcovid19.Ep
     epi_params.ρᴴᴰᵍ[isnan.(epi_params.ρᴴᴰᵍ)] .= 0
     epi_params.ρᴿᵍ[isnan.(epi_params.ρᴿᵍ)]   .= 0
     epi_params.ρᴰᵍ[isnan.(epi_params.ρᴰᵍ)]   .= 0
+    epi_params.CHᵢᵍ[isnan.(epi_params.CHᵢᵍ)] .= 0
 
 end
 

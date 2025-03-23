@@ -50,20 +50,24 @@ function julia_main()::Cint
             return 1
         end
 
+        log_level = args[command]["log-level"]
+        set_log_level(log_level)
+        println(" Starting EpiSim command $(command) with log level $log_level")
+
         if command == "run"
-            execute_run(args["run"])
+            execute_run(args[command])
         elseif command == "setup"
-            execute_setup(args["setup"])
+            execute_setup(args[command])
         elseif command == "init"
-            execute_init(args["init"], engine)
+            execute_init(args[command])
         end
-        @info "done in main"
+        @info "- Finished command: $command"
 
     catch e
         @error "error in main" exception=(e, catch_backtrace())
         return 1
     end
-    @info "final"
+    println(" EpiSim finished successfully!")
     return 0
 end
 
