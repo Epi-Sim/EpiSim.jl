@@ -179,7 +179,7 @@ function execute_setup(args)
 
 end
 
-function execute_init(args, engine)
+function execute_init(args)
     config_fname  = args["config"]
     data_path   = args["data-folder"]
     output_fname = args["output"]
@@ -249,7 +249,7 @@ function create_initial_conditions(engine::MMCACovid19VacEngine,config::Dict, da
     
     S_idx = 1
     A_idx = 3
-     @printf("- Setting infected %.1f seeds in compartment A\n", sum(conditions₀[:, "seed"]))
+    @printf("- Setting infected %.1f seeds in compartment A\n", sum(conditions₀[:, "seed"]))
     compartments[1, patches_idxs, 1, A_idx] .= G_fractions[1] .* conditions₀[:, "seed"]
     compartments[2, patches_idxs, 1, A_idx] .= G_fractions[2] .* conditions₀[:, "seed"]
     compartments[3, patches_idxs, 1, A_idx] .= G_fractions[3] .* conditions₀[:, "seed"]
@@ -258,9 +258,48 @@ function create_initial_conditions(engine::MMCACovid19VacEngine,config::Dict, da
 
     @printf("- Setting remaining population %.1f in compartment S\n", sum(compartments[:, :, 1, S_idx]))
     @printf("- Saving initial conditions in '%s' \n", output_path)
-    nccreate(output_path, "data", "G", G_coords, "M", M_coords, "V", V_coords, "epi_states", collect(comp_coords))
-    ncwrite(compartments, output_path, "data")
+    try
+        g_dim = NcDim("G", G, atts=Dict("description" => "Age strata", "Unit" => "unitless"), values=G_coords, unlimited=false)
+        m_dim = NcDim("M", M, atts=Dict("description" => "Region", "Unit" => "unitless"), values=M_coords, unlimited=false)
+        v_dim = NcDim("V", V, atts=Dict("description" => "Vaccination status", "Unit" => "unitless"), values=V_coords, unlimited=false)
+        dimlist = [g_dim, m_dim, v_dim]
 
+        S  = NcVar("S" , dimlist; atts=Dict("description" => "Suceptibles"), t=Float64, compress=-1)
+        E  = NcVar("E" , dimlist; atts=Dict("description" => "Exposed"), t=Float64, compress=-1)
+        A  = NcVar("A" , dimlist; atts=Dict("description" => "Asymptomatic"), t=Float64, compress=-1)
+        I  = NcVar("I" , dimlist; atts=Dict("description" => "Infected"), t=Float64, compress=-1)
+        PH = NcVar("PH", dimlist; atts=Dict("description" => "Pre-hospitalized"), t=Float64, compress=-1)
+        PD = NcVar("PD", dimlist; atts=Dict("description" => "Pre-deceased"), t=Float64, compress=-1)
+        HR = NcVar("HR", dimlist; atts=Dict("description" => "Hospitalized-good"), t=Float64, compress=-1)
+        HD = NcVar("HD", dimlist; atts=Dict("description" => "Hospitalized-bad"), t=Float64, compress=-1)
+        R  = NcVar("R" , dimlist; atts=Dict("description" => "Recovered"), t=Float64, compress=-1)
+        D  = NcVar("D" , dimlist; atts=Dict("description" => "Dead"), t=Float64, compress=-1)
+        CH  = NcVar("CH" , dimlist; atts=Dict("description" => "Confined"), t=Float64, compress=-1)
+        varlist = [S, E, A, I, PH, PD, HR, HD, R, D, CH]
+
+        data_dict = Dict()
+        data_dict["S"]  = compartments[:, :, :, 1]
+        data_dict["E"]  = compartments[:, :, :, 2]
+        data_dict["A"]  = compartments[:, :, :, 3]
+        data_dict["I"]  = compartments[:, :, :, 4]
+        data_dict["PH"] = compartments[:, :, :, 5]
+        data_dict["PD"] = compartments[:, :, :, 6]
+        data_dict["HR"] = compartments[:, :, :, 7]
+        data_dict["HD"] = compartments[:, :, :, 8]
+        data_dict["R"]  = compartments[:, :, :, 9]
+        data_dict["D"]  = compartments[:, :, :, 10]
+        data_dict["CH"] = compartments[:, :, :, 11]
+        
+        isfile(output_path) && rm(output_path)
+
+        NetCDF.create(output_path, varlist, mode=NC_NETCDF4)
+        for (var_label, data) in data_dict
+            ncwrite(data, output_path, var_label)
+        end
+    catch e
+        @error "Error creating initial conditions" exception=(e, catch_backtrace())
+    end
+    @info "done creating initial conditions"
 end
 
 function create_initial_conditions(engine::MMCACovid19Engine,config::Dict, data_path::String, seeds_fname::String, output_path::String)
@@ -314,10 +353,49 @@ function create_initial_conditions(engine::MMCACovid19Engine,config::Dict, data_
     
     compartments[:, :, S_idx]  .= population.nᵢᵍ - compartments[:, :, A_idx]
 
-    @printf("- Setting remaining population %.1f in compartment S\n", sum(compartments[:, :, 1, S_idx]))
+    @printf("- Setting remaining population %.1f in compartment S\n", sum(compartments[:, :, S_idx]))
     @printf("- Saving initial conditions in '%s' \n", output_path)
-    nccreate(output_path, "data", "G", G_coords, "M", M_coords, "epi_states", collect(comp_coords))
-    ncwrite(compartments, output_path, "data")
+    try
+        g_dim = NcDim("G", G, atts=Dict("description" => "Age strata", "Unit" => "unitless"), values=G_coords, unlimited=false)
+        m_dim = NcDim("M", M, atts=Dict("description" => "Region", "Unit" => "unitless"), values=M_coords, unlimited=false)
+        dimlist = [g_dim, m_dim]
+
+        S  = NcVar("S" , dimlist; atts=Dict("description" => "Suceptibles"), t=Float64, compress=-1)
+        E  = NcVar("E" , dimlist; atts=Dict("description" => "Exposed"), t=Float64, compress=-1)
+        A  = NcVar("A" , dimlist; atts=Dict("description" => "Asymptomatic"), t=Float64, compress=-1)
+        I  = NcVar("I" , dimlist; atts=Dict("description" => "Infected"), t=Float64, compress=-1)
+        PH = NcVar("PH", dimlist; atts=Dict("description" => "Pre-hospitalized"), t=Float64, compress=-1)
+        PD = NcVar("PD", dimlist; atts=Dict("description" => "Pre-deceased"), t=Float64, compress=-1)
+        HR = NcVar("HR", dimlist; atts=Dict("description" => "Hospitalized-good"), t=Float64, compress=-1)
+        HD = NcVar("HD", dimlist; atts=Dict("description" => "Hospitalized-bad"), t=Float64, compress=-1)
+        R  = NcVar("R" , dimlist; atts=Dict("description" => "Recovered"), t=Float64, compress=-1)
+        D  = NcVar("D" , dimlist; atts=Dict("description" => "Dead"), t=Float64, compress=-1)
+        CH  = NcVar("CH" , dimlist; atts=Dict("description" => "Confined"), t=Float64, compress=-1)
+        varlist = [S, E, A, I, PH, PD, HR, HD, R, D, CH]
+
+        data_dict = Dict()
+        data_dict["S"]  = compartments[:, :, 1]
+        data_dict["E"]  = compartments[:, :, 2]
+        data_dict["A"]  = compartments[:, :, 3]
+        data_dict["I"]  = compartments[:, :, 4]
+        data_dict["PH"] = compartments[:, :, 5]
+        data_dict["PD"] = compartments[:, :, 6]
+        data_dict["HR"] = compartments[:, :, 7]
+        data_dict["HD"] = compartments[:, :, 8]
+        data_dict["R"]  = compartments[:, :, 9]
+        data_dict["D"]  = compartments[:, :, 10]
+        data_dict["CH"] = compartments[:, :, 11]
+        
+        isfile(output_path) && rm(output_path)
+
+        NetCDF.create(output_path, varlist, mode=NC_NETCDF4)
+        for (var_label, data) in data_dict
+            ncwrite(data, output_path, var_label)
+        end
+    catch e
+        @error "Error creating initial conditions" exception=(e, catch_backtrace())
+    end
+    @info "done creating initial conditions"
 
 end
 

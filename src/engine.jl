@@ -78,10 +78,13 @@ function read_input_files(::AbstractEngine, config::Dict, data_path::String, ins
     @info "- Reading initial conditions from: $(init_condition_path)"
     # use initial compartments matrix to initialize simulations
     if init_format == "netcdf"
-        initial_compartments = ncread(init_condition_path, "data")
+        ds = NetCDF.open(init_condition_path)
+        dims = keys(ds.dim)  # Get the dimension names
+        vars = [var for var in keys(ds) if var ∉ dims]
+        initial_compartments_dict = Dict(var => ncread(init_condition_path, var) for var in vars)
     elseif init_format == "hdf5"
-        # TODO: does this path work?
-        initial_compartments = h5open(init_condition_path, "r") do file
+        # TODO: now this path doesn't work, fix it
+        initial_compartments_dict = h5open(init_condition_path, "r") do file
             read(file, "data")
         end
     else
@@ -102,7 +105,7 @@ function read_input_files(::AbstractEngine, config::Dict, data_path::String, ins
     metapop_data_filename = joinpath(data_path, data_dict["metapopulation_data_filename"])
     metapop_df = CSV.read(metapop_data_filename, DataFrame, types=dtypes)
 
-    return npi_params, network_df, metapop_df, initial_compartments
+    return npi_params, network_df, metapop_df, initial_compartments_dict
 end
 
 """
@@ -135,7 +138,7 @@ function run_engine_io(engine::AbstractEngine, config::Dict, data_path::String, 
     ############# FILE READING ################
     ###########################################
     @info "- Loading data from files"
-    npi_params, network_df, metapop_df, initial_compartments = read_input_files(engine, config, data_path, instance_path, init_condition_path)
+    npi_params, network_df, metapop_df, initial_compartments_dict = read_input_files(engine, config, data_path, instance_path, init_condition_path)
 
     ########################################
     ####### VARIABLES INITIALIZATION #######
@@ -186,7 +189,7 @@ function run_engine_io(engine::AbstractEngine, config::Dict, data_path::String, 
 
     vac_params_dict = get(config, "vaccination", nothing)
 
-    set_compartments!(engine, epi_params, population, npi_params, initial_compartments)
+    set_compartments!(engine, epi_params, population, npi_params, initial_compartments_dict)
 
     @info "- Initializing MMCA epidemic simulations for engine $(engine)"
     @info "\t* N. of epi compartments = $(n_compartments)" 
@@ -206,7 +209,7 @@ function run_engine_io(engine::AbstractEngine, config::Dict, data_path::String, 
         save_observables(engine, epi_params, population, output_path; coords...)
     end
     if export_date !== nothing
-        save_time_step(engine, epi_params, population, output_path, output_format, time_step_tosave, export_date)
+        save_time_step(engine, epi_params, population, output_path, output_format, time_step_tosave, export_date; Dict(:G_coords => G_coords, :M_coords => M_coords)...)
     end
 
     @info "- Done running simulations"
@@ -360,15 +363,23 @@ Function to set the initial compartments for the engine MMCACovid19VacEngine
 """
 function set_compartments!(engine::MMCACovid19VacEngine, epi_params::MMCACovid19Vac.Epidemic_Params, 
                           population::MMCACovid19Vac.Population_Params, npi_params::NPI_Params,
-                           initial_compartments::Array{Float64, 4})
+                           initial_compartments_dict::Dict{String, Array{Float64, 3}})
     G = population.G
     M = population.M
     V = epi_params.V
-    # there are a total of 11 compartments: (S, E, A, I, PH, PD, HR, HD, R, D) plus an extra compartment (CH) for confined households)
-    # TODO: move this value into a constant inside the epidemic_params struct
-    S = 11
+    S = epi_params.NumComps
     
-    @assert size(initial_compartments) == (G, M, V, S)
+    initial_compartments = zeros(Float64, G, M, V, S)
+
+    i = 1
+    for var in epi_params.CompLabels
+        if haskey(initial_compartments_dict, var)
+            initial_compartments[:,:, :,i] = initial_compartments_dict[var]
+            i += 1
+        else
+            @error "$(var) not found in the initial conditions"
+        end
+    end
 
     MMCACovid19Vac.set_compartments!(epi_params, population, initial_compartments)
 end
@@ -383,27 +394,25 @@ Function to set the initial compartments for the engine MMCACovid19Engine
 """
 function set_compartments!(engine::MMCACovid19Engine, epi_params::MMCAcovid19.Epidemic_Params, 
                           population::MMCAcovid19.Population_Params, npi_params::NPI_Params,
-                          initial_compartments::Array{Float64, 3}; scale_by_population = true)
+                          initial_compartments_dict::Dict{String, Array{Float64, 2}}; scale_by_population = true)
 
     n_compartments = 11
     G = population.G
     M = population.M
-    @assert size(initial_compartments) == (G, M, n_compartments)
-
                        
     t₀ = 1
 
-    epi_params.ρˢᵍ[:,:,t₀]  .= initial_compartments[:, :, 1]
-    epi_params.ρᴱᵍ[:,:,t₀]  .= initial_compartments[:, :, 2]
-    epi_params.ρᴬᵍ[:,:,t₀]  .= initial_compartments[:, :, 3]
-    epi_params.ρᴵᵍ[:,:,t₀]  .= initial_compartments[:, :, 4]
-    epi_params.ρᴾᴴᵍ[:,:,t₀] .= initial_compartments[:, :, 5]
-    epi_params.ρᴾᴰᵍ[:,:,t₀] .= initial_compartments[:, :, 6]
-    epi_params.ρᴴᴿᵍ[:,:,t₀] .= initial_compartments[:, :, 7]
-    epi_params.ρᴴᴰᵍ[:,:,t₀] .= initial_compartments[:, :, 8]
-    epi_params.ρᴿᵍ[:,:,t₀]  .= initial_compartments[:, :, 9]
-    epi_params.ρᴰᵍ[:,:,t₀]  .= initial_compartments[:, :, 10]
-    epi_params.CHᵢᵍ[:,:,t₀] .= initial_compartments[:, :, 11]
+    epi_params.ρˢᵍ[:,:,t₀]  .= initial_compartments_dict["S"]
+    epi_params.ρᴱᵍ[:,:,t₀]  .= initial_compartments_dict["E"]
+    epi_params.ρᴬᵍ[:,:,t₀]  .= initial_compartments_dict["A"]
+    epi_params.ρᴵᵍ[:,:,t₀]  .= initial_compartments_dict["I"]
+    epi_params.ρᴾᴴᵍ[:,:,t₀] .= initial_compartments_dict["PH"]
+    epi_params.ρᴾᴰᵍ[:,:,t₀] .= initial_compartments_dict["PD"]
+    epi_params.ρᴴᴿᵍ[:,:,t₀] .= initial_compartments_dict["HR"]
+    epi_params.ρᴴᴰᵍ[:,:,t₀] .= initial_compartments_dict["HD"]
+    epi_params.ρᴿᵍ[:,:,t₀]  .= initial_compartments_dict["R"]
+    epi_params.ρᴰᵍ[:,:,t₀]  .= initial_compartments_dict["D"]
+    epi_params.CHᵢᵍ[:,:,t₀] .= initial_compartments_dict["CH"]
 
 
     if scale_by_population

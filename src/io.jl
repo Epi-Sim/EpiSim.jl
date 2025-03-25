@@ -50,7 +50,7 @@ function _save_full(engine::MMCACovid19VacEngine,
         @error "Error saving simulation output" exception=(e, catch_backtrace())
         rethrow(e)
     end
-    @info "done saving full simulation"
+    @info "- Done saving"
 end
 
 function _save_full(engine::MMCACovid19VacEngine, 
@@ -63,52 +63,25 @@ function _save_full(engine::MMCACovid19VacEngine,
     MMCACovid19Vac.save_simulation_hdf5(epi_params, population, filename)
 end
 
-function create_compartments_array(engine::MMCACovid19VacEngine, 
-    epi_params::MMCACovid19Vac.Epidemic_Params, 
-    population::MMCACovid19Vac.Population_Params)
-    G = population.G
-    M = population.M
-    T = epi_params.T
-    V = epi_params.V
-    # there are a total of 11 compartments: (S, E, A, I, PH, PD, HR, HD, R, D) plus an extra compartment (CH) for confined households)
-    # TODO: move this value into a constant inside the epidemic_params struct
-    S = 11
-    
-    compartments = zeros(Float64, G, M, T, V, S);
-    compartments[:, :, :, :, 1]  .= epi_params.ρˢᵍᵥ  .* population.nᵢᵍ
-    compartments[:, :, :, :, 2]  .= epi_params.ρᴱᵍᵥ .* population.nᵢᵍ
-    compartments[:, :, :, :, 3]  .= epi_params.ρᴬᵍᵥ .* population.nᵢᵍ
-    compartments[:, :, :, :, 4]  .= epi_params.ρᴵᵍᵥ .* population.nᵢᵍ
-    compartments[:, :, :, :, 5]  .= epi_params.ρᴾᴴᵍᵥ .* population.nᵢᵍ
-    compartments[:, :, :, :, 6]  .= epi_params.ρᴾᴰᵍᵥ .* population.nᵢᵍ
-    compartments[:, :, :, :, 7]  .= epi_params.ρᴴᴿᵍᵥ .* population.nᵢᵍ
-    compartments[:, :, :, :, 8]  .= epi_params.ρᴴᴰᵍᵥ .* population.nᵢᵍ
-    compartments[:, :, :, :, 9]  .= epi_params.ρᴿᵍᵥ .* population.nᵢᵍ
-    compartments[:, :, :, :, 10] .= epi_params.ρᴰᵍᵥ .* population.nᵢᵍ
-    compartments[:, :, :, :, 11] .= epi_params.CHᵢᵍᵥ .* population.nᵢᵍ
-    
-    return compartments
-end
-
 function save_time_step(engine::MMCACovid19VacEngine, 
     epi_params::MMCACovid19Vac.Epidemic_Params,
     population::MMCACovid19Vac.Population_Params,
     output_path::String, output_format::Union{String,AbstractOutputFormat}, 
-    export_time_t::Int, export_date::Date)
+    export_time_t::Int, export_date::Date; kwargs...)
     
     format = output_format isa String ? get_output_format(output_format) : output_format
-    _save_time_step(engine, epi_params, population, output_path, format, export_time_t, export_date)
+    _save_time_step(engine, epi_params, population, output_path, format, export_time_t, export_date; kwargs...)
 end
 
 function _save_time_step(engine::MMCACovid19VacEngine, 
     epi_params::MMCACovid19Vac.Epidemic_Params,
     population::MMCACovid19Vac.Population_Params,
     output_path::String, ::HDF5Format, export_compartments_time_t::Int, 
-    export_date::Date) 
+    export_date::Date; kwargs...) 
     
     filename = joinpath(output_path, "compartments_t_$(export_date).h5")
 
-    @info "- Saving simulation state at time step: $(time_step_tosave) ($(export_date))"
+    @info "- Saving simulation state at time step: $(export_compartments_time_t) ($(export_date))"
     @info "\t- filename: $(filename)"
     MMCACovid19Vac.save_simulation_hdf5(epi_params, population, filename; 
                         export_time_t = export_compartments_time_t)
@@ -118,34 +91,67 @@ function _save_time_step(engine::MMCACovid19VacEngine,
     epi_params::MMCACovid19Vac.Epidemic_Params,
     population::MMCACovid19Vac.Population_Params,
     output_path::String, ::NetCDFFormat, export_compartments_time_t::Int, 
-    export_date::Date) 
+    export_date::Date; G_coords=String[], M_coords=String[]) 
 
-    G = population.G
-    M = population.M
-    V = epi_params.V
-    S = epi_params.NumComps
-    S_coords = vcat(epi_params.CompLabels, ["CH"])
-    V_coords = epi_params.VaccLabels
-
-    G_coords = String[]
-    M_coords = String[]
-
-    if isnothing(G_coords)
-        G_coords = collect(1:G)
-    end
-    if isnothing(M_coords)
-        M_coords = collect(1:M)
-    end
-    
     filename = joinpath(output_path, "compartments_t_$(export_date).nc")
+    @info "- Saving simulation state at time step: $(export_compartments_time_t) ($(export_date))"
     @info "\t* Filename: $(filename)"
-    
-    compartments = create_compartments_array(engine, epi_params, population)
-    
-    isfile(filename) && rm(filename)
+    try
+        G = population.G
+        M = population.M
+        V = epi_params.V
+        V_coords = epi_params.VaccLabels
 
-    nccreate(filename, "data", "G", G_coords, "M", M_coords, "V", V_coords, "epi_states", S_coords)
-    ncwrite(compartments[:,:,export_compartments_time_t, :,:], filename, "data")
+        if isnothing(G_coords) != G
+            G_coords = collect(1:G)
+        end
+        if isnothing(M_coords)
+            M_coords = collect(1:M)
+        end
+
+        g_dim = NcDim("G", G, atts=Dict("description" => "Age strata", "Unit" => "unitless"), values=G_coords, unlimited=false)
+        m_dim = NcDim("M", M, atts=Dict("description" => "Region", "Unit" => "unitless"), values=M_coords, unlimited=false)
+        v_dim = NcDim("V", V, atts=Dict("description" => "Vaccination status", "Unit" => "unitless"), values=V_coords, unlimited=false)
+        dimlist = [g_dim, m_dim, v_dim]
+
+        S  = NcVar("S" , dimlist; atts=Dict("description" => "Suceptibles"), t=Float64, compress=-1)
+        E  = NcVar("E" , dimlist; atts=Dict("description" => "Exposed"), t=Float64, compress=-1)
+        A  = NcVar("A" , dimlist; atts=Dict("description" => "Asymptomatic"), t=Float64, compress=-1)
+        I  = NcVar("I" , dimlist; atts=Dict("description" => "Infected"), t=Float64, compress=-1)
+        PH = NcVar("PH", dimlist; atts=Dict("description" => "Pre-hospitalized"), t=Float64, compress=-1)
+        PD = NcVar("PD", dimlist; atts=Dict("description" => "Pre-deceased"), t=Float64, compress=-1)
+        HR = NcVar("HR", dimlist; atts=Dict("description" => "Hospitalized-good"), t=Float64, compress=-1)
+        HD = NcVar("HD", dimlist; atts=Dict("description" => "Hospitalized-bad"), t=Float64, compress=-1)
+        R  = NcVar("R" , dimlist; atts=Dict("description" => "Recovered"), t=Float64, compress=-1)
+        D  = NcVar("D" , dimlist; atts=Dict("description" => "Dead"), t=Float64, compress=-1)
+        CH  = NcVar("CH" , dimlist; atts=Dict("description" => "Confined"), t=Float64, compress=-1)
+        varlist = [S, E, A, I, PH, PD, HR, HD, R, D, CH]
+        
+        data_dict = Dict()
+        data_dict["S"]  = epi_params.ρˢᵍᵥ[ :, :, export_compartments_time_t, :]  .* population.nᵢᵍ
+        data_dict["E"]  = epi_params.ρᴱᵍᵥ[ :, :, export_compartments_time_t, :]  .* population.nᵢᵍ
+        data_dict["A"]  = epi_params.ρᴬᵍᵥ[ :, :, export_compartments_time_t, :]  .* population.nᵢᵍ
+        data_dict["I"]  = epi_params.ρᴵᵍᵥ[ :, :, export_compartments_time_t, :]  .* population.nᵢᵍ
+        data_dict["PH"] = epi_params.ρᴾᴴᵍᵥ[ :, :, export_compartments_time_t, :] .* population.nᵢᵍ
+        data_dict["PD"] = epi_params.ρᴾᴰᵍᵥ[ :, :, export_compartments_time_t, :] .* population.nᵢᵍ
+        data_dict["HR"] = epi_params.ρᴴᴿᵍᵥ[ :, :, export_compartments_time_t, :] .* population.nᵢᵍ
+        data_dict["HD"] = epi_params.ρᴴᴰᵍᵥ[ :, :, export_compartments_time_t, :] .* population.nᵢᵍ
+        data_dict["R"]  = epi_params.ρᴿᵍᵥ[ :, :, export_compartments_time_t, :]  .* population.nᵢᵍ
+        data_dict["D"]  = epi_params.ρᴰᵍᵥ[ :, :, export_compartments_time_t, :]  .* population.nᵢᵍ
+        data_dict["CH"] = epi_params.CHᵢᵍᵥ[ :, :, export_compartments_time_t, :] .* population.nᵢᵍ
+        
+        isfile(filename) && rm(filename)
+
+        NetCDF.create(filename, varlist, mode=NC_NETCDF4)
+        for (var_label, data) in data_dict
+            ncwrite(data, filename, var_label)
+        end
+        
+    catch e
+    
+        @error "Error saving time step" exception=(e, catch_backtrace())
+    end
+    @info "- Done saving"
 end
 
 
@@ -163,7 +169,7 @@ function save_observables(engine::MMCACovid19VacEngine,
         @error "Error saving simulation observables" exception=(e, catch_backtrace())
         rethrow(e)
     end
-    @info "- Done saving observables"
+    @info "- Done saving"
 end
 
 
@@ -279,8 +285,6 @@ function _save_full(engine::MMCACovid19Engine,
     @info "- Storing full simulation output in HDF5: $filename"
     compartments = create_compartments_array(engine, epi_params, population)
 
-    sim_pop = sum(compartments, dims=4)[:, :, :, 1]
-
     isfile(filename) && rm(filename)
     h5open(filename, "w") do file
         write(file, "data", compartments[:,:,:,:,:])
@@ -292,53 +296,86 @@ function save_time_step(engine::MMCACovid19Engine,
     epi_params::MMCAcovid19.Epidemic_Params,
     population::MMCAcovid19.Population_Params,
     output_path::String, output_format::Union{String,AbstractOutputFormat}, 
-    export_time_t::Int, export_date::Date)
+    export_time_t::Int, export_date::Date; kwargs...)
 
     format = output_format isa String ? get_output_format(output_format) : output_format
-    _save_time_step(engine, epi_params, population, output_path, format, export_time_t, export_date)
+    _save_time_step(engine, epi_params, population, output_path, format, export_time_t, export_date; kwargs...)
 end
 
 
 function _save_time_step(engine::MMCACovid19Engine,
     epi_params::MMCAcovid19.Epidemic_Params, 
     population::MMCAcovid19.Population_Params,
-    output_path::String, ::NetCDFFormat, export_time_t::Int, export_date::Date)
-    
-    G = population.G
-    M = population.M
-    S = 11
-    S_coords = ["S", "E", "A", "I", "PH", "PD", "HR", "HD", "R", "D", "CH"]
+    output_path::String, ::NetCDFFormat, export_time_t::Int, export_date::Date; 
+    G_coords=String[], M_coords=String[])
 
-    G_coords = String[]
-    M_coords = String[]
-
-    if isnothing(G_coords)
-        G_coords = collect(1:G)
-    end
-    if isnothing(M_coords)
-        M_coords = collect(1:M)
-    end
-
-    
     filename = joinpath(output_path, "compartments_t_$(export_date).nc")
+    @info "- Saving simulation state at time step: $(export_time_t) ($(export_date))"
     @info "\t* Filename: $(filename)"
     
-    compartments = create_compartments_array(engine, epi_params, population)
+    try
+        G = population.G
+        M = population.M
 
-    isfile(filename) && rm(filename)
+        if isnothing(G_coords)
+            G_coords = collect(1:G)
+        end
+        if isnothing(M_coords)
+            M_coords = collect(1:M)
+        end
 
-    nccreate(filename, "data", "G", G_coords, "M", M_coords,  "epi_states", S_coords)
-    ncwrite(compartments[:,:,export_time_t,:], filename, "data")
+        g_dim = NcDim("G", G, atts=Dict("description" => "Age strata", "Unit" => "unitless"), values=G_coords, unlimited=false)
+        m_dim = NcDim("M", M, atts=Dict("description" => "Region", "Unit" => "unitless"), values=M_coords, unlimited=false)
+        dimlist = [g_dim, m_dim]
+        
+        S  = NcVar("S" , dimlist; atts=Dict("description" => "Suceptibles"), t=Float64, compress=-1)
+        E  = NcVar("E" , dimlist; atts=Dict("description" => "Exposed"), t=Float64, compress=-1)
+        A  = NcVar("A" , dimlist; atts=Dict("description" => "Asymptomatic"), t=Float64, compress=-1)
+        I  = NcVar("I" , dimlist; atts=Dict("description" => "Infected"), t=Float64, compress=-1)
+        PH = NcVar("PH", dimlist; atts=Dict("description" => "Pre-hospitalized"), t=Float64, compress=-1)
+        PD = NcVar("PD", dimlist; atts=Dict("description" => "Pre-deceased"), t=Float64, compress=-1)
+        HR = NcVar("HR", dimlist; atts=Dict("description" => "Hospitalized-good"), t=Float64, compress=-1)
+        HD = NcVar("HD", dimlist; atts=Dict("description" => "Hospitalized-bad"), t=Float64, compress=-1)
+        R  = NcVar("R" , dimlist; atts=Dict("description" => "Recovered"), t=Float64, compress=-1)
+        D  = NcVar("D" , dimlist; atts=Dict("description" => "Dead"), t=Float64, compress=-1)
+        CH = NcVar("CH", dimlist; atts=Dict("description" => "Confined"), t=Float64, compress=-1)
+        
+        varlist = [S, E, A, I, PH, PD, HR, HD, R, D, CH]
 
-    
+        data_dict = Dict()
+        data_dict["S"]  = epi_params.ρˢᵍ[ :, :, export_time_t]  .* population.nᵢᵍ
+        data_dict["E"]  = epi_params.ρᴱᵍ[ :, :, export_time_t]  .* population.nᵢᵍ
+        data_dict["A"]  = epi_params.ρᴬᵍ[ :, :, export_time_t]  .* population.nᵢᵍ
+        data_dict["I"]  = epi_params.ρᴵᵍ[ :, :, export_time_t]  .* population.nᵢᵍ
+        data_dict["PH"] = epi_params.ρᴾᴴᵍ[ :, :, export_time_t] .* population.nᵢᵍ
+        data_dict["PD"] = epi_params.ρᴾᴰᵍ[ :, :, export_time_t] .* population.nᵢᵍ
+        data_dict["HR"] = epi_params.ρᴴᴿᵍ[ :, :, export_time_t] .* population.nᵢᵍ
+        data_dict["HD"] = epi_params.ρᴴᴰᵍ[ :, :, export_time_t] .* population.nᵢᵍ
+        data_dict["R"]  = epi_params.ρᴿᵍ[ :, :, export_time_t]  .* population.nᵢᵍ
+        data_dict["D"]  = epi_params.ρᴰᵍ[ :, :, export_time_t]  .* population.nᵢᵍ
+        data_dict["CH"] = epi_params.CHᵢᵍ[ :, :, export_time_t] .* population.nᵢᵍ
+
+        isfile(filename) && rm(filename)
+
+        NetCDF.create(filename, varlist, mode=NC_NETCDF4)
+        for (var_label, data) in data_dict
+            ncwrite(data, filename, var_label)
+        end
+
+    catch e
+        @error "Error saving time step" exception=(e, catch_backtrace())
+        rethrow(e)
+    end
+    @info "- Done saving"    
 end
 
 function _save_time_step(engine::MMCACovid19Engine,
     epi_params::MMCAcovid19.Epidemic_Params, 
     population::MMCAcovid19.Population_Params,
-    output_path::String, ::HDF5Format, export_time_t::Int, export_date::Date) 
+    output_path::String, ::HDF5Format, export_time_t::Int, export_date::Date; kwargs...) 
     
     filename = joinpath(output_path, "compartments_t_$(export_date).h5")
+    @info "- Saving simulation state at time step: $(export_time_t) ($(export_date))"
     @info "\t* Filename: $(filename)"
     
     compartments = create_compartments_array(engine, epi_params, population)
@@ -347,6 +384,7 @@ function _save_time_step(engine::MMCACovid19Engine,
     h5open(filename, "w") do file
         write(file, "data", compartments[:,:,export_time_t,:])
     end
+    @info "- Done saving time step"
 end
 
 
