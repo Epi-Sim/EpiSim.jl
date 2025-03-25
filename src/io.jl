@@ -50,7 +50,7 @@ function _save_full(engine::MMCACovid19VacEngine,
         @error "Error saving simulation output" exception=(e, catch_backtrace())
         rethrow(e)
     end
-    @info "done saving full simulation"
+    @info "- Done saving"
 end
 
 function _save_full(engine::MMCACovid19VacEngine, 
@@ -169,7 +169,7 @@ function save_observables(engine::MMCACovid19VacEngine,
         @error "Error saving simulation observables" exception=(e, catch_backtrace())
         rethrow(e)
     end
-    @info "- Done saving observables"
+    @info "- Done saving"
 end
 
 
@@ -284,8 +284,6 @@ function _save_full(engine::MMCACovid19Engine,
     filename = joinpath(output_path, "compartments_full.h5")
     @info "- Storing full simulation output in HDF5: $filename"
     compartments = create_compartments_array(engine, epi_params, population)
-
-    sim_pop = sum(compartments, dims=4)[:, :, :, 1]
 
     isfile(filename) && rm(filename)
     h5open(filename, "w") do file
