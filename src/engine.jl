@@ -209,7 +209,7 @@ function run_engine_io(engine::AbstractEngine, config::Dict, data_path::String, 
         save_observables(engine, epi_params, population, output_path; coords...)
     end
     if export_date !== nothing
-        save_time_step(engine, epi_params, population, output_path, output_format, time_step_tosave, export_date)
+        save_time_step(engine, epi_params, population, output_path, output_format, time_step_tosave, export_date; Dict(:G_coords => G_coords, :M_coords => M_coords)...)
     end
 
     @info "- Done running simulations"
