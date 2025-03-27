@@ -440,7 +440,7 @@ function save_observables(engine::MMCACovid19Engine,
 
         data_dict["R_eff"] = zeros(Float64, G, M, T)
         τ = 14
-        Rᵢᵍ_eff = compute_R_eff_matrix(epi_params, population, τ)[1]
+        Rᵢᵍ_eff = MMCAcovid19.compute_R_eff_matrix(epi_params, population, τ)[1]
         data_dict["R_eff"][:, :, τ+1:end] = Rᵢᵍ_eff
         
         isfile(filename) && rm(filename)
