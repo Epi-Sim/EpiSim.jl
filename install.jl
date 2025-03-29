@@ -3,6 +3,8 @@ using Pkg
 # run this in an interactive session in MN5 or it will time-out !!
 # note that you should have installed the dependencies before running this script
 Pkg.activate(".")
+Pkg.instantiate()
+Pkg.precompile()
 
 using PackageCompiler
 using ArgParse
@@ -28,6 +30,8 @@ end
 
 
 args = parse_commandline()
+@assert isdir(args["target"]) "Target folder $(args["target"]) does not exist"
+
 if args["compile"]
     build_folder = "build"
     create_app(pwd(), build_folder, 
