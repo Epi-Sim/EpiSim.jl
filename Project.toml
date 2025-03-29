@@ -14,7 +14,7 @@ HDF5 = "f67ccb44-e63f-5c2f-98bd-6dc0ccc4ba2f"
 JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
 MMCACovid19Vac = "1f0b8349-d663-41e2-860e-e4a82e7cc3f6"
-MMCAcovid19 = "3fbf9143-36f1-400e-9c84-fa51782749e9"
+MMCAcovid19 = "9f638075-2712-458e-b88d-8a664f916c72"
 NCDatasets = "85f8d34a-cbdd-5861-8df4-14fed0d494ab"
 NetCDF = "30363a11-5582-574a-97bb-aa9a979735b9"
 PackageCompiler = "9b87118b-4619-50d2-8e1e-99f35a4d4d9d"
@@ -22,4 +22,9 @@ Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 
 [compat]
 MMCACovid19Vac = "0.1.1"
-MMCAcovid19 = "0.1.4"
+MMCAcovid19 = "0.1.5"
+
+
+[sources]
+MMCAcovid19 = {url = "https://github.com/Epi-Sim/MMCAcovid19.jl", rev = "master"}
+MMCACovid19Vac = {url = "https://github.com/Epi-Sim/MMCACovid19-vac.jl", rev = "main"}
