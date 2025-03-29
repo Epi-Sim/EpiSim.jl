@@ -1,14 +1,14 @@
 ```
- /$$$$$$$$           /$$  /$$$$$$  /$$                       /$$
-| $$_____/          |__/ /$$__  $$|__/                      | $$
-| $$        /$$$$$$  /$$| $$  \__/ /$$ /$$$$$$/$$$$      /$$| $$
-| $$$$$    /$$__  $$| $$|  $$$$$$ | $$| $$_  $$_  $$    |__/| $$
-| $$__/   | $$  \ $$| $$ \____  $$| $$| $$ \ $$ \ $$     /$$| $$
-| $$      | $$  | $$| $$ /$$  \ $$| $$| $$ | $$ | $$    | $$| $$
-| $$$$$$$$| $$$$$$$/| $$|  $$$$$$/| $$| $$ | $$ | $$ /$$| $$| $$
-|________/| $$____/ |__/ \______/ |__/|__/ |__/ |__/|__/| $$|__/
-          | $$                                     /$$  | $$    
-          | $$                                    |  $$$$$$/    
+ /████████           /██  /██████  /██                       /██
+| ██_____/          |__/ /██__  ██|__/                      | ██
+| ██        /██████  /██| ██  \__/ /██ /██████/████      /██| ██
+| █████    /██__  ██| ██|  ██████ | ██| ██_  ██_  ██    |__/| ██
+| ██__/   | ██  \ ██| ██ \____  ██| ██| ██ \ ██ \ ██     /██| ██
+| ██      | ██  | ██| ██ /██  \ ██| ██| ██ | ██ | ██    | ██| ██
+| ████████| ███████/| ██|  ██████/| ██| ██ | ██ | ██ /██| ██| ██
+|________/| ██____/ |__/ \______/ |__/|__/ |__/ |__/|__/| ██|__/
+          | ██                                     /██  | ██    
+          | ██                                    |  ██████/    
           |__/                                     \______/     
 ```
 ## A Julia package for simulating epidemic spreading in metapopulations
@@ -29,7 +29,7 @@ Additionally, EpiSim.jl uses the NetCDF format to store simulation outputs. [Net
 EpiSim.jl also provides a standard configuration format for defining a model and a simple set of command-line scripts to generate configuration templates and run the model.
 
 
-### Installing
+### Installing and Running
 
 To install EpiSim.jl, follow these steps:
 
@@ -39,14 +39,10 @@ To install EpiSim.jl, follow these steps:
    cd EpiSim.jl
    ```
 
-2. Run the installation script:
+2. Compiling (optional):
    ```
-   ./install.sh [HPC_ACCOUNT_NAME]
+   julia ./install.jl -c -i
    ```
-   
-   Note: The `HPC_ACCOUNT_NAME` argument is required only when running on BSC HPC systems.
-
-   This is because the compile time is long enough that we need to schedule a slurm job for it.
 
 The compilation process (`install.jl`) creates a single precompiled executable:
 
@@ -57,13 +53,14 @@ After installation, you can run EpiSim using the `episim` command.
 
 ### Using EpiSim.jl
 
-EpiSim works as a command line frontend to launch simulations. It provides a simple JSON-based config format to define an instance of a model. The config format included a common or core set of parameters and specific parameters required by the different engines supported by EpiSim.jl. An example is given at `models/mitma/config.json`
+EpiSim works as a command line frontend to launch simulations. It provides a simple JSON-based config format to define an instance of a model. The config format included a common or core set of parameters and specific parameters required by the different engines supported by EpiSim.jl. An example is given at `models/mitma/config_MMCACovid19.json`
 
 
 ### The `epiconfig.json` format
 ```
 {
 	"simulation": {
+        "engine": "MMCACovid19",
 		"start_date": "2020-03-10",
 		"end_date": "2020-04-15",
 		"save_full_output": true,
@@ -89,36 +86,6 @@ EpiSim works as a command line frontend to launch simulations. It provides a sim
 ```bash
 episim -e MMCACovid19Vac run -c models/mitma/config.json -d models/mitma -i runs
 ```
-
-### Using the Python interface
-
-Install dependencies:
-
-```bash
-pip install -r py_interface/requirements.txt
-```
-
-Run the model in steps:
-
-```python
-from epi_sim import EpiSim
-
-executable_path = "./episim"
-config_path = "models/mitma/config.json"
-data_folder = "models/mitma"
-instance_folder = "runs"
-initial_conditions = "models/mitma/initial_conditions.nc"
-
-model = MMCACovid19(
-	executable_path, config_path, data_folder, instance_folder, initial_conditions
-)
-
-new_state, next_date = model.step("2020-03-10", 5)
-
-new_state, next_date = model.step(next_date, 5)
-```
-
-See `py_interface/EpiSim.py` for more examples.
 
 
 # Brief history
