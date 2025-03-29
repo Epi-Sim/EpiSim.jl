@@ -28,6 +28,8 @@ end
 
 
 args = parse_commandline()
+@assert isdir(args["target"]) "Target folder $(args["target"]) does not exist"
+
 if args["compile"]
     build_folder = "build"
     create_app(pwd(), build_folder, 
