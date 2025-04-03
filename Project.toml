@@ -27,4 +27,4 @@ MMCAcovid19 = "0.1.5"
 
 [sources]
 MMCAcovid19 = {url = "https://github.com/Epi-Sim/MMCAcovid19.jl", rev = "master"}
-MMCACovid19Vac = {url = "https://github.com/Epi-Sim/MMCACovid19-vac.jl", rev = "main"}
+MMCACovid19Vac = {url = "https://github.com/Epi-Sim/MMCACovid19Vac.jl", rev = "main"}
