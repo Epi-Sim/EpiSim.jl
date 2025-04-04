@@ -233,6 +233,7 @@ function create_initial_conditions(engine::MMCACovid19VacEngine,config::Dict, da
 
     T = 1
 
+    # There is no need to load all the data fo creating the initial conditions
     population = init_pop_param_struct(G, M, G_coords, pop_params_dict, metapop_df, network_df)
     epi_params = init_epi_parameters_struct(G, M, T, G_coords, epi_params_dict)
 
@@ -343,6 +344,7 @@ function create_initial_conditions(engine::MMCACovid19Engine,config::Dict, data_
     conditions₀ = CSV.read(seeds_fname, DataFrame)
     patches_idxs = Int.(conditions₀[:, "idx"])
     
+    # TODO: remove this hardcoded values
     G_fractions = [0.12 0.16 0.72]
     
     @info "- Creating compartment array"
