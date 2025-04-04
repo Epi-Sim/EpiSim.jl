@@ -403,64 +403,6 @@ function create_initial_conditions(engine::MMCACovid19Engine,config::Dict, data_
 
 end
 
-function read_config()
-    
-    args = parse_commandline()
-    
-    config_fname = args["config"]
-    data_path    = args["data-folder"]
-    seeds_fname  = args["seeds"]
-    output_fname = args["out"]
-    
-    
-    @assert isfile(config_fname);
-    @assert isdir(data_path);
-    @assert isfile(seeds_fname);
-    
-    if isfile(output_fname)
-        @error "- ERROR output file '%s' already existe\n", output_fname
-        exit(1)
-    end
-    
-    config = JSON.parsefile(config_fname);
-    
-    @info "- Loading required data"
-    data_dict       = config["data"]
-    epi_params_dict = config["epidemic_params"]
-    pop_params_dict = config["population_params"]
-    
-    # Loading metapopulation patches info (surface, label, population by age)
-    metapop_data_filename = joinpath(data_path, data_dict["metapopulation_data_filename"])
-    metapop_df = CSV.read(metapop_data_filename, DataFrame, types= Dict("id"=>String, 
-        "area"=>Float64, "Y"=>Float64, "M"=>Float64, "O"=>Float64, "Total"=>Float64))
-    
-    # Loading mobility network
-    mobility_matrix_filename = joinpath(data_path, data_dict["mobility_matrix_filename"])
-    network_df  = CSV.read(mobility_matrix_filename, DataFrame)
-    
-    # Single time step
-    T = 1
-    # Metapopulations patches coordinates (labels)
-    M_coords = map(String, metapop_df[:, "id"])
-    M = length(M_coords)
-    # Coordinates for each age strata (labels)
-    G_coords = map(String, pop_params_dict["age_labels"])
-    G = length(G_coords)
-    # Num. of vaccination statuses Vaccinated/Non-vaccinated
-    V_coords = ["NV", "V"]
-    V = length(epi_params_dict["kᵥ"])
-    
-    
-    ## POPULATION PARAMETERS
-    population       = init_pop_param_struct(G, M, G_coords, pop_params_dict, metapop_df, network_df)
-    ## EPIDEMIC PARAMETERS 
-    epi_params       = init_epi_parameters_struct(G, M, 1, G_coords, epi_params_dict)
-    
-    
-    comp_coords = epi_params.CompLabels
-    S = length(comp_coords)
-end
-
 function create_core_config()
     config = Dict( "simulation" => Dict(), 
                    "data" => Dict(), 
