@@ -45,6 +45,7 @@ function parse_command_line()
             help = "Logging level (debug, info, warn, error)"
             arg_type = String
             default = "info"
+            range_tester = (x) -> x in ["debug", "info", "warn", "error", "silent"]
     end
 
     @add_arg_table s["setup"] begin
@@ -70,6 +71,7 @@ function parse_command_line()
             help = "Logging level (debug, info, warn, error)"
             arg_type = String
             default = "info"
+            range_tester = (x) -> x in ["debug", "info", "warn", "error", "silent"]
     end
 
     @add_arg_table s["init"] begin
@@ -87,9 +89,10 @@ function parse_command_line()
             required = false
             default = "initial_conditions.nc"
         "--log-level", "-l"
-            help = "Logging level (debug, info, warn, error)"
+            help = "Logging level (debug, info, warn, error, silent)"
             arg_type = String
             default = "info"
+            range_tester = (x) -> x in ["debug", "info", "warn", "error", "silent"]
     end
     return parse_args(s)
 end
@@ -104,7 +107,7 @@ function set_log_level(level::String)
         global_logger(ConsoleLogger(stderr, Logging.Warn))
     elseif level == "error"
         global_logger(ConsoleLogger(stderr, Logging.Error))
-    elseif level == "off"
+    elseif level == "silent"
         global_logger(ConsoleLogger(stderr, Logging.Error + 1))  # Effectively disables logging
     else
         @warn "Invalid log level: $level, defaulting to Info"
@@ -142,7 +145,7 @@ function execute_run(args)
     engine = validate_config(config)
 
     run_engine_io(engine, config, data_path, instance_path, init_condition_path)
-    @info "done executing run command"
+    @debug "- Done executing run command"
 end
 
 function execute_setup(args)
@@ -242,22 +245,23 @@ function create_initial_conditions(engine::MMCACovid19VacEngine,config::Dict, da
     conditions₀ = CSV.read(seeds_fname, DataFrame)
     patches_idxs = Int.(conditions₀[:, "idx"])
     
+    # TODO: remove this hardcoded values
     G_fractions = [0.12 0.16 0.72]
     
-    println("- Creating compartment array")
+    @info "- Creating compartment array"
     compartments = zeros(Float64, G, M, V, S);
     
     S_idx = 1
     A_idx = 3
-    @printf("- Setting infected %.1f seeds in compartment A\n", sum(conditions₀[:, "seed"]))
+    @info "- Setting infected %.1f seeds in compartment A\n", sum(conditions₀[:, "seed"])
     compartments[1, patches_idxs, 1, A_idx] .= G_fractions[1] .* conditions₀[:, "seed"]
     compartments[2, patches_idxs, 1, A_idx] .= G_fractions[2] .* conditions₀[:, "seed"]
     compartments[3, patches_idxs, 1, A_idx] .= G_fractions[3] .* conditions₀[:, "seed"]
     
     compartments[:, :, 1, S_idx]  .= population.nᵢᵍ - compartments[:, :, 1, A_idx]
 
-    @printf("- Setting remaining population %.1f in compartment S\n", sum(compartments[:, :, 1, S_idx]))
-    @printf("- Saving initial conditions in '%s' \n", output_path)
+    @info "- Setting remaining population %.1f in compartment S\n", sum(compartments[:, :, 1, S_idx])
+    @info "- Saving initial conditions in '%s' \n", output_path
     try
         g_dim = NcDim("G", G, atts=Dict("description" => "Age strata", "Unit" => "unitless"), values=G_coords, unlimited=false)
         m_dim = NcDim("M", M, atts=Dict("description" => "Region", "Unit" => "unitless"), values=M_coords, unlimited=false)
@@ -297,9 +301,9 @@ function create_initial_conditions(engine::MMCACovid19VacEngine,config::Dict, da
             ncwrite(data, output_path, var_label)
         end
     catch e
-        @error "Error creating initial conditions" exception=(e, catch_backtrace())
+        @error "- Error creating initial conditions" exception=(e, catch_backtrace())
     end
-    @info "done creating initial conditions"
+    @debug "- Done creating initial conditions"
 end
 
 function create_initial_conditions(engine::MMCACovid19Engine,config::Dict, data_path::String, seeds_fname::String, output_path::String)
@@ -341,20 +345,20 @@ function create_initial_conditions(engine::MMCACovid19Engine,config::Dict, data_
     
     G_fractions = [0.12 0.16 0.72]
     
-    println("- Creating compartment array")
+    @info "- Creating compartment array"
     compartments = zeros(Float64, G, M, S);
     
     S_idx = 1
     A_idx = 3
-     @printf("- Setting infected %.1f seeds in compartment A\n", sum(conditions₀[:, "seed"]))
+    @info "- Setting infected %.1f seeds in compartment A\n", sum(conditions₀[:, "seed"])
     compartments[1, patches_idxs, A_idx] .= G_fractions[1] .* conditions₀[:, "seed"]
     compartments[2, patches_idxs, A_idx] .= G_fractions[2] .* conditions₀[:, "seed"]
     compartments[3, patches_idxs, A_idx] .= G_fractions[3] .* conditions₀[:, "seed"]
     
     compartments[:, :, S_idx]  .= population.nᵢᵍ - compartments[:, :, A_idx]
 
-    @printf("- Setting remaining population %.1f in compartment S\n", sum(compartments[:, :, S_idx]))
-    @printf("- Saving initial conditions in '%s' \n", output_path)
+    @info "- Setting remaining population %.1f in compartment S\n", sum(compartments[:, :, S_idx])
+    @info "- Saving initial conditions in '%s' \n", output_path
     try
         g_dim = NcDim("G", G, atts=Dict("description" => "Age strata", "Unit" => "unitless"), values=G_coords, unlimited=false)
         m_dim = NcDim("M", M, atts=Dict("description" => "Region", "Unit" => "unitless"), values=M_coords, unlimited=false)
@@ -395,7 +399,7 @@ function create_initial_conditions(engine::MMCACovid19Engine,config::Dict, data_
     catch e
         @error "Error creating initial conditions" exception=(e, catch_backtrace())
     end
-    @info "done creating initial conditions"
+    @debug "- Done creating initial conditions"
 
 end
 
@@ -414,13 +418,13 @@ function read_config()
     @assert isfile(seeds_fname);
     
     if isfile(output_fname)
-        @printf("- ERROR output file '%s' already existe\n", output_fname)
+        @error "- ERROR output file '%s' already existe\n", output_fname
         exit(1)
     end
     
     config = JSON.parsefile(config_fname);
     
-    println("- Loading required data")
+    @info "- Loading required data"
     data_dict       = config["data"]
     epi_params_dict = config["epidemic_params"]
     pop_params_dict = config["population_params"]

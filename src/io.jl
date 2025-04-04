@@ -53,7 +53,7 @@ function _save_full(engine::MMCACovid19VacEngine,
         @error "Error saving simulation output" exception=(e, catch_backtrace())
         rethrow(e)
     end
-    @info "- Done saving"
+    @debug "- Done saving"
 end
 
 function _save_full(engine::MMCACovid19VacEngine, 
@@ -154,7 +154,7 @@ function _save_time_step(engine::MMCACovid19VacEngine,
     
         @error "Error saving time step" exception=(e, catch_backtrace())
     end
-    @info "- Done saving"
+    @debug "- Done saving"
 end
 
 
@@ -172,7 +172,7 @@ function save_observables(engine::MMCACovid19VacEngine,
         @error "Error saving simulation observables" exception=(e, catch_backtrace())
         rethrow(e)
     end
-    @info "- Done saving"
+    @debug "- Done saving"
 end
 
 
@@ -251,7 +251,7 @@ function _save_full(engine::MMCACovid19Engine,
         @error "Error saving simulation output" exception=(e, catch_backtrace())
         rethrow(e)
     end
-    @info "- Done saving"
+    @debug "- Done saving"
 
 end
 
@@ -369,7 +369,7 @@ function _save_time_step(engine::MMCACovid19Engine,
         @error "Error saving time step" exception=(e, catch_backtrace())
         rethrow(e)
     end
-    @info "- Done saving"    
+    @debug "- Done saving"    
 end
 
 function _save_time_step(engine::MMCACovid19Engine,
@@ -387,7 +387,7 @@ function _save_time_step(engine::MMCACovid19Engine,
     h5open(filename, "w") do file
         write(file, "data", compartments[:,:,export_time_t,:])
     end
-    @info "- Done saving time step"
+    @debug "- Done saving time step"
 end
 
 
@@ -452,5 +452,5 @@ function save_observables(engine::MMCACovid19Engine,
         @error "Error saving simulation observables" exception=(e, catch_backtrace())
         rethrow(e)
     end
-    @info "- Done saving"
+    @debug "- Done saving"
 end
