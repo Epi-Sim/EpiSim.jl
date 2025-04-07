@@ -2,6 +2,7 @@ using Pkg
 
 # run this in an interactive session in MN5 or it will time-out !!
 # note that you should have installed the dependencies before running this script
+
 Pkg.activate(@__DIR__)
 Pkg.instantiate()
 Pkg.precompile()
