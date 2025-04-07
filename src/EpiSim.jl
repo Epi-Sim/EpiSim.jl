@@ -39,7 +39,6 @@ function julia_main()::Cint
     This is the entrypoint for the compiled version of EpiSim.
     """
     try
-        print_banner()
         args = parse_command_line()
         command = args["%COMMAND%"]
     
@@ -52,7 +51,11 @@ function julia_main()::Cint
 
         log_level = args[command]["log-level"]
         set_log_level(log_level)
-        println(" Starting EpiSim command $(command) with log level $log_level")
+
+        if log_level == "debug" || log_level == "info"
+            print_banner()
+        end
+        @info "- Starting EpiSim command \"$(command)\" with log level \"$(log_level)\""
 
         if command == "run"
             execute_run(args[command])
@@ -61,13 +64,13 @@ function julia_main()::Cint
         elseif command == "init"
             execute_init(args[command])
         end
-        @info "- Finished command: $command"
+        @info "- Finished command: $(command)"
 
     catch e
-        @error "error in main" exception=(e, catch_backtrace())
+        @error "- Error in main while executing command: $(command)" exception=(e, catch_backtrace())
         return 1
     end
-    println(" EpiSim finished successfully!")
+    @info "- EpiSim finished successfully!"
     return 0
 end
 

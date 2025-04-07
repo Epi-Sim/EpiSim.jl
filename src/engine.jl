@@ -53,7 +53,7 @@ function read_input_files(::AbstractEngine, config::Dict, data_path::String, ins
     #########################
     output_path = joinpath(instance_path, "output")
     if !isdir(output_path)
-        println("Creating output folder: $output_path")
+        @info " - Creating output folder: $output_path"
         mkpath(output_path)
     end
 
@@ -126,7 +126,7 @@ function run_engine_io(engine::AbstractEngine, config::Dict, data_path::String, 
     end
 
     
-    @info "Running EpiSim.jl using: $(engine)"
+    @info "- Running EpiSim.jl using: $(engine)"
     
     
     data_dict       = config["data"]
