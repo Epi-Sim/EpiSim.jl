@@ -84,7 +84,7 @@ EpiSim works as a command line frontend to launch simulations. It provides a sim
 ```
 
 ```bash
-episim -e MMCACovid19Vac run -c models/mitma/config.json -d models/mitma -i runs
+episim run -c models/mitma/config.json -d models/mitma -i runs
 ```
 
 
