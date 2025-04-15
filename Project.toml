@@ -1,7 +1,7 @@
 name = "EpiSim"
 uuid = "31a157ea-f110-4668-b98b-d79f209662d5"
 authors = ["Miguel Ponce-de-Leon <miguel.ponce@bsc.es>"]
-version = "0.2.0"
+version = "0.2.1"
 
 [deps]
 ArgParse = "c7e460c6-2fb9-53a9-8c5b-16f535851c63"
@@ -19,12 +19,13 @@ NCDatasets = "85f8d34a-cbdd-5861-8df4-14fed0d494ab"
 NetCDF = "30363a11-5582-574a-97bb-aa9a979735b9"
 PackageCompiler = "9b87118b-4619-50d2-8e1e-99f35a4d4d9d"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[sources]
+MMCACovid19Vac = {rev = "main", url = "https://github.com/Epi-Sim/MMCACovid19Vac.jl"}
+MMCAcovid19 = {rev = "master", url = "https://github.com/Epi-Sim/MMCAcovid19.jl"}
 
 [compat]
 MMCACovid19Vac = "0.1.1"
 MMCAcovid19 = "0.1.5"
-
-
-[sources]
-MMCAcovid19 = {url = "https://github.com/Epi-Sim/MMCAcovid19.jl", rev = "master"}
-MMCACovid19Vac = {url = "https://github.com/Epi-Sim/MMCACovid19Vac.jl", rev = "main"}
+Test = "1.11.0"
