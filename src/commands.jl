@@ -34,7 +34,7 @@ function parse_command_line()
             arg_type = Int
         "--initial-condition"
             help = "compartments to initialize simulation. If missing, use the seeds to initialize the simulations"
-            default = ""
+            default = nothing
         "--start-date"
             help = "starting date of simulation. Overwrites the one provided in config.json"
             default = nothing
@@ -131,20 +131,17 @@ function execute_run(args)
     config_fname  = args["config"]
     instance_path = args["instance-folder"]
 
-    
-
-    init_condition_path = args["initial-condition"]
-    
-    config = JSON.parsefile(config_fname);
-    update_config!(config, args)
-
     @assert isfile(config_fname);
     @assert isdir(data_path);
     @assert isdir(instance_path);
     
+    config = JSON.parsefile(config_fname);
+    update_config!(config, args)
     engine = validate_config(config)
 
-    run_engine_io(engine, config, data_path, instance_path, init_condition_path)
+    #init_condition_path = args["initial-condition"]
+
+    run_engine_io(engine, config, data_path, instance_path)
     @debug "- Done executing run command"
 end
 
@@ -243,6 +240,28 @@ end
 ## ------------------------------------------------------------
 
 
+function create_initial_compartments(engine::MMCACovid19VacEngine, M_coords::Array{String}, G_coords::Array{String}, nᵢᵍ, conditions₀, patches_idxs)
+    M = length(M_coords)
+    G = length(G_coords)
+    V = 3
+
+
+    comp_coords = ["S", "E", "A", "I", "PH", "PD", "HR", "HD", "R", "D", "CH"]
+
+    @debug "- Creating compartment dict of size (%d, %d, %d, %d)", G, M, V, S
+
+    init_compartment_dict = Dict{String, Array{Float64, 3}}()
+    for v in comp_coords
+        init_compartment_dict[v] = zeros(Float64, G, M, V);
+    end
+
+    NV_idx = 1
+    init_compartment_dict["A"][:, patches_idxs, NV_idx] .= conditions₀
+    init_compartment_dict["S"] .= nᵢᵍ - init_compartment_dict["A"][:, patches_idxs, NV_idx]
+
+    return init_compartment_dict
+end
+
 function create_initial_conditions(engine::MMCACovid19VacEngine, M_coords::Array{String}, G_coords::Array{String}, nᵢᵍ, conditions₀, patches_idxs, output_fname::String)
     
     M = length(M_coords)
@@ -258,11 +277,8 @@ function create_initial_conditions(engine::MMCACovid19VacEngine, M_coords::Array
     A_idx = 3
     NV_idx = 1
     @debug "- Creating compartment array of size (%d, %d, %d, %d)", G, M, V, S
-    compartments = zeros(Float64, G, M, V, S);
-    compartments[:, patches_idxs, NV_idx, A_idx] .= conditions₀
-    compartments[:, :, NV_idx, S_idx]  .= nᵢᵍ - compartments[:, :, NV_idx, A_idx]
+    compartments = create_initial_compartments(engine, M_coords)
 
-    suceptibles = sum(compartments[:, :, 1, S_idx])
     @info "- Setting remaining population $(suceptibles) in compartment S" 
     @info "- Saving initial conditions as: $(output_fname)" 
     try
@@ -309,8 +325,8 @@ function create_initial_conditions(engine::MMCACovid19VacEngine, M_coords::Array
     @debug "- Done creating initial conditions"
 end
 
-function create_initial_conditions(engine::MMCACovid19Engine, M_coords::Array{String}, G_coords::Array{String}, nᵢᵍ, conditions₀, patches_idxs, output_fname::String)
-    
+
+function create_initial_compartments(engine::MMCACovid19Engine, M_coords::Array{String}, G_coords::Array{String}, nᵢᵍ, conditions₀, patches_idxs)
     M = length(M_coords)
     G = length(G_coords)
 
@@ -323,6 +339,13 @@ function create_initial_conditions(engine::MMCACovid19Engine, M_coords::Array{St
     compartments = zeros(Float64, G, M, S);
     compartments[:, patches_idxs, A_idx] .= conditions₀
     compartments[:, :, S_idx]  .= nᵢᵍ - compartments[:, :, A_idx]
+end
+
+
+function create_initial_conditions(engine::MMCACovid19Engine, M_coords::Array{String}, G_coords::Array{String}, nᵢᵍ, conditions₀, patches_idxs, output_fname::String)
+    
+
+    compartments = create_initial_compartments(engine, M_coords, G_coords, nᵢᵍ, conditions₀, patches_idxs)
 
     @info "- Setting remaining population %.1f in compartment S\n", sum(compartments[:, :, S_idx])
     @info "- Saving initial conditions in '%s' \n", output_fname

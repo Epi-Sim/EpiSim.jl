@@ -40,13 +40,11 @@ function validate_config(config, ::MMCACovid19Engine)
     @assert haskey(config, "NPI") 
 end
 
-
-function read_input_files(::AbstractEngine, config::Dict, data_path::String, instance_path::String, init_condition_path::String)
+function read_input_files(::AbstractEngine, config::Dict, data_path::String, instance_path::String)
     data_dict       = config["data"]
     simulation_dict = config["simulation"]
     pop_params_dict = config["population_params"]
     npi_params_dict = config["NPI"]
-    init_format      = get(simulation_dict, "init_format", "netcdf")
 
     #########################
     # Simulation output 
@@ -65,32 +63,6 @@ function read_input_files(::AbstractEngine, config::Dict, data_path::String, ins
     kappa0_filename = get(data_dict, "kappa0_filename", nothing)
     first_day = Date(simulation_dict["start_date"])
     npi_params = init_NPI_parameters_struct(data_path, npi_params_dict, kappa0_filename, first_day)
-    # vac_parms = Vaccination_Params(tᵛs, ϵᵍs)
-
-    #####################
-    # Initial Condition
-    #####################
-
-    if !isfile(init_condition_path) || length(init_condition_path) == 0
-        init_condition_path = joinpath(data_path, get(data_dict, "initial_condition_filename", nothing))
-    end
-
-    @info "- Reading initial conditions from: $(init_condition_path)"
-    # use initial compartments matrix to initialize simulations
-    if init_format == "netcdf"
-        ds = NetCDF.open(init_condition_path)
-        dims = keys(ds.dim)  # Get the dimension names
-        vars = [var for var in keys(ds) if var ∉ dims]
-        initial_compartments_dict = Dict(var => ncread(init_condition_path, var) for var in vars)
-    elseif init_format == "hdf5"
-        # TODO: now this path doesn't work, fix it
-        initial_compartments_dict = h5open(init_condition_path, "r") do file
-            read(file, "data")
-        end
-    else
-        @error "init_format must be one of : netcdf/hdf5"
-        return 1
-    end
 
     # Loading mobility network
     mobility_matrix_filename = joinpath(data_path, data_dict["mobility_matrix_filename"])
@@ -101,44 +73,92 @@ function read_input_files(::AbstractEngine, config::Dict, data_path::String, ins
     # Loading metapopulation patches info (surface, label, population by age)
 
     dtypes = Dict(vcat("id" => String, "area" => Float64, [i => Float64 for i in G_labels], "total" => Float64))
-    
     metapop_data_filename = joinpath(data_path, data_dict["metapopulation_data_filename"])
     metapop_df = CSV.read(metapop_data_filename, DataFrame, types=dtypes)
 
-    return npi_params, network_df, metapop_df, initial_compartments_dict
+    return npi_params, network_df, metapop_df
 end
+
+function read_initial_condition(::NetCDFInputFormat, init_condition_path::String)
+
+    @info "- Reading initial conditions from: $(init_condition_path)"
+    # use initial compartments matrix to initialize simulations
+    initial_compartments_dict = Dict{String, Array{Float64, NDIMS}}()
+    vars = String[]
+    Dataset(init_condition_path) do ds
+        dims = keys(ds.dim)  # Get the dimension names
+        for var in keys(ds)
+            if var ∉ dims
+                push!(vars, var)
+            end
+        end
+    end
+    for var in vars
+        initial_compartments_dict[var] =  ncread(init_condition_path, var)
+    end
+    return initial_compartments_dict
+end
+
+function read_initial_condition(init_condition_path::String, ::CSVInputFormat)
+    
+
+end
+
+
+# elseif init_format == "hdf5"
+#     # TODO: now this path doesn't work, fix it
+#     initial_compartments_dict = h5open(init_condition_path, "r") do file
+#         read(file, "data")
+#     end
+# else
+#     @error "init_format must be one of : netcdf/hdf5"
+#     return 1
+# end
 
 """
 Run the engine using input files (which must be available in the data_path and instance_path)
 and save the output to the output folder.
 """
-function run_engine_io(engine::AbstractEngine, config::Dict, data_path::String, instance_path::String, init_condition_path::String)
-    simulation_dict = config["simulation"]
-    output_format    = simulation_dict["output_format"]
-    save_full_output = get(simulation_dict, "save_full_output", false)
-    save_obs_output  = get(simulation_dict, "save_observables", false)
-    time_step_tosave = get(simulation_dict, "save_time_step", nothing)
-    output_path      = joinpath(instance_path, "output")
-
-    # if output_path does not exist, create it
-    if !isdir(output_path)
-        mkpath(output_path)
-    end
-
+function run_engine_io(engine::AbstractEngine, config::Dict, data_path::String, instance_path::String)
     
     @info "- Running EpiSim.jl using: $(engine)"
     
-    
+    simulation_dict = config["simulation"]
     data_dict       = config["data"]
     epi_params_dict = config["epidemic_params"]
     pop_params_dict = config["population_params"]
     npi_params_dict = config["NPI"]
+    
+    output_format     = get(simulation_dict, "output_format", "netcdf")
+    input_format      = get(simulation_dict, "output_format", "netcdf")
+    save_full_output  = get(simulation_dict, "save_full_output", false)
+    save_obs_output   = get(simulation_dict, "save_observables", false)
+    time_step_to_save = get(simulation_dict, "save_time_step", nothing)
+
+
+    # if output_path does not exist, create it
+    output_path = joinpath(instance_path, "output")
+    if !isdir(output_path)
+        mkpath(output_path)
+    end
+    
+    ###########################################
+    ########## Initial conditions #############
+    ###########################################
+    init_condition_path  = data_dict["initial_condition_filename"]
+    if !isfile(init_condition_path) || length(init_condition_path) == 0
+        init_condition_path = joinpath(data_path, init_condition_path)
+    end
+    @assert isfile(init_condition_path);
+    
+    init_condition_format = INPUT_FORMATS[input_format]
 
     ###########################################
     ############# FILE READING ################
     ###########################################
     @info "- Loading data from files"
-    npi_params, network_df, metapop_df, initial_compartments_dict = read_input_files(engine, config, data_path, instance_path, init_condition_path)
+    npi_params, network_df, metapop_df = read_input_files(engine, config, data_path, instance_path)
+
 
     ########################################
     ####### VARIABLES INITIALIZATION #######
@@ -166,18 +186,18 @@ function run_engine_io(engine::AbstractEngine, config::Dict, data_path::String, 
     n_compartments = 11
 
     export_date = nothing
-    if time_step_tosave !== nothing
-        if time_step_tosave == -1
-            time_step_tosave = T
+    if time_step_to_save !== nothing
+        if time_step_to_save == -1
+            time_step_to_save = T
         end
-        if time_step_tosave > T
-            @error "Can't save simulation step ($(time_step_tosave)) largest then the last time step ($(T))"
+        if time_step_to_save > T
+            @error "Can't save simulation step ($(time_step_to_save)) largest then the last time step ($(T))"
             return 1
-        elseif time_step_tosave < 1
-            @error "Can't save simulation step ($(time_step_tosave)) smaller then the first time step (1)"
+        elseif time_step_to_save < 1
+            @error "Can't save simulation step ($(time_step_to_save)) smaller then the first time step (1)"
             return 1
         end
-        export_date = first_day + Day(time_step_tosave - 1)
+        export_date = first_day + Day(time_step_to_save - 1)
     end
     ####################################################
     #####   INITIALIZATION OF DATA Structures   ########
@@ -189,6 +209,8 @@ function run_engine_io(engine::AbstractEngine, config::Dict, data_path::String, 
 
     vac_params_dict = get(config, "vaccination", nothing)
 
+    initial_compartments_dict = read_initial_condition(init_condition_path, init_condition_format)
+    # ISABEL - ajustar función set_comparment para que use el diccionario directamente (no crear el nd-array)
     set_compartments!(engine, epi_params, population, npi_params, initial_compartments_dict)
 
     @info "- Initializing MMCA epidemic simulations for engine $(engine)"
