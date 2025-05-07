@@ -79,7 +79,59 @@ function read_input_files(::AbstractEngine, config::Dict, data_path::String, ins
     return npi_params, network_df, metapop_df
 end
 
-function read_initial_condition(::NetCDFInputFormat, init_condition_path::String)
+function create_initial_compartments_dict(engine::MMCACovid19VacEngine, M_coords::Array{String}, G_coords::Array{String}, nᵢᵍ::Array{Float64,2}, conditions₀, patches_idxs)
+    M = length(M_coords)
+    G = length(G_coords)
+    V = 3
+
+    comp_coords = ["S", "E", "A", "I", "PH", "PD", "HR", "HD", "R", "D", "CH"]
+
+    @debug "- Creating compartment dict of size (%d, %d, %d, %d)", G, M, V, S
+    init_compartments_dict = Dict{String, Array{Float64, 3}}(label => zeros(G, M, V) for label in comp_coords)
+    
+    S_idx = 1
+    A_idx = 3
+
+    NV_idx = 1
+    init_compartments_dict["A"][:, patches_idxs, NV_idx] .= conditions₀
+    init_compartments_dict["S"][:, :, NV_idx]  .= nᵢᵍ - init_compartments_dict["A"][:, :, NV_idx]
+
+    return init_compartments_dict
+end
+
+function create_initial_compartments_dict(engine::MMCACovid19Engine, M_coords::Array{String}, G_coords::Array{String}, nᵢᵍ::Array{Float64,2}, conditions₀, patches_idxs)
+    M = length(M_coords)
+    G = length(G_coords)
+
+    comp_coords = ["S", "E", "A", "I", "PH", "PD", "HR", "HD", "R", "D", "CH"]
+
+    @debug "- Creating compartment dict of size (%d, %d, %d)", G, M, S
+    init_compartments_dict = Dict{String, Array{Float64, 2}}(label => zeros(G, M) for label in comp_coords)
+    
+    S_idx = 1
+    A_idx = 3
+
+    init_compartments_dict["A"][:, patches_idxs] .= conditions₀
+    init_compartments_dict["S"][:, :]  .= nᵢᵍ - init_compartments_dict[:, :]
+
+    return init_compartments_dict
+end
+
+function read_initial_condition(::CSVInputFormat, init_condition_path::String, engine, M_coords, G_coords, nᵢᵍ)
+    @info "- Reading initial conditions from: $(init_condition_path)"
+    
+    dtypes = Dict(vcat("id" => String, "idx" => Int, 
+                        [i => Float64 for i in pop_params_dict["G_labels"]]
+                        ))
+
+    conditions₀  = CSV.read(init_condition_path, DataFrame, types=dtypes)
+    patches_idxs = conditions₀[:, "idx"]
+    conditions₀  = transpose(Array(conditions₀[:, G_coords]))
+
+    return create_initial_compartments_dict(engine, M_coords, G_coords, nᵢᵍ, conditions₀, patches_idxs)
+end
+
+function read_initial_condition(::NetCDFInputFormat, init_condition_path::String, engine, M_coords::Array{String}, G_coords::Array{String}, nᵢᵍ::Array{Float64,2})
 
     @info "- Reading initial conditions from: $(init_condition_path)"
     # use initial compartments matrix to initialize simulations
@@ -97,11 +149,6 @@ function read_initial_condition(::NetCDFInputFormat, init_condition_path::String
         initial_compartments_dict[var] =  ncread(init_condition_path, var)
     end
     return initial_compartments_dict
-end
-
-function read_initial_condition(init_condition_path::String, ::CSVInputFormat)
-    
-
 end
 
 
@@ -129,8 +176,8 @@ function run_engine_io(engine::AbstractEngine, config::Dict, data_path::String, 
     pop_params_dict = config["population_params"]
     npi_params_dict = config["NPI"]
     
+    input_format      = get(simulation_dict, "input_format", "netcdf")
     output_format     = get(simulation_dict, "output_format", "netcdf")
-    input_format      = get(simulation_dict, "output_format", "netcdf")
     save_full_output  = get(simulation_dict, "save_full_output", false)
     save_obs_output   = get(simulation_dict, "save_observables", false)
     time_step_to_save = get(simulation_dict, "save_time_step", nothing)
@@ -209,8 +256,10 @@ function run_engine_io(engine::AbstractEngine, config::Dict, data_path::String, 
 
     vac_params_dict = get(config, "vaccination", nothing)
 
-    initial_compartments_dict = read_initial_condition(init_condition_path, init_condition_format)
+    @info "- Reading initial conditions"
+    initial_compartments_dict = read_initial_condition(init_condition_path, init_condition_format(), engine, M_coords, G_coords, population.nᵢᵍ)
     # ISABEL - ajustar función set_comparment para que use el diccionario directamente (no crear el nd-array)
+    @info "- Initializing compartments"
     set_compartments!(engine, epi_params, population, npi_params, initial_compartments_dict)
 
     @info "- Initializing MMCA epidemic simulations for engine $(engine)"
@@ -385,25 +434,58 @@ Function to set the initial compartments for the engine MMCACovid19VacEngine
 """
 function set_compartments!(engine::MMCACovid19VacEngine, epi_params::MMCACovid19Vac.Epidemic_Params, 
                           population::MMCACovid19Vac.Population_Params, npi_params::NPI_Params,
-                           initial_compartments_dict::Dict{String, Array{Float64, 3}})
+                           initial_compartments_dict::Dict{String, Array{Float64, 3}}; scale_by_population = true)
     G = population.G
     M = population.M
     V = epi_params.V
     S = epi_params.NumComps
     
-    initial_compartments = zeros(Float64, G, M, V, S)
+    t₀ = 1
 
-    i = 1
-    for var in epi_params.CompLabels
-        if haskey(initial_compartments_dict, var)
-            initial_compartments[:,:, :,i] = initial_compartments_dict[var]
-            i += 1
-        else
-            @error "$(var) not found in the initial conditions"
-        end
+    for i in 1:V
+        epi_params.ρˢᵍᵥ[:,:,t₀,i]  .= initial_compartments_dict["S"]
+        epi_params.ρᴱᵍᵥ[:,:,t₀,i]  .= initial_compartments_dict["E"]
+        epi_params.ρᴬᵍᵥ[:,:,t₀,i]  .= initial_compartments_dict["A"]
+        epi_params.ρᴵᵍᵥ[:,:,t₀,i]  .= initial_compartments_dict["I"]
+        epi_params.ρᴾᴴᵍᵥ[:,:,t₀,i] .= initial_compartments_dict["PH"]
+        epi_params.ρᴾᴰᵍᵥ[:,:,t₀,i] .= initial_compartments_dict["PD"]
+        epi_params.ρᴴᴿᵍᵥ[:,:,t₀,i] .= initial_compartments_dict["HR"]
+        epi_params.ρᴴᴰᵍᵥ[:,:,t₀,i] .= initial_compartments_dict["HD"]
+        epi_params.ρᴿᵍᵥ[:,:,t₀,i]  .= initial_compartments_dict["R"]
+        epi_params.ρᴰᵍᵥ[:,:,t₀,i]  .= initial_compartments_dict["D"]
+        epi_params.CHᵢᵍᵥ[:,:,t₀,i] .= initial_compartments_dict["CH"]
     end
 
-    MMCACovid19Vac.set_compartments!(epi_params, population, initial_compartments)
+
+    if scale_by_population
+        for i in 1:V
+            epi_params.ρˢᵍᵥ[:,:,t₀,i]  .= epi_params.ρˢᵍᵥ[:,:,t₀,i] ./ population.nᵢᵍ
+            epi_params.ρᴱᵍᵥ[:,:,t₀,i]  .= epi_params.ρᴱᵍᵥ[:,:,t₀,i] ./ population.nᵢᵍ
+            epi_params.ρᴬᵍᵥ[:,:,t₀,i]  .= epi_params.ρᴬᵍᵥ[:,:,t₀,i] ./ population.nᵢᵍ
+            epi_params.ρᴵᵍᵥ[:,:,t₀,i]  .= epi_params.ρᴵᵍᵥ[:,:,t₀,i] ./ population.nᵢᵍ
+            epi_params.ρᴾᴴᵍᵥ[:,:,t₀,i] .= epi_params.ρᴾᴴᵍᵥ[:,:,t₀,i] ./ population.nᵢᵍ
+            epi_params.ρᴾᴰᵍᵥ[:,:,t₀,i] .= epi_params.ρᴾᴰᵍᵥ[:,:,t₀,i] ./ population.nᵢᵍ
+            epi_params.ρᴴᴿᵍᵥ[:,:,t₀,i] .= epi_params.ρᴴᴿᵍᵥ[:,:,t₀,i] ./ population.nᵢᵍ
+            epi_params.ρᴴᴰᵍᵥ[:,:,t₀,i] .= epi_params.ρᴴᴰᵍᵥ[:,:,t₀,i] ./ population.nᵢᵍ
+            epi_params.ρᴿᵍᵥ[:,:,t₀,i]  .= epi_params.ρᴿᵍᵥ[:,:,t₀,i] ./ population.nᵢᵍ
+            epi_params.ρᴰᵍᵥ[:,:,t₀,i]  .= epi_params.ρᴰᵍᵥ[:,:,t₀,i] ./ population.nᵢᵍ
+            epi_params.CHᵢᵍᵥ[:,:,t₀,i] .= epi_params.CHᵢᵍᵥ[:,:,t₀,i] ./ population.nᵢᵍ
+        end
+    end
+    
+    epi_params.ρˢᵍᵥ[isnan.(epi_params.ρˢᵍᵥ)]   .= 0
+    epi_params.ρᴱᵍᵥ[isnan.(epi_params.ρᴱᵍᵥ)]   .= 0
+    epi_params.ρᴬᵍᵥ[isnan.(epi_params.ρᴬᵍᵥ)]   .= 0
+    epi_params.ρᴵᵍᵥ[isnan.(epi_params.ρᴵᵍᵥ)]   .= 0
+    epi_params.ρᴾᴴᵍᵥ[isnan.(epi_params.ρᴾᴴᵍᵥ)] .= 0
+    epi_params.ρᴾᴰᵍᵥ[isnan.(epi_params.ρᴾᴰᵍᵥ)] .= 0
+    epi_params.ρᴴᴿᵍᵥ[isnan.(epi_params.ρᴴᴿᵍᵥ)] .= 0
+    epi_params.ρᴴᴰᵍᵥ[isnan.(epi_params.ρᴴᴰᵍᵥ)] .= 0
+    epi_params.ρᴿᵍᵥ[isnan.(epi_params.ρᴿᵍᵥ)]   .= 0
+    epi_params.ρᴰᵍᵥ[isnan.(epi_params.ρᴰᵍᵥ)]   .= 0
+    epi_params.CHᵢᵍᵥ[isnan.(epi_params.CHᵢᵍᵥ)]   .= 0
+
+    #MMCACovid19Vac.set_compartments!(epi_params, population, initial_compartments)
 end
 
 """
