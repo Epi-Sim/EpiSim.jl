@@ -96,7 +96,7 @@ function load_initial_condition(engine::AbstractEngine, init_condition_path::Str
     # use initial compartments matrix to initialize simulations
     if engine == EpiSim.MMCACovid19Engine()
         NDIMS = 2
-    elseif engine == EpiSim.MMCACovid19Vac()
+    elseif engine == EpiSim.MMCACovid19VacEngine()
         NDIMS = 3
     end
     initial_compartments_dict = Dict{String, Array{Float64, NDIMS}}()
@@ -140,6 +140,7 @@ function create_initial_compartments_dict(engine::MMCACovid19VacEngine, M_coords
     NV_idx = 1
     init_compartments_dict["A"][:, patches_idxs, NV_idx] .= conditions₀
     init_compartments_dict["S"][:, :, NV_idx]  .= nᵢᵍ - init_compartments_dict["A"][:, :, NV_idx]
+    @info "- Setting remaining population $(sum(init_compartments_dict["S"])) in compartment S"
 
     return init_compartments_dict
 end
@@ -156,6 +157,7 @@ function create_initial_compartments_dict(engine::MMCACovid19Engine, M_coords::A
     init_compartments_dict = Dict{String, Array{Float64, NDIMS}}(label => zeros(G, M) for label in comp_coords)
     init_compartments_dict["A"][:, patches_idxs] .= conditions₀
     init_compartments_dict["S"][:, :] .= nᵢᵍ - init_compartments_dict["A"][:, :]
+    @info "- Setting remaining population $(sum(init_compartments_dict["S"])) in compartment S" 
 
     return init_compartments_dict
 end
@@ -473,19 +475,18 @@ function set_compartments!(engine::MMCACovid19VacEngine, epi_params::MMCACovid19
     
     t₀ = 1
 
-    for i in 1:V
-        epi_params.ρˢᵍᵥ[:,:,t₀,i]  .= initial_compartments_dict["S"]
-        epi_params.ρᴱᵍᵥ[:,:,t₀,i]  .= initial_compartments_dict["E"]
-        epi_params.ρᴬᵍᵥ[:,:,t₀,i]  .= initial_compartments_dict["A"]
-        epi_params.ρᴵᵍᵥ[:,:,t₀,i]  .= initial_compartments_dict["I"]
-        epi_params.ρᴾᴴᵍᵥ[:,:,t₀,i] .= initial_compartments_dict["PH"]
-        epi_params.ρᴾᴰᵍᵥ[:,:,t₀,i] .= initial_compartments_dict["PD"]
-        epi_params.ρᴴᴿᵍᵥ[:,:,t₀,i] .= initial_compartments_dict["HR"]
-        epi_params.ρᴴᴰᵍᵥ[:,:,t₀,i] .= initial_compartments_dict["HD"]
-        epi_params.ρᴿᵍᵥ[:,:,t₀,i]  .= initial_compartments_dict["R"]
-        epi_params.ρᴰᵍᵥ[:,:,t₀,i]  .= initial_compartments_dict["D"]
-        epi_params.CHᵢᵍᵥ[:,:,t₀,i] .= initial_compartments_dict["CH"]
-    end
+    epi_params.ρˢᵍᵥ[:,:,t₀,:]  .= initial_compartments_dict["S"]
+    epi_params.ρᴱᵍᵥ[:,:,t₀,:]  .= initial_compartments_dict["E"]
+    epi_params.ρᴬᵍᵥ[:,:,t₀,:]  .= initial_compartments_dict["A"]
+    epi_params.ρᴵᵍᵥ[:,:,t₀,:]  .= initial_compartments_dict["I"]
+    epi_params.ρᴾᴴᵍᵥ[:,:,t₀,:] .= initial_compartments_dict["PH"]
+    epi_params.ρᴾᴰᵍᵥ[:,:,t₀,:] .= initial_compartments_dict["PD"]
+    epi_params.ρᴴᴿᵍᵥ[:,:,t₀,:] .= initial_compartments_dict["HR"]
+    epi_params.ρᴴᴰᵍᵥ[:,:,t₀,:] .= initial_compartments_dict["HD"]
+    epi_params.ρᴿᵍᵥ[:,:,t₀,:]  .= initial_compartments_dict["R"]
+    epi_params.ρᴰᵍᵥ[:,:,t₀,:]  .= initial_compartments_dict["D"]
+    epi_params.CHᵢᵍᵥ[:,:,t₀,:] .= initial_compartments_dict["CH"]
+
 
 
     if scale_by_population
