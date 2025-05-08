@@ -4,6 +4,7 @@ using Pkg
 # note that you should have installed the dependencies before running this script
 
 Pkg.activate(@__DIR__)
+Pkg.update()
 Pkg.instantiate()
 Pkg.precompile()
 
