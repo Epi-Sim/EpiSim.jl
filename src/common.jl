@@ -10,7 +10,7 @@ struct NetCDFFormat <: AbstractOutputFormat end
 struct HDF5Format   <: AbstractOutputFormat end
 
 struct NetCDFInputFormat <: AbstractInitFormat end
-struct CSVInputFormat    <: AbstractOutputFormat end
+struct CSVInputFormat    <: AbstractInitFormat end
 
 const ENGINES  = ["MMCACovid19Vac", "MMCACovid19"]
 const COMMANDS = ["run", "setup", "init"]
