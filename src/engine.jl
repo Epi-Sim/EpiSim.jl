@@ -79,49 +79,20 @@ function read_input_files(::AbstractEngine, config::Dict, data_path::String, ins
     return npi_params, network_df, metapop_df
 end
 
-function create_initial_compartments_dict(engine::MMCACovid19VacEngine, M_coords::Array{String}, G_coords::Array{String}, nᵢᵍ::Array{Float64,2}, conditions₀, patches_idxs)
-    M = length(M_coords)
-    G = length(G_coords)
-    V = 3
-
-    comp_coords = ["S", "E", "A", "I", "PH", "PD", "HR", "HD", "R", "D", "CH"]
-
-    @debug "- Creating compartment dict of size (%d, %d, %d, %d)", G, M, V, S
-    init_compartments_dict = Dict{String, Array{Float64, 3}}(label => zeros(G, M, V) for label in comp_coords)
-    
-    S_idx = 1
-    A_idx = 3
-
-    NV_idx = 1
-    init_compartments_dict["A"][:, patches_idxs, NV_idx] .= conditions₀
-    init_compartments_dict["S"][:, :, NV_idx]  .= nᵢᵍ - init_compartments_dict["A"][:, :, NV_idx]
-
-    return init_compartments_dict
+function read_initial_csv_seeds(csv_fname::String, G_coords::Array{String}; patches_index_col = "idx")
+    df_seeds  = CSV.read(csv_fname, DataFrame)
+    required_cols = vcat(G_coords, patches_index_col)
+    missing = setdiff(required_cols, names(df_seeds))
+    if !isempty(missing)
+        @error "Error in CSV seed file $(csv_fname). Wrong header or format"
+        throw(ArgumentError("Missing required columns: $(join(missing, ", "))"))
+    end
+    patches_idxs = df_seeds[:, patches_index_col]
+    conditions₀  = transpose(Array(df_seeds[:, G_coords]))
+    return conditions₀, patches_idxs
 end
 
-function create_initial_compartments_dict(engine::MMCACovid19Engine, M_coords::Array{String}, G_coords::Array{String}, nᵢᵍ::Array{Float64,2}, conditions₀, patches_idxs)
-    
-    M = length(M_coords)
-    G = length(G_coords)
-    dim = length((G, M))
-    comp_coords = ["S", "E", "A", "I", "PH", "PD", "HR", "HD", "R", "D", "CH"]
-
-    @debug "- Creating compartment dict of size (%d, %d, %d)", G, M, S
-    S = length(comp_coords)
-    init_compartments_dict = Dict{String, Array{Float64, dim}}(label => zeros(G, M) for label in comp_coords)
-    
-    S_idx = 1
-    A_idx = 3
-
-    init_compartments_dict["S"][:, :]  .= nᵢᵍ
-    init_compartments_dict["A"][:, patches_idxs] .= conditions₀
-    init_compartments_dict["S"][:, patches_idxs] .= init_compartments_dict["S"][:, patches_idxs] - conditions₀
-
-    return init_compartments_dict
-end
-
-
-function read_initial_condition(engine::AbstractEngine, init_condition_path::String)
+function load_initial_condition(engine::AbstractEngine, init_condition_path::String)
     # use initial compartments matrix to initialize simulations
     if engine == EpiSim.MMCACovid19Engine()
         NDIMS = 2
@@ -141,7 +112,7 @@ function read_initial_condition(engine::AbstractEngine, init_condition_path::Str
         end
     catch e
         @error "Error: '$(init_condition_path)' is not a valid NetCDF file."
-        return nothing
+        throw(ArgumentError("Invalid NetCDF file: $(init_condition_path)"))
     end
     try
     for var in vars
@@ -149,10 +120,46 @@ function read_initial_condition(engine::AbstractEngine, init_condition_path::Str
     end
     catch e
         @error "Error: '$(var)' not found in NetCDF file '$(init_condition_path)'."
-        return nothing
+        throw(ArgumentError("Missing $(var) NetCDF file: $(init_condition_path)"))
     end
     return initial_compartments_dict
 end
+
+function create_initial_compartments_dict(engine::MMCACovid19VacEngine, M_coords::Array{String}, G_coords::Array{String}, nᵢᵍ::Array{Float64,2}, conditions₀, patches_idxs)
+    M = length(M_coords)
+    G = length(G_coords)
+    V = 3
+    NDIMS = length((G, M, V))
+
+    comp_coords = ["S", "E", "A", "I", "PH", "PD", "HR", "HD", "R", "D", "CH"]
+
+    @debug "- Creating initial compartment dict using arrays of size ($(G), $(M), $(V))"
+    init_compartments_dict = Dict{String, Array{Float64, NDIMS}}(label => zeros(G, M, V) for label in comp_coords)
+
+
+    NV_idx = 1
+    init_compartments_dict["A"][:, patches_idxs, NV_idx] .= conditions₀
+    init_compartments_dict["S"][:, :, NV_idx]  .= nᵢᵍ - init_compartments_dict["A"][:, :, NV_idx]
+
+    return init_compartments_dict
+end
+
+function create_initial_compartments_dict(engine::MMCACovid19Engine, M_coords::Array{String}, G_coords::Array{String}, nᵢᵍ::Array{Float64,2}, conditions₀, patches_idxs)
+    
+    M = length(M_coords)
+    G = length(G_coords)
+    NDIMS = length((G, M))
+    
+    comp_coords = ["S", "E", "A", "I", "PH", "PD", "HR", "HD", "R", "D", "CH"]
+
+    @debug "- Creating initial compartment dict using arrays of size ($(G), $(M), $(V))"
+    init_compartments_dict = Dict{String, Array{Float64, NDIMS}}(label => zeros(G, M) for label in comp_coords)
+    init_compartments_dict["A"][:, patches_idxs] .= conditions₀
+    init_compartments_dict["S"][:, :] .= nᵢᵍ - init_compartments_dict["A"][:, :]
+
+    return init_compartments_dict
+end
+
 
 
 # elseif init_format == "hdf5"
@@ -201,14 +208,11 @@ function run_engine_io(engine::AbstractEngine, config::Dict, data_path::String, 
     end
     @assert isfile(init_condition_path);
     
-
-
     ###########################################
     ############# FILE READING ################
     ###########################################
     @info "- Loading data from files"
     npi_params, network_df, metapop_df = read_input_files(engine, config, data_path, instance_path)
-
 
     ########################################
     ####### VARIABLES INITIALIZATION #######
@@ -258,35 +262,32 @@ function run_engine_io(engine::AbstractEngine, config::Dict, data_path::String, 
     epi_params = init_epidemic_parameters_struct(engine, G, M, T, G_coords, epi_params_dict)
 
     vac_params_dict = get(config, "vaccination", nothing)
-
-    @info "- Reading initial conditions"
-    
+    initial_compartments_dict = nothing
     if input_format == "netcdf"
-        @info "- Reading initial conditions (NetCDF) from: $(init_condition_path)"
-        initial_compartments_dict = read_initial_condition(engine, init_condition_path)
+        try
+            @info "- Reading initial conditions (NetCDF) from: $(init_condition_path)"
+            initial_compartments_dict = load_initial_condition(engine, init_condition_path)
+        catch e 
+            error_type = typeof(e)
+            @error " - Exception while loading NetCDF file with initial condition: $(e)"
+            @error " - Type of error: $(error_type)"
+            exit(1)
+        end
     elseif input_format == "csv"
         @info "- Reading initial conditions (CSV) from: $(init_condition_path)"
-        df_seeds  = CSV.read(init_condition_path, DataFrame)
-        patches_idxs = df_seeds[:, "idx"]
-        conditions₀  = transpose(Array(df_seeds[:, G_coords]))
         try
+            conditions₀, patches_idxs = read_initial_csv_seeds(init_condition_path, G_coords)
             initial_compartments_dict =  create_initial_compartments_dict(engine, M_coords, G_coords, population.nᵢᵍ, conditions₀, patches_idxs)
         catch e 
-            @info "ERROR CREATING COMPARTMENT DICT"
-            println("Caught an error: ", e)
-            println("Type of error: ", typeof(e))
-            println("Stacktrace:")
-            stacktrace = catch_backtrace()
-            for frame in stacktrace
-                println(frame)
-            end
+            error_type = typeof(e)
+            @error " - Exception while reading CSV file with initial condition: $(e)"
+            @error " - Type of error: $(error_type)"
             exit(1)
         end
     else
         @error "- Unknown input format '$(input_format)'"
         exit(1)
     end
-
 
     # ISABEL - ajustar función set_comparment para que use el diccionario directamente (no crear el nd-array)
     @info "- Initializing compartments"
@@ -310,7 +311,7 @@ function run_engine_io(engine::AbstractEngine, config::Dict, data_path::String, 
         save_observables(engine, epi_params, population, output_path; coords...)
     end
     if export_date !== nothing
-        save_time_step(engine, epi_params, population, output_path, output_format, time_step_tosave, export_date; Dict(:G_coords => G_coords, :M_coords => M_coords)...)
+        save_time_step(engine, epi_params, population, output_path, output_format, time_step_to_save, export_date; Dict(:G_coords => G_coords, :M_coords => M_coords)...)
     end
 
     @info "- Done running simulations"
