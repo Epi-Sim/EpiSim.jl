@@ -6,6 +6,7 @@
 		"save_full_output": true,
 		"save_observables": true,
 		"save_time_step": 1,
+		"input_format":"netcdf",
 		"output_folder": "output",
 		"output_format": "netcdf"
 	},

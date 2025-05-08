@@ -17,7 +17,7 @@ function update_config!(config, cmd_line_args)
         config["simulation"]["export_compartments_full"] = true
     end
     if cmd_line_args["initial-condition"] !== nothing
-        config["simulation"]["initial_condition_filename"] = cmd_line_args["initial-condition"]
+        config["data"]["initial_condition_filename"] = cmd_line_args["initial-condition"]
     end
 
     nothing
@@ -28,6 +28,8 @@ const OUTPUT_FORMATS = Dict("netcdf" => NetCDFFormat(), "hdf5" => HDF5Format())
 
 get_output_format(output_format::String) = get(OUTPUT_FORMATS, output_format, NetCDFFormat())
 get_output_format_str(output_format::AbstractOutputFormat) = findfirst(==(output_format), OUTPUT_FORMATS)
+
+
 
 function save_full(engine::MMCACovid19VacEngine, 
     epi_params::MMCACovid19Vac.Epidemic_Params,
@@ -71,7 +73,7 @@ function save_time_step(engine::MMCACovid19VacEngine,
     population::MMCACovid19Vac.Population_Params,
     output_path::String, output_format::Union{String,AbstractOutputFormat}, 
     export_time_t::Int, export_date::Date; kwargs...)
-    
+    @debug "Inside save_time_step output name: $(output_path) date $(export_time_t)"
     format = output_format isa String ? get_output_format(output_format) : output_format
     _save_time_step(engine, epi_params, population, output_path, format, export_time_t, export_date; kwargs...)
 end
@@ -400,21 +402,23 @@ function save_observables(engine::MMCACovid19Engine,
 
     filename = joinpath(output_path, "observables.nc")
     @info "- Storing simulation observables output in NetCDF: $filename"
+    
+    G = population.G
+    M = population.M
+    T = epi_params.T
+
+    if length(G_coords) != G
+        G_coords = collect(1:G)
+    end
+    if length(M_coords) != M
+        M_coords = collect(1:M)
+    end
+    if length(T_coords) != T
+        T_coords = collect(1:T) 
+    end
+
     try
-        G = population.G
-        M = population.M
-        T = epi_params.T
-    
-        if length(G_coords) != G
-            G_coords = collect(1:G)
-        end
-        if length(M_coords) != M
-            M_coords = collect(1:M)
-        end
-        if length(T_coords) != T
-            T_coords = collect(1:T) 
-        end
-    
+        @debug "Inside try/catch block within save_observables"
         g_dim = NcDim("G", G, atts=Dict("description" => "Age strata", "Unit" => "unitless"), values=G_coords, unlimited=false)
         m_dim = NcDim("M", M, atts=Dict("description" => "Region", "Unit" => "unitless"), values=M_coords, unlimited=false)
         t_dim = NcDim("T", T, atts=Dict("description" => "Time", "Unit" => "unitless"), values=T_coords, unlimited=false)
@@ -450,6 +454,8 @@ function save_observables(engine::MMCACovid19Engine,
         end
     catch e
         @error "Error saving simulation observables" exception=(e, catch_backtrace())
+        println("Caught exception: ", e)
+        exit(1)
         rethrow(e)
     end
     @debug "- Done saving"

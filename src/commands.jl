@@ -34,7 +34,7 @@ function parse_command_line()
             arg_type = Int
         "--initial-condition"
             help = "compartments to initialize simulation. If missing, use the seeds to initialize the simulations"
-            default = ""
+            default = nothing
         "--start-date"
             help = "starting date of simulation. Overwrites the one provided in config.json"
             default = nothing
@@ -131,20 +131,17 @@ function execute_run(args)
     config_fname  = args["config"]
     instance_path = args["instance-folder"]
 
-    
-
-    init_condition_path = args["initial-condition"]
-    
-    config = JSON.parsefile(config_fname);
-    update_config!(config, args)
-
     @assert isfile(config_fname);
     @assert isdir(data_path);
     @assert isdir(instance_path);
     
+    config = JSON.parsefile(config_fname);
+    update_config!(config, args)
     engine = validate_config(config)
 
-    run_engine_io(engine, config, data_path, instance_path, init_condition_path)
+    #init_condition_path = args["initial-condition"]
+
+    run_engine_io(engine, config, data_path, instance_path)
     @debug "- Done executing run command"
 end
 
@@ -243,6 +240,7 @@ end
 ## ------------------------------------------------------------
 
 
+
 function create_initial_conditions(engine::MMCACovid19VacEngine, M_coords::Array{String}, G_coords::Array{String}, nᵢᵍ, conditions₀, patches_idxs, output_fname::String)
     
     M = length(M_coords)
@@ -254,16 +252,8 @@ function create_initial_conditions(engine::MMCACovid19VacEngine, M_coords::Array
     V = 3
     V_coords = ["NV", "V", "PV"]
     
-    S_idx = 1
-    A_idx = 3
-    NV_idx = 1
-    @debug "- Creating compartment array of size (%d, %d, %d, %d)", G, M, V, S
-    compartments = zeros(Float64, G, M, V, S);
-    compartments[:, patches_idxs, NV_idx, A_idx] .= conditions₀
-    compartments[:, :, NV_idx, S_idx]  .= nᵢᵍ - compartments[:, :, NV_idx, A_idx]
-
-    suceptibles = sum(compartments[:, :, 1, S_idx])
-    @info "- Setting remaining population $(suceptibles) in compartment S" 
+    data_dict = create_initial_compartments_dict(engine, M_coords, G_coords, nᵢᵍ, conditions₀, patches_idxs)
+ 
     @info "- Saving initial conditions as: $(output_fname)" 
     try
         g_dim = NcDim("G", G, atts=Dict("description" => "Age strata", "Unit" => "unitless"), values=G_coords, unlimited=false)
@@ -283,19 +273,6 @@ function create_initial_conditions(engine::MMCACovid19VacEngine, M_coords::Array
         D  = NcVar("D" , dimlist; atts=Dict("description" => "Dead"), t=Float64, compress=-1)
         CH  = NcVar("CH" , dimlist; atts=Dict("description" => "Confined"), t=Float64, compress=-1)
         varlist = [S, E, A, I, PH, PD, HR, HD, R, D, CH]
-
-        data_dict = Dict()
-        data_dict["S"]  = compartments[:, :, :, 1]
-        data_dict["E"]  = compartments[:, :, :, 2]
-        data_dict["A"]  = compartments[:, :, :, 3]
-        data_dict["I"]  = compartments[:, :, :, 4]
-        data_dict["PH"] = compartments[:, :, :, 5]
-        data_dict["PD"] = compartments[:, :, :, 6]
-        data_dict["HR"] = compartments[:, :, :, 7]
-        data_dict["HD"] = compartments[:, :, :, 8]
-        data_dict["R"]  = compartments[:, :, :, 9]
-        data_dict["D"]  = compartments[:, :, :, 10]
-        data_dict["CH"] = compartments[:, :, :, 11]
         
         isfile(output_fname) && rm(output_fname)
 
@@ -309,23 +286,15 @@ function create_initial_conditions(engine::MMCACovid19VacEngine, M_coords::Array
     @debug "- Done creating initial conditions"
 end
 
+
 function create_initial_conditions(engine::MMCACovid19Engine, M_coords::Array{String}, G_coords::Array{String}, nᵢᵍ, conditions₀, patches_idxs, output_fname::String)
-    
+
     M = length(M_coords)
     G = length(G_coords)
-
-    S = 11
-    comp_coords = ["S", "E", "A", "I", "PH", "PD", "HR", "HD", "R", "D", "CH"]
     
-    S_idx = 1
-    A_idx = 3
-    @debug "- Creating compartment array of size (%d, %d, %d)", G, M, S
-    compartments = zeros(Float64, G, M, S);
-    compartments[:, patches_idxs, A_idx] .= conditions₀
-    compartments[:, :, S_idx]  .= nᵢᵍ - compartments[:, :, A_idx]
+    data_dict = create_initial_compartments_dict(engine, M_coords, G_coords, nᵢᵍ, conditions₀, patches_idxs)
 
-    @info "- Setting remaining population %.1f in compartment S\n", sum(compartments[:, :, S_idx])
-    @info "- Saving initial conditions in '%s' \n", output_fname
+    @info "- Saving initial conditions as: $(output_fname)" 
     try
         g_dim = NcDim("G", G, atts=Dict("description" => "Age strata", "Unit" => "unitless"), values=G_coords, unlimited=false)
         m_dim = NcDim("M", M, atts=Dict("description" => "Region", "Unit" => "unitless"), values=M_coords, unlimited=false)
@@ -343,19 +312,6 @@ function create_initial_conditions(engine::MMCACovid19Engine, M_coords::Array{St
         D  = NcVar("D" , dimlist; atts=Dict("description" => "Dead"), t=Float64, compress=-1)
         CH  = NcVar("CH" , dimlist; atts=Dict("description" => "Confined"), t=Float64, compress=-1)
         varlist = [S, E, A, I, PH, PD, HR, HD, R, D, CH]
-
-        data_dict = Dict()
-        data_dict["S"]  = compartments[:, :, 1]
-        data_dict["E"]  = compartments[:, :, 2]
-        data_dict["A"]  = compartments[:, :, 3]
-        data_dict["I"]  = compartments[:, :, 4]
-        data_dict["PH"] = compartments[:, :, 5]
-        data_dict["PD"] = compartments[:, :, 6]
-        data_dict["HR"] = compartments[:, :, 7]
-        data_dict["HD"] = compartments[:, :, 8]
-        data_dict["R"]  = compartments[:, :, 9]
-        data_dict["D"]  = compartments[:, :, 10]
-        data_dict["CH"] = compartments[:, :, 11]
         
         isfile(output_fname) && rm(output_fname)
 
