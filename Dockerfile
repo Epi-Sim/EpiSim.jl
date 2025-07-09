@@ -1,5 +1,5 @@
 # Use Julia official image as base
-FROM julia
+FROM julia:1.11.4
 
 # Install system dependencies for NetCDF and HDF5
 RUN apt-get update && apt-get install -y \
@@ -31,4 +31,4 @@ RUN julia install.jl -i -t /usr/local/bin
 #     fi
 
 # Default command shows help
-CMD ["julia", "--project", "run.jl", "--help"] 
+CMD ["julia", "--project", "src/run.jl", "--help"] 
