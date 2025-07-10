@@ -40,17 +40,44 @@ if args["update"]
     Pkg.precompile()
 end
 
+episim_path = joinpath(args["target"], "episim")
+
 if args["compile"]
     build_folder = "build"
-    create_app(pwd(), build_folder, 
-        force=true, 
-        incremental=args["incremental"],
-        include_transitive_dependencies=true,
-        filter_stdlibs=false,
-        precompile_execution_file=["src/EpiSim.jl"])
-    bin_path = abspath(joinpath(build_folder, "bin", "EpiSim"))
-    symlink_path = joinpath(args["target"], "episim")
-    if !islink(symlink_path)
-        symlink(bin_path, symlink_path)
+    println("Attempting to compile the application...")
+    try
+        create_app(pwd(), build_folder,
+            force=true,
+            incremental=args["incremental"],
+            include_transitive_dependencies=true,
+            filter_stdlibs=false,
+            precompile_execution_file=["src/EpiSim.jl"])
+
+        bin_path = abspath(joinpath(build_folder, "bin", "EpiSim"))
+
+        if islink(episim_path) || isfile(episim_path)
+            rm(episim_path, force=true)
+        end
+        symlink(bin_path, episim_path)
+        println("Compilation successful. 'episim' command created at $(episim_path)")
+    catch e
+        println("Compilation failed: $e")
+        rethrow(e)
     end
+else
+    println("Creating a wrapper script for 'episim' as compilation was not requested.")
+    
+    project_dir = abspath(@__DIR__)
+    run_script_path = joinpath(project_dir, "src", "run.jl")
+
+    if islink(episim_path) || isfile(episim_path)
+        rm(episim_path, force=true)
+    end
+
+    open(episim_path, "w") do f
+        println(f, "#!/bin/sh")
+        println(f, "exec julia --project=\"$project_dir\" \"$run_script_path\" \"\$@\"")
+    end
+    chmod(episim_path, 0o755)
+    println("'episim' wrapper script created at $(episim_path)")
 end
