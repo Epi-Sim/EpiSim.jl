@@ -25,10 +25,5 @@ RUN julia -e "using Pkg; Pkg.precompile()"
 # Now run the install script to compile the application
 RUN julia install.jl -i -t /usr/local/bin
 
-# # Create a symbolic link in PATH if not already created
-# RUN if [ ! -L /usr/local/bin/episim ]; then \
-#         ln -s /app/build/bin/EpiSim /usr/local/bin/episim; \
-#     fi
-
 # Default command shows help
 CMD ["julia", "--project", "src/run.jl", "--help"] 
