@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# LOCAL test runner to build and run all tests inside the container.
+# In CI, we separate build and testing into different steps using the runners.
+
 set -e
 
 # Configuration
