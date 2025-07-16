@@ -2,44 +2,57 @@
 
 set -e
 
-IMAGE_NAME="episim-validation"
-OUTPUT_DIR="test_output"
+# Configuration
+IMAGE_NAME="${DOCKER_IMAGE_NAME:-episim-validation}"
+OUTPUT_DIR="${TEST_OUTPUT_DIR:-test_output}"
+CLEANUP_IMAGES="${CLEANUP_IMAGES:-true}"
 
-echo "Building docker image..."
-docker build -t $IMAGE_NAME .
+# Function to cleanup Docker images
+cleanup_docker() {
+    if [ "$CLEANUP_IMAGES" = "true" ]; then
+        echo "Cleaning up Docker images..."
+        docker rmi $IMAGE_NAME 2>/dev/null || echo "Image $IMAGE_NAME not found for cleanup"
+    fi
+}
 
-echo "Creating temporary output directory..."
+# Set up trap for cleanup on exit
+trap cleanup_docker EXIT
+
+echo "Building Docker image: $IMAGE_NAME"
+if ! docker build -t $IMAGE_NAME .; then
+    echo "❌ Docker build failed"
+    exit 1
+fi
+
+echo "Creating temporary output directory: $OUTPUT_DIR"
 mkdir -p $OUTPUT_DIR
 
-echo "Running Julia tests"
+echo "Running Julia tests..."
 # Mount the local models/mitma directory to /data in the container
 # Mount the local test_output directory to /output in the container
-docker run --rm \
+if docker run --rm \
     -v "$(pwd)/models/mitma:/data" \
     -v "$(pwd)/$OUTPUT_DIR:/output" \
-    $IMAGE_NAME julia --project test/runtests.jl
-
-if [ $? -eq 0 ]; then
-    echo "Julia tests PASSED"
+    $IMAGE_NAME julia --project test/runtests.jl; then
+    echo "✅ Julia tests PASSED"
 else
-    echo "Julia tests FAILED"
+    echo "❌ Julia tests FAILED"
     exit 1
 fi
 
 echo "Running Python test suite..."
 # Run the full pytest suite in the Docker container
-docker run --rm \
+if docker run --rm \
     -v "$(pwd):/workspace" \
+    -v "$(pwd)/models/mitma:/data" \
     -w /workspace \
     $IMAGE_NAME \
-    bash -c "cd python && uv run pytest tests/ -v"
-
-if [ $? -eq 0 ]; then
-    echo "Python test suite passed successfully."
+    bash -c "cd python && uv run pytest tests/ -v"; then
+    echo "✅ Python test suite PASSED"
 else
-    echo "Python test suite failed."
+    echo "❌ Python test suite FAILED"
     exit 1
 fi
 
-echo "ALL TESTS PASSED"
+echo "🎉 ALL TESTS PASSED"
 

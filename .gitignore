@@ -33,3 +33,6 @@ dist/
 episim_build/
 __pycache__/
 .cursor/
+
+# Testing output directory
+test_output/
