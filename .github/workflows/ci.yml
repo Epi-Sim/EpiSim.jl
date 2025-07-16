@@ -18,7 +18,7 @@ jobs:
     
     - name: Build and save Docker image
       run: |
-        docker build -t episim-validation .
+        docker build --build-arg SHOULD_COMPILE=true -t episim-validation .
         docker save episim-validation > /tmp/episim-validation.tar
     
     - name: Upload Docker image

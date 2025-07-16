@@ -42,8 +42,15 @@ RUN cd python && uv pip install --system -e .
 # Now precompile everything including EpiSim
 RUN julia -e "using Pkg; Pkg.precompile()"
 
-# Compile the Julia application
-RUN julia install.jl -i -t /usr/local/bin
+# Build argument to control compilation (default to false for dev builds)
+ARG SHOULD_COMPILE=false
+
+# Compile the Julia application (conditional based on build arg)
+RUN if [ "$SHOULD_COMPILE" = "true" ]; then \
+        julia install.jl -c -i -t /usr/local/bin; \
+    else \
+        julia install.jl -i -t /usr/local/bin; \
+    fi
 
 # Set environment variables for executable discovery
 ENV EPISIM_EXECUTABLE_PATH=/usr/local/bin/episim

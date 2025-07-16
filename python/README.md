@@ -27,6 +27,42 @@ pip install -e .
 pip install -r requirements.txt
 ```
 
+## Julia Engine Integration
+
+This Python package acts as a wrapper around the Julia-based EpiSim.jl engine, providing two execution modes:
+
+### Compiled Mode (Recommended for Production)
+The `install.jl` script can create a standalone compiled executable (`episim`) that bundles all Julia dependencies into a single binary. This mode offers:
+- **Fast startup**: No Julia compilation overhead
+- **Standalone execution**: No Julia runtime dependencies
+- **Better performance**: Optimized for production use
+
+```python
+# Uses the compiled executable at ../episim
+model.setup(executable_type='compiled')
+```
+
+### Interpreter Mode (Recommended for Development)
+Uses the Julia interpreter to run the EpiSim.jl source code directly. This mode provides:
+- **Faster development**: No recompilation needed for code changes
+- **Easier debugging**: Direct access to Julia code and error messages
+- **Flexibility**: Can modify Julia code without rebuilding
+
+```python
+# Uses Julia interpreter with src/run.jl
+model.setup(executable_type='interpreter')
+```
+
+### How it Works
+
+The Python wrapper communicates with the Julia engine through:
+1. **JSON configuration files**: Parameters are written to temporary JSON files
+2. **NetCDF state files**: Model state is persisted between simulation steps
+3. **Command-line interface**: Subprocess calls to the Julia executable/interpreter
+4. **File-based I/O**: Results are read from output NetCDF files
+
+This design allows leveraging Julia's high-performance computation while maintaining Python's ease of use, though it requires file I/O for each simulation step.
+
 ## Quick Start
 
 ```python
