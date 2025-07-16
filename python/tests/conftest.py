@@ -2,10 +2,11 @@
 pytest configuration and fixtures for episim_python tests
 """
 
-import tempfile
 import shutil
-import pytest
+import tempfile
 from pathlib import Path
+
+import pytest
 
 # Test data directory
 TEST_DATA_DIR = Path(__file__).parent / "fixtures"

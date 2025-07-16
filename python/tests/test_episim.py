@@ -2,11 +2,12 @@
 Tests for EpiSim class
 """
 
-import pytest
 import json
 import os
-from unittest.mock import Mock, patch
 from pathlib import Path
+from unittest.mock import Mock, patch
+
+import pytest
 
 from episim_python import EpiSim
 
@@ -40,7 +41,7 @@ class TestEpiSim:
         assert os.path.exists(model.config_path)
 
         # Check that config was copied to model folder
-        with open(model.config_path, "r") as f:
+        with open(model.config_path) as f:
             config = json.load(f)
         assert config["simulation"]["engine"] == "MMCACovid19"
 
@@ -126,7 +127,8 @@ class TestEpiSim:
 
         with pytest.raises(AssertionError):
             model.setup(
-                executable_type="compiled", executable_path="/nonexistent/episim"
+                executable_type="compiled",
+                executable_path="/nonexistent/episim",
             )
 
     def test_check_setup_not_called(self, minimal_config, temp_dir):
@@ -172,7 +174,7 @@ class TestEpiSim:
         )
 
         # New config should be saved
-        with open(model.config_path, "r") as f:
+        with open(model.config_path) as f:
             saved_config = json.load(f)
         assert saved_config["simulation"]["start_date"] == "2020-02-01"
 
@@ -185,7 +187,9 @@ class TestEpiSim:
 
         filename = model.model_state_filename("2020-01-15")
         expected = os.path.join(
-            model.model_state_folder, "output", "compartments_t_2020-01-15.nc"
+            model.model_state_folder,
+            "output",
+            "compartments_t_2020-01-15.nc",
         )
         assert filename == expected
 
@@ -200,7 +204,9 @@ class TestEpiSim:
         assert result is model  # Should return self for chaining
 
         expected = os.path.join(
-            model.model_state_folder, "output", "compartments_t_2020-01-15.nc"
+            model.model_state_folder,
+            "output",
+            "compartments_t_2020-01-15.nc",
         )
         assert model.model_state == expected
 
@@ -297,14 +303,13 @@ class TestEpiSim:
         assert "5" in args
 
     @pytest.mark.skip(
-        reason="Step-by-step execution is experimental and untested - only single simulation runs are officially supported"
+        reason="Step-by-step execution is experimental and untested - only single simulation runs are officially supported",
     )
     @patch("subprocess.run")
     def test_step_method(self, mock_run, minimal_config, temp_dir):
         """Test step-by-step execution - EXPERIMENTAL FEATURE"""
         # NOTE: Step-by-step execution is an experimental feature for RL agents
         # and is not officially supported. Only single simulation runs are tested and supported.
-        pass
 
     def test_handle_config_input_dict(self, minimal_config, temp_dir):
         """Test config input handling with dictionary"""
@@ -313,7 +318,7 @@ class TestEpiSim:
         assert os.path.exists(config_path)
         assert config_path.endswith("config_auto_py.json")
 
-        with open(config_path, "r") as f:
+        with open(config_path) as f:
             saved_config = json.load(f)
         assert saved_config["simulation"]["engine"] == "MMCACovid19"
 
@@ -331,5 +336,6 @@ class TestEpiSim:
 
         with pytest.raises(ValueError, match="Invalid config"):
             EpiSim.handle_config_input(
-                temp_dir, "/nonexistent/config.json"
+                temp_dir,
+                "/nonexistent/config.json",
             )  # Missing file

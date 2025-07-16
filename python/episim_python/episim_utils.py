@@ -1,16 +1,16 @@
-import os
-import json
 import copy
+import json
+import os
+from typing import Any, Dict
+
 import numpy as np
 import pandas as pd
-
 import xarray as xr
-
-from typing import Any, Dict
 
 # Import schema validator with graceful fallback
 try:
     from .schema_validator import EpiSimSchemaValidator
+
     SCHEMA_VALIDATION_AVAILABLE = True
 except ImportError:
     SCHEMA_VALIDATION_AVAILABLE = False
@@ -94,18 +94,18 @@ class EpiSimConfig:
 
     @classmethod
     def from_json(cls, json_path: str) -> "EpiSimConfig":
-        with open(json_path, "r", encoding="utf-8") as f:
+        with open(json_path, encoding="utf-8") as f:
             template = json.load(f)
         return cls(template)
 
     def validate(self, verbose: bool = True, use_schema: bool = True):
         """
         Validate the configuration using both JSON schema and custom validation.
-        
+
         Args:
             verbose: Whether to print validation messages
             use_schema: Whether to use JSON schema validation (requires jsonschema package)
-        
+
         Raises:
             ValueError: If validation fails
         """
@@ -116,17 +116,22 @@ class EpiSimConfig:
             try:
                 schema_validator = EpiSimSchemaValidator()
                 is_valid, schema_errors = schema_validator.validate_config_safe(
-                    self.config, verbose=False
+                    self.config,
+                    verbose=False,
                 )
                 if not is_valid:
                     errors.extend([f"Schema: {err}" for err in schema_errors])
                 elif verbose:
-                    print(f"JSON Schema validation passed (group size: {self.group_size})")
+                    print(
+                        f"JSON Schema validation passed (group size: {self.group_size})",
+                    )
             except Exception as e:
-                errors.append(f"Schema validation error: {str(e)}")
+                errors.append(f"Schema validation error: {e!s}")
         elif use_schema and not SCHEMA_VALIDATION_AVAILABLE:
             if verbose:
-                print("Warning: JSON schema validation requested but jsonschema package not available")
+                print(
+                    "Warning: JSON schema validation requested but jsonschema package not available",
+                )
 
         # Custom validation (backward compatibility)
         required_keys = {
@@ -153,7 +158,7 @@ class EpiSimConfig:
                     value = self.get_param(key_path)
                     if len(value) != self.group_size:
                         errors.append(
-                            f"Length mismatch in '{key_path}': expected {self.group_size}, got {len(value)}"
+                            f"Length mismatch in '{key_path}': expected {self.group_size}, got {len(value)}",
                         )
                 except Exception as e:
                     errors.append(f"Could not access group parameter '{key_path}': {e}")
@@ -167,9 +172,9 @@ class EpiSimConfig:
                 for err in errors:
                     print("  -", err)
             raise ValueError(
-                f"Configuration validation failed with {len(errors)} error(s)."
+                f"Configuration validation failed with {len(errors)} error(s).",
             )
-        elif verbose:
+        if verbose:
             print("Configuration is valid.")
 
     def to_json(self, output_path: str):
@@ -221,11 +226,10 @@ class EpiSimConfig:
         if is_grouped:
             if not (isinstance(value, list) and len(value) == self.group_size):
                 raise ValueError(
-                    f"Expected a list of length {self.group_size} for group-dependent parameter '{key_path}'"
+                    f"Expected a list of length {self.group_size} for group-dependent parameter '{key_path}'",
                 )
-        else:
-            if isinstance(value, list):
-                raise ValueError(f"Expected a scalar for scalar parameter '{key_path}'")
+        elif isinstance(value, list):
+            raise ValueError(f"Expected a scalar for scalar parameter '{key_path}'")
 
         self._set_nested(keys, value)
 
@@ -243,12 +247,12 @@ class EpiSimConfig:
         """
         if not self.is_group_param(key_path):
             raise ValueError(
-                f"Parameter '{key_path}' is not detected as group-dependent."
+                f"Parameter '{key_path}' is not detected as group-dependent.",
             )
 
         if group_label not in self.group_labels:
             raise ValueError(
-                f"Group label '{group_label}' not in G_labels: {self.group_labels}"
+                f"Group label '{group_label}' not in G_labels: {self.group_labels}",
             )
 
         param_vector = self.get_param(key_path)
@@ -259,12 +263,12 @@ class EpiSimConfig:
     def get_group_param(self, key_path: str, group_label: str) -> float:
         if not self.is_group_param(key_path):
             raise ValueError(
-                f"Parameter '{key_path}' is not detected as group-dependent."
+                f"Parameter '{key_path}' is not detected as group-dependent.",
             )
 
         if group_label not in self.group_labels:
             raise ValueError(
-                f"Group label '{group_label}' not in G_labels: {self.group_labels}"
+                f"Group label '{group_label}' not in G_labels: {self.group_labels}",
             )
 
         param_vector = self.get_param(key_path)
@@ -279,7 +283,7 @@ class EpiSimConfig:
         for group_label, value in values_by_group.items():
             if group_label not in self.group_labels:
                 raise ValueError(
-                    f"Group label '{group_label}' not in G_labels: {self.group_labels}"
+                    f"Group label '{group_label}' not in G_labels: {self.group_labels}",
                 )
             index = self.group_labels.index(group_label)
             new_vector[index] = value
@@ -299,7 +303,7 @@ class EpiSimConfig:
                         self.update_group_param(base, group_id, value)
                     else:
                         raise ValueError(
-                            f"Unrecognized group label/index '{group_id}' in param '{param}'"
+                            f"Unrecognized group label/index '{group_id}' in param '{param}'",
                         )
                 except Exception as e:
                     raise ValueError(f"Failed to parse grouped param '{param}': {e}")
@@ -462,12 +466,14 @@ def compute_observables(sim_xa, instance_folder, data_folder, **kwargs):
     # Computing daily new asymptomatic
     # alphas_vec = np.array([alphas[g] for g in sim_xa.coords['G'].values])
     sim_observables_xa.loc["A", :, :, :] = np.multiply(
-        sim_observables_xa.loc["A", :, :, :], alphas
+        sim_observables_xa.loc["A", :, :, :],
+        alphas,
     )
 
     # hosp_rates_vec = np.array([hosp_rates[g] for g in sim_xa.coords['G'].values])
     sim_observables_xa.loc["I", :, :, :] = np.multiply(
-        sim_observables_xa.loc["I", :, :, :], hosp_rates
+        sim_observables_xa.loc["I", :, :, :],
+        hosp_rates,
     )
 
     dims = sim_observables_xa.dims

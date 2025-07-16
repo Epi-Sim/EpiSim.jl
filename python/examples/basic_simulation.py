@@ -6,10 +6,10 @@ This script demonstrates how to run a basic epidemic simulation using EpiSim.jl
 from Python with the default configuration.
 """
 
-import os
-import sys
 import json
 import logging
+import os
+import sys
 
 # Add the parent directory to the path to import episim_python
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -36,13 +36,16 @@ def main():
 
     # Initial conditions (optional)
     initial_conditions = os.path.join(
-        base_dir, "models", "mitma", "initial_conditions_MMCACovid19.nc"
+        base_dir,
+        "models",
+        "mitma",
+        "initial_conditions_MMCACovid19.nc",
     )
 
     logger.info("Loading configuration from: %s", config_file)
 
     # Load configuration
-    with open(config_file, "r") as f:
+    with open(config_file) as f:
         config = json.load(f)
 
     logger.info("Initializing EpiSim model")
@@ -69,7 +72,8 @@ def main():
         logger.info("Simulation completed successfully")
         logger.info("Model instance UUID: %s", uuid)
         logger.info(
-            "Output saved to: %s", os.path.join(instance_folder, uuid, "output")
+            "Output saved to: %s",
+            os.path.join(instance_folder, uuid, "output"),
         )
 
     except Exception as e:

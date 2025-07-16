@@ -6,9 +6,10 @@ This script demonstrates how to run multiple simulations with different
 parameter values to analyze sensitivity to key epidemiological parameters.
 """
 
+import logging
 import os
 import sys
-import logging
+
 import numpy as np
 
 # Add the parent directory to the path to import episim_python
@@ -36,7 +37,10 @@ def run_sensitivity_analysis():
 
     # Initial conditions (optional)
     initial_conditions = os.path.join(
-        base_dir, "models", "mitma", "initial_conditions_MMCACovid19.nc"
+        base_dir,
+        "models",
+        "mitma",
+        "initial_conditions_MMCACovid19.nc",
     )
 
     logger.info("Loading base configuration")
@@ -101,14 +105,17 @@ def run_sensitivity_analysis():
                         "uuid": uuid,
                         "output_path": os.path.join(instance_folder, uuid, "output"),
                         "success": True,
-                    }
+                    },
                 )
 
                 logger.info("Simulation completed successfully. UUID: %s", uuid)
 
             except Exception as e:
                 logger.error(
-                    "Simulation failed for %s = %s: %s", param_name, param_value, str(e)
+                    "Simulation failed for %s = %s: %s",
+                    param_name,
+                    param_value,
+                    str(e),
                 )
                 results[param_name].append(
                     {
@@ -117,7 +124,7 @@ def run_sensitivity_analysis():
                         "output_path": None,
                         "success": False,
                         "error": str(e),
-                    }
+                    },
                 )
 
     # Print summary
@@ -126,7 +133,10 @@ def run_sensitivity_analysis():
         successful_runs = sum(1 for r in param_results if r["success"])
         total_runs = len(param_results)
         logger.info(
-            "%s: %d/%d simulations successful", param_name, successful_runs, total_runs
+            "%s: %d/%d simulations successful",
+            param_name,
+            successful_runs,
+            total_runs,
         )
 
         if successful_runs > 0:
@@ -152,7 +162,7 @@ def main():
         # For example, load the NetCDF output files and compare final outcomes
 
         logger.info(
-            "Analysis complete. Results can be found in the respective UUID directories."
+            "Analysis complete. Results can be found in the respective UUID directories.",
         )
 
     except Exception as e:

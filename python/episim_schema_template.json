@@ -43,7 +43,7 @@
             "integer",
             "null"
           ],
-          "minimum": 1
+          "minimum": -1
         },
         "output_folder": {
           "type": "string"
@@ -54,6 +54,13 @@
             "netcdf",
             "csv",
             "hdf5"
+          ]
+        },
+        "input_format": {
+          "type": "string",
+          "enum": [
+            "csv",
+            "netcdf"
           ]
         }
       },

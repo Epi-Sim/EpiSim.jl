@@ -2,9 +2,10 @@
 Tests for EpiSimConfig class
 """
 
-import pytest
 import json
 import os
+
+import pytest
 
 from episim_python import EpiSimConfig
 
@@ -167,7 +168,7 @@ class TestEpiSimConfig:
 
         # Verify file was created and contains correct data
         assert os.path.exists(output_path)
-        with open(output_path, "r") as f:
+        with open(output_path) as f:
             saved_config = json.load(f)
         assert saved_config["epidemic_params"]["βᴵ"] == 0.15
 

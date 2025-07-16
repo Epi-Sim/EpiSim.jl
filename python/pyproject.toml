@@ -29,14 +29,14 @@ dependencies = [
     "xarray>=0.16.0",
     "netcdf4>=1.5.0",
     "jsonschema>=3.2.0",
+    "pytest>=8.3.5",
+    "ruff>=0.12.3",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=6.0",
     "pytest-cov>=2.0",
-    "black>=21.0",
-    "flake8>=3.8",
 ]
 
 [project.urls]
@@ -49,10 +49,14 @@ Documentation = "https://github.com/Epi-Sim/EpiSim.jl/blob/main/README.md"
 where = ["."]
 include = ["episim_python*"]
 
-[tool.black]
+[tool.ruff]
 line-length = 88
-target-version = ['py38']
+target-version = "py38"
 
-[tool.flake8]
-max-line-length = 88
-extend-ignore = ["E203", "W503"]
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "C4", "ICN", "PIE", "PYI", "SIM", "UP", "RUF"]
+ignore = ["E501", "E741", "B904", "B008", "UP007"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

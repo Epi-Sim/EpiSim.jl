@@ -4,11 +4,12 @@ Integration tests for episim_python package
 These tests verify end-to-end functionality and require a working Julia environment.
 """
 
-import pytest
-import os
 import json
+import os
 import shutil
 from unittest.mock import patch
+
+import pytest
 
 from episim_python import EpiSim, EpiSimConfig
 
@@ -46,7 +47,11 @@ class TestIntegration:
         updates = {
             "simulation.start_date": "2020-02-01",
             "epidemic_params.βᴬ": 0.075,
-            "epidemic_params.γᵍ": [0.005, 0.010, 0.080]  # Use actual group param instead
+            "epidemic_params.γᵍ": [
+                0.005,
+                0.010,
+                0.080,
+            ],  # Use actual group param instead
         }
         config.inject(updates)
 
@@ -56,7 +61,7 @@ class TestIntegration:
 
         # Verify saved configuration
         assert os.path.exists(output_path)
-        with open(output_path, "r") as f:
+        with open(output_path) as f:
             saved_config = json.load(f)
 
         assert saved_config["epidemic_params"]["βᴵ"] == 0.15
@@ -82,7 +87,7 @@ class TestIntegration:
         model.update_config(new_config)
 
         # Verify config was updated
-        with open(model.config_path, "r") as f:
+        with open(model.config_path) as f:
             saved_config = json.load(f)
         assert saved_config["simulation"]["start_date"] == "2020-01-05"
 
@@ -92,7 +97,10 @@ class TestIntegration:
 
     @patch("subprocess.run")
     def test_episim_mock_simulation_workflow(
-        self, mock_run, integration_config, temp_dir
+        self,
+        mock_run,
+        integration_config,
+        temp_dir,
     ):
         """Test complete simulation workflow with mocked subprocess"""
         # Setup mock subprocess responses
@@ -134,14 +142,13 @@ class TestIntegration:
         assert "--instance-folder" in args
 
     @pytest.mark.skip(
-        reason="Step-by-step execution is experimental and untested - only single simulation runs are officially supported"
+        reason="Step-by-step execution is experimental and untested - only single simulation runs are officially supported",
     )
     @patch("subprocess.run")
     def test_episim_step_by_step_workflow(self, mock_run, integration_config, temp_dir):
         """Test step-by-step simulation workflow - EXPERIMENTAL FEATURE"""
         # NOTE: Step-by-step execution is an experimental feature for RL agents
         # and is not officially supported. Only single simulation runs are tested and supported.
-        pass
 
     def test_config_parameter_update_workflow(self, integration_config):
         """Test comprehensive parameter update workflow"""
@@ -217,7 +224,10 @@ class TestIntegration:
         assert os.access(result, os.X_OK)
 
     def test_metapopulation_episim_integration(
-        self, test_metapopulation_csv, integration_config, temp_dir
+        self,
+        test_metapopulation_csv,
+        integration_config,
+        temp_dir,
     ):
         """Test integration between Metapopulation and EpiSim classes"""
         from episim_python import Metapopulation
@@ -237,7 +247,7 @@ class TestIntegration:
 
         # Update config to use metapopulation file
         integration_config["data"]["metapopulation_data_filename"] = str(
-            test_metapopulation_csv
+            test_metapopulation_csv,
         )
 
         # Initialize EpiSim with updated config
@@ -247,7 +257,7 @@ class TestIntegration:
         model = EpiSim(integration_config, temp_dir, instance_folder)
 
         # Verify config was saved correctly
-        with open(model.config_path, "r") as f:
+        with open(model.config_path) as f:
             saved_config = json.load(f)
 
         assert "metapopulation_data_filename" in saved_config["data"]

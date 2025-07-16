@@ -10,22 +10,23 @@ from .epi_sim import EpiSim
 from .episim_utils import (
     EpiSimConfig,
     Metapopulation,
-    update_params,
     compute_observables,
+    update_params,
 )
 
 # Import schema validation with graceful fallback
 try:
     from .schema_validator import (
-        SchemaValidator,
         EpiSimSchemaValidator,
+        SchemaValidator,
         validate_episim_config,
         validate_episim_config_safe,
     )
+
     SCHEMA_VALIDATION_AVAILABLE = True
     __all_schema__ = [
         "SchemaValidator",
-        "EpiSimSchemaValidator", 
+        "EpiSimSchemaValidator",
         "validate_episim_config",
         "validate_episim_config_safe",
     ]

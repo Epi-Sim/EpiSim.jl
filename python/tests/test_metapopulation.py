@@ -2,10 +2,11 @@
 Tests for Metapopulation class
 """
 
-import pytest
-import pandas as pd
-import xarray as xr
 from pathlib import Path
+
+import pandas as pd
+import pytest
+import xarray as xr
 
 from episim_python import Metapopulation
 
@@ -130,7 +131,7 @@ class TestMetapopulation:
         csv_with_total.write_text(
             "id,area,Y,M,O,total\n"
             "region_1,100.0,5000,8000,3000,16000\n"
-            "region_2,85.0,4500,7500,2800,14800\n"
+            "region_2,85.0,4500,7500,2800,14800\n",
         )
 
         metapop = Metapopulation(str(csv_with_total))
@@ -144,7 +145,7 @@ class TestMetapopulation:
         # Create CSV with single age group
         single_age_csv = Path(temp_dir) / "single_age.csv"
         single_age_csv.write_text(
-            "id,area,Population\nregion_1,100.0,16000\nregion_2,85.0,14800\n"
+            "id,area,Population\nregion_1,100.0,16000\nregion_2,85.0,14800\n",
         )
 
         metapop = Metapopulation(str(single_age_csv))

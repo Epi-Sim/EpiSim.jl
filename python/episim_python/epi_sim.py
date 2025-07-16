@@ -15,14 +15,15 @@ The alternative is to call functions from EpiSim.jl directly but this also has d
 - we need to marshall data types between python and julia, particularly the model state (big arrays!)
 """
 
-import os
-import sys
 import json
-import subprocess
 import logging
-import pandas as pd
-import uuid
+import os
 import shutil
+import subprocess
+import sys
+import uuid
+
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -30,7 +31,7 @@ logger.setLevel(logging.DEBUG)
 logger.addHandler(logging.StreamHandler(sys.stdout))
 
 logger.handlers[0].setFormatter(
-    logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"),
 )
 
 
@@ -56,13 +57,34 @@ class EpiSim:
 
     # location of the compiled EpiSim.jl
     DEFAULT_EXECUTABLE_PATH = os.path.join(
-        os.path.dirname(__file__), os.pardir, os.pardir, "episim"
+        os.path.dirname(__file__),
+        os.pardir,
+        os.pardir,
+        "episim",
     )
     # entrypoint for running EpiSim.jl by the Julia interpreter. Slower startup time, faster to debug code changes
     DEFAULT_INTERPRETER_PATH = [
         "julia",
         os.path.join(os.path.dirname(__file__), os.pardir, os.pardir, "src", "run.jl"),
     ]
+
+    @staticmethod
+    def get_executable_path():
+        """Get the executable path, checking environment variables first."""
+        env_path = os.environ.get("EPISIM_EXECUTABLE_PATH")
+        if env_path and os.path.exists(env_path) and os.access(env_path, os.X_OK):
+            return env_path
+        return EpiSim.DEFAULT_EXECUTABLE_PATH
+
+    @staticmethod
+    def get_interpreter_path():
+        """Get the interpreter path, checking environment variables first."""
+        env_project = os.environ.get("EPISIM_JULIA_PROJECT")
+        if env_project and os.path.exists(env_project):
+            run_jl_path = os.path.join(env_project, "src", "run.jl")
+            if os.path.exists(run_jl_path):
+                return ["julia", run_jl_path]
+        return EpiSim.DEFAULT_INTERPRETER_PATH
 
     DEFAULT_BACKEND_ENGINE = "MMCACovid19Vac"
     BACKEND_ENGINES = [
@@ -104,7 +126,8 @@ class EpiSim:
         if initial_conditions:
             # Copy initial conditions to the unique folder
             new_initial_conditions = os.path.join(
-                self.model_state_folder, os.path.basename(initial_conditions)
+                self.model_state_folder,
+                os.path.basename(initial_conditions),
             )
             shutil.copy(initial_conditions, new_initial_conditions)
             self.model_state = new_initial_conditions
@@ -128,10 +151,10 @@ class EpiSim:
             raise ValueError("executable_type must be 'compiled' or 'interpreter'")
 
         if executable_type == "compiled":
-            executable_path = executable_path or EpiSim.DEFAULT_EXECUTABLE_PATH
+            executable_path = executable_path or EpiSim.get_executable_path()
             if not executable_path:
                 raise ValueError(
-                    "cannot find a valid executable_path for the compiled model"
+                    "cannot find a valid executable_path for the compiled model",
                 )
             assert os.path.exists(executable_path)
             assert os.path.isfile(executable_path)
@@ -140,7 +163,7 @@ class EpiSim:
         else:
             # assert that julia interpreter is available
             assert shutil.which("julia"), "Julia interpreter not found"
-            self.executable_path = EpiSim.DEFAULT_INTERPRETER_PATH
+            self.executable_path = EpiSim.get_interpreter_path()
 
         self.executable_type = executable_type
         self.setup_complete = True
@@ -223,7 +246,7 @@ class EpiSim:
                     [
                         "--export-compartments-time-t",
                         str(override_config["save_time_step"]),
-                    ]
+                    ],
                 )
             if override_config["start_date"]:
                 cmd.extend(["--start-date", override_config["start_date"]])
@@ -235,7 +258,11 @@ class EpiSim:
 
         # Run subprocess and capture both stdout and stderr
         result = subprocess.run(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            cmd,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
         )
 
         # Log the output for debugging
@@ -257,7 +284,9 @@ class EpiSim:
 
     def model_state_filename(self, end_date):
         return os.path.join(
-            self.model_state_folder, "output", f"compartments_t_{end_date}.nc"
+            self.model_state_folder,
+            "output",
+            f"compartments_t_{end_date}.nc",
         )
 
     def update_model_state(self, end_date):
@@ -276,7 +305,7 @@ class EpiSim:
         """
         if engine not in [e["name"] for e in EpiSim.BACKEND_ENGINES]:
             raise ValueError(
-                f"Invalid backend engine {engine}. Choose 'MMCACovid19Vac' or 'MMCACovid19'."
+                f"Invalid backend engine {engine}. Choose 'MMCACovid19Vac' or 'MMCACovid19'.",
             )
         self.backend_engine = engine
         logger.info(f"Backend engine set to: {self.backend_engine}")
@@ -342,7 +371,7 @@ def run_model_example():
     initial_conditions = os.path.join(pardir(), "models/mitma/initial_conditions.nc")
 
     # read the config file sample to dict
-    with open(os.path.join(pardir(), "models/mitma/config.json"), "r") as f:
+    with open(os.path.join(pardir(), "models/mitma/config.json")) as f:
         config = json.load(f)
 
     data_folder = os.path.join(pardir(), "models/mitma")
@@ -377,7 +406,7 @@ def agent_flow_example():
     initial_conditions = os.path.join(pardir(), "models/mitma/initial_conditions.nc")
 
     # read the config file sample to dict
-    with open(os.path.join(pardir(), "models/mitma/config.json"), "r") as f:
+    with open(os.path.join(pardir(), "models/mitma/config.json")) as f:
         config = json.load(f)
 
     data_folder = os.path.join(pardir(), "models/mitma")

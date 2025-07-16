@@ -6,9 +6,9 @@ This script demonstrates how to validate and manipulate EpiSim configuration
 files using the EpiSimConfig class.
 """
 
+import logging
 import os
 import sys
-import logging
 
 # Add the parent directory to the path to import episim_python
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

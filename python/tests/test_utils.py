@@ -2,13 +2,14 @@
 Tests for utility functions in episim_utils
 """
 
-import numpy as np
-import xarray as xr
 import json
 import os
 
-from episim_python.episim_utils import update_params, compute_observables
+import numpy as np
+import xarray as xr
+
 from episim_python.epi_sim import date_addition
+from episim_python.episim_utils import compute_observables, update_params
 
 
 class TestUpdateParams:
@@ -212,7 +213,10 @@ class TestComputeObservables:
         # Create test simulation data with correct dimension order for compute_observables
         # Function expects dimensions: [anything, anything, anything, epi_states]
         data = np.random.rand(
-            3, 2, 5, 10
+            3,
+            2,
+            5,
+            10,
         )  # 3 age groups, 2 regions, 5 time steps, 10 states
         coords = {
             "G": ["Y", "M", "O"],
@@ -237,7 +241,8 @@ class TestComputeObservables:
         # Values should be scaled by alphas
         expected_y = original_a.sel(G="Y") * 0.25
         np.testing.assert_array_almost_equal(
-            result_i.sel(G="Y").values, expected_y.values
+            result_i.sel(G="Y").values,
+            expected_y.values,
         )
 
 
