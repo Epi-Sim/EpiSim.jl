@@ -156,7 +156,7 @@ def run_sensitivity_analysis():
 def main():
     """Main function"""
     try:
-        results = run_sensitivity_analysis()
+        _results = run_sensitivity_analysis()
 
         # You can add analysis of results here
         # For example, load the NetCDF output files and compare final outcomes

@@ -7,13 +7,9 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-# Import schema validator with graceful fallback
-try:
-    from .schema_validator import EpiSimSchemaValidator
+from .schema_validator import EpiSimSchemaValidator
 
-    SCHEMA_VALIDATION_AVAILABLE = True
-except ImportError:
-    SCHEMA_VALIDATION_AVAILABLE = False
+SCHEMA_VALIDATION_AVAILABLE = True
 
 
 class Metapopulation:
@@ -127,11 +123,10 @@ class EpiSimConfig:
                     )
             except Exception as e:
                 errors.append(f"Schema validation error: {e!s}")
-        elif use_schema and not SCHEMA_VALIDATION_AVAILABLE:
-            if verbose:
-                print(
-                    "Warning: JSON schema validation requested but jsonschema package not available",
-                )
+        elif use_schema and not SCHEMA_VALIDATION_AVAILABLE and verbose:
+            print(
+                "Warning: JSON schema validation requested but jsonschema package not available",
+            )
 
         # Custom validation (backward compatibility)
         required_keys = {
@@ -457,7 +452,7 @@ def compute_observables(sim_xa, instance_folder, data_folder, **kwargs):
 
     alphas = np.zeros(len(G_labels))
     hosp_rates = np.zeros(len(G_labels))
-    for i, g in enumerate(G_labels):
+    for i, _g in enumerate(G_labels):
         alphas[i] = epi_params["αᵍ"][i]
         hosp_rates[i] = (epi_params["μᵍ"][i] * (1 - epi_params["θᵍ"][i])) * epi_params[
             "γᵍ"

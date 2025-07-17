@@ -22,6 +22,7 @@ import shutil
 import subprocess
 import sys
 import uuid
+from typing import ClassVar
 
 import pandas as pd
 
@@ -63,7 +64,7 @@ class EpiSim:
         "episim",
     )
     # entrypoint for running EpiSim.jl by the Julia interpreter. Slower startup time, faster to debug code changes
-    DEFAULT_INTERPRETER_PATH = [
+    DEFAULT_INTERPRETER_PATH: ClassVar[list[str]] = [
         "julia",
         os.path.join(os.path.dirname(__file__), os.pardir, os.pardir, "src", "run.jl"),
     ]
@@ -87,7 +88,7 @@ class EpiSim:
         return EpiSim.DEFAULT_INTERPRETER_PATH
 
     DEFAULT_BACKEND_ENGINE = "MMCACovid19Vac"
-    BACKEND_ENGINES = [
+    BACKEND_ENGINES: ClassVar[list[dict[str, str]]] = [
         {"name": "MMCACovid19Vac", "description": "Model with vaccination"},
         {"name": "MMCACovid19", "description": "Model without vaccination"},
     ]
@@ -260,8 +261,7 @@ class EpiSim:
         result = subprocess.run(
             cmd,
             check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
         )
 
@@ -366,8 +366,6 @@ def pardir():
 
 
 def run_model_example():
-    executable_path = os.path.join(pardir(), "episim")
-
     initial_conditions = os.path.join(pardir(), "models/mitma/initial_conditions.nc")
 
     # read the config file sample to dict
@@ -401,8 +399,6 @@ def agent_flow_example():
     WARNING: This example uses the experimental step() method which is not officially supported.
     This is intended for RL agent integration but is untested and may not work correctly.
     """
-    executable_path = os.path.join(pardir(), "episim")
-
     initial_conditions = os.path.join(pardir(), "models/mitma/initial_conditions.nc")
 
     # read the config file sample to dict

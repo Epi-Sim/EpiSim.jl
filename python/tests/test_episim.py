@@ -114,9 +114,10 @@ class TestEpiSim:
 
         model = EpiSim(minimal_config, temp_dir, instance_folder)
 
-        with patch("shutil.which", return_value=None):
-            with pytest.raises(AssertionError, match="Julia interpreter not found"):
-                model.setup(executable_type="interpreter")
+        with patch("shutil.which", return_value=None), pytest.raises(
+            AssertionError, match="Julia interpreter not found"
+        ):
+            model.setup(executable_type="interpreter")
 
     def test_setup_missing_compiled_executable(self, minimal_config, temp_dir):
         """Test setup with missing compiled executable"""
