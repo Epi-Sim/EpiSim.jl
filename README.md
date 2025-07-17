@@ -31,7 +31,41 @@ EpiSim.jl also provides a standard configuration format for defining a model and
 
 ### Installing and Running
 
-To install EpiSim.jl, follow these steps:
+There are two primary ways to run EpiSim.jl: using Docker for a containerized setup, or installing it locally.
+
+### Docker
+
+A `Dockerfile` is provided for building and running the application in a containerized environment.
+
+**Building the Image:**
+
+To build the default image, run:
+```bash
+docker build -t episim .
+```
+
+**Verifying the Image:**
+
+A verification script is included to ensure the Docker image is working correctly. It builds the image, runs a test simulation using sample data, and checks for the expected output.
+
+To run the verification:
+```bash
+./verify_docker.sh
+```
+
+### Python Wrapper
+
+The project includes a Python wrapper. To install its dependencies and run tests, navigate to the `python` directory:
+
+```bash
+cd python
+pip install -r requirements.txt
+pytest
+```
+
+### Local Installation (without Docker)
+
+To install EpiSim.jl locally, follow these steps:
 
 1. Clone the repository:
    ```

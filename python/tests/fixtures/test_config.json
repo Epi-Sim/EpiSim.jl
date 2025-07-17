@@ -1,0 +1,50 @@
+{
+    "simulation": {
+        "engine": "MMCACovid19",
+        "start_date": "2020-01-01",
+        "end_date": "2020-01-10",
+        "save_full_output": true,
+        "output_format": "netcdf"
+    },
+    "data": {
+        "initial_condition_filename": "test_initial.nc",
+        "metapopulation_data_filename": "test_metapop.csv",
+        "mobility_matrix_filename": "test_mobility.csv",
+        "kappa0_filename": "test_kappa0.csv"
+    },
+    "epidemic_params": {
+        "βᴵ": 0.09,
+        "βᴬ": 0.045,
+        "ηᵍ": [0.3, 0.3, 0.3],
+        "αᵍ": [0.25, 0.6, 0.6],
+        "μᵍ": [1.0, 0.3, 0.3],
+        "θᵍ": [0.0, 0.0, 0.0],
+        "γᵍ": [0.003, 0.01, 0.08],
+        "ζᵍ": [0.13, 0.13, 0.13],
+        "λᵍ": [1.0, 1.0, 1.0],
+        "ωᵍ": [0.0, 0.04, 0.3],
+        "ψᵍ": [0.14, 0.14, 0.14],
+        "χᵍ": [0.05, 0.05, 0.05]
+    },
+    "population_params": {
+        "G_labels": ["Y", "M", "O"],
+        "C": [
+            [0.6, 0.4, 0.02],
+            [0.25, 0.7, 0.04],
+            [0.2, 0.55, 0.25]
+        ],
+        "kᵍ": [12.0, 13.0, 7.0],
+        "kᵍ_h": [3.0, 3.0, 3.0],
+        "kᵍ_w": [2.0, 5.0, 0.0],
+        "pᵍ": [0.0, 1.0, 0.0],
+        "ξ": 0.01,
+        "σ": 2.5
+    },
+    "NPI": {
+        "κ₀s": [0.8],
+        "ϕs": [0.2],
+        "δs": [0.8],
+        "tᶜs": [50],
+        "are_there_npi": true
+    }
+}
