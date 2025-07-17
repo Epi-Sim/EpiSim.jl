@@ -17,8 +17,8 @@ deps/src/
 docs/build/
 docs/site/
 
-src/__pycache__
-.venv
+python/.venv/
+python/episim_python.egg-info/
 
 build/*
 runs/*
