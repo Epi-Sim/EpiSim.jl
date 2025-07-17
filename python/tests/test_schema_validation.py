@@ -22,10 +22,11 @@ except ImportError:
     SCHEMA_AVAILABLE = False
 
 from episim_python import EpiSimConfig
+from .conftest import BaseTestCase
 
 
 @pytest.mark.skipif(not SCHEMA_AVAILABLE, reason="JSON schema validation not available")
-class TestSchemaValidator:
+class TestSchemaValidator(BaseTestCase):
     """Test the SchemaValidator class"""
 
     def test_schema_validator_initialization(self):
@@ -229,130 +230,32 @@ class TestConvenienceFunctions:
 
 
 @pytest.mark.skipif(not SCHEMA_AVAILABLE, reason="JSON schema validation not available")
-class TestDynamicGroupSizes:
+class TestDynamicGroupSizes(BaseTestCase):
     """Test schema validation with different group sizes"""
 
     def test_two_group_config(self):
         """Test validation with 2 age groups"""
-        config = {
-            "simulation": {
-                "engine": "MMCACovid19",
-                "start_date": "2020-01-01",
-                "end_date": "2020-01-10",
-            },
-            "data": {
-                "initial_condition_filename": "test.nc",
-                "metapopulation_data_filename": "test.csv",
-                "mobility_matrix_filename": "test.csv",
-            },
-            "epidemic_params": {
-                "βᴵ": 0.09,
-                "ηᵍ": [0.3, 0.3],  # 2 groups
-                "αᵍ": [0.25, 0.6],  # 2 groups
-                "μᵍ": [1.0, 0.3],  # 2 groups
-                "γᵍ": [0.003, 0.01],  # 2 groups
-            },
-            "population_params": {
-                "G_labels": ["Y", "O"],  # 2 groups
-                "C": [[0.6, 0.4], [0.25, 0.7]],  # 2x2 matrix
-                "kᵍ": [12.0, 7.0],  # 2 groups
-                "kᵍ_h": [3.0, 3.0],  # 2 groups
-                "kᵍ_w": [2.0, 0.0],  # 2 groups
-                "pᵍ": [0.0, 1.0],  # 2 groups
-            },
-            "NPI": {
-                "κ₀s": [0.8],
-                "ϕs": [0.2],
-                "δs": [0.8],
-                "tᶜs": [50],
-                "are_there_npi": True,
-            },
-        }
-
+        config = self.helpers.create_minimal_config(group_size=2)
+        
         validator = EpiSimSchemaValidator()
         result = validator.validate_config(config, verbose=False)
         assert result is True
 
     def test_four_group_config(self):
         """Test validation with 4 age groups"""
-        config = {
-            "simulation": {
-                "engine": "MMCACovid19",
-                "start_date": "2020-01-01",
-                "end_date": "2020-01-10",
-            },
-            "data": {
-                "initial_condition_filename": "test.nc",
-                "metapopulation_data_filename": "test.csv",
-                "mobility_matrix_filename": "test.csv",
-            },
-            "epidemic_params": {
-                "βᴵ": 0.09,
-                "ηᵍ": [0.3, 0.3, 0.3, 0.3],  # 4 groups
-                "αᵍ": [0.25, 0.6, 0.6, 0.7],  # 4 groups
-                "μᵍ": [1.0, 0.3, 0.3, 0.2],  # 4 groups
-                "γᵍ": [0.003, 0.01, 0.08, 0.15],  # 4 groups
-            },
-            "population_params": {
-                "G_labels": ["C", "Y", "M", "O"],  # 4 groups
-                "C": [
-                    [0.6, 0.3, 0.08, 0.02],
-                    [0.3, 0.5, 0.15, 0.05],
-                    [0.08, 0.15, 0.6, 0.17],
-                    [0.02, 0.05, 0.17, 0.76],
-                ],  # 4x4 matrix
-                "kᵍ": [8.0, 12.0, 13.0, 7.0],  # 4 groups
-                "kᵍ_h": [2.0, 3.0, 3.0, 3.0],  # 4 groups
-                "kᵍ_w": [0.0, 2.0, 5.0, 0.0],  # 4 groups
-                "pᵍ": [0.0, 0.0, 1.0, 0.0],  # 4 groups
-            },
-            "NPI": {
-                "κ₀s": [0.8],
-                "ϕs": [0.2],
-                "δs": [0.8],
-                "tᶜs": [50],
-                "are_there_npi": True,
-            },
-        }
-
+        config = self.helpers.create_minimal_config(group_size=4)
+        
         validator = EpiSimSchemaValidator()
         result = validator.validate_config(config, verbose=False)
         assert result is True
 
     def test_mismatched_group_sizes(self):
         """Test validation fails with mismatched group sizes"""
-        config = {
-            "simulation": {
-                "engine": "MMCACovid19",
-                "start_date": "2020-01-01",
-                "end_date": "2020-01-10",
-            },
-            "data": {
-                "initial_condition_filename": "test.nc",
-                "metapopulation_data_filename": "test.csv",
-                "mobility_matrix_filename": "test.csv",
-            },
-            "epidemic_params": {
-                "βᴵ": 0.09,
-                "ηᵍ": [0.3, 0.3, 0.3],  # 3 values
-                "αᵍ": [0.25, 0.6],  # 2 values - MISMATCH!
-            },
-            "population_params": {
-                "G_labels": ["Y", "M", "O"],  # 3 groups
-                "C": [[0.6, 0.4, 0.02], [0.25, 0.7, 0.05], [0.2, 0.55, 0.25]],
-                "kᵍ": [12.0, 13.0, 7.0],
-                "kᵍ_h": [3.0, 3.0, 3.0],
-                "kᵍ_w": [2.0, 5.0, 0.0],
-                "pᵍ": [0.0, 1.0, 0.0],
-            },
-            "NPI": {
-                "κ₀s": [0.8],
-                "ϕs": [0.2],
-                "δs": [0.8],
-                "tᶜs": [50],
-                "are_there_npi": True,
-            },
-        }
+        config = self.helpers.create_invalid_config_wrong_group_size(
+            self.helpers.create_minimal_config(group_size=3), 
+            "αᵍ", 
+            2
+        )
 
         validator = EpiSimSchemaValidator()
         is_valid, errors = validator.validate_config_safe(config, verbose=False)
@@ -361,8 +264,42 @@ class TestDynamicGroupSizes:
 
 
 @pytest.mark.skipif(not SCHEMA_AVAILABLE, reason="JSON schema validation not available")
-class TestEpiSimConfigIntegration:
-    """Test integration with EpiSimConfig class"""
+class TestEpiSimConfigValidation(BaseTestCase):
+    """Test EpiSimConfig validation functionality"""
+
+    def test_validation_success(self, minimal_config):
+        """Test successful validation"""
+        config = EpiSimConfig(minimal_config)
+        # Should not raise exception
+        config.validate(verbose=False)
+
+    def test_validation_missing_section(self, minimal_config):
+        """Test validation with missing section"""
+        bad_config = minimal_config.copy()
+        del bad_config["simulation"]
+        config = EpiSimConfig(bad_config)
+        with pytest.raises(ValueError, match="Configuration validation failed"):
+            config.validate(verbose=False)
+
+    def test_validation_missing_key(self, minimal_config):
+        """Test validation with missing key"""
+        import copy
+
+        bad_config = copy.deepcopy(minimal_config)
+        del bad_config["simulation"]["engine"]
+        config = EpiSimConfig(bad_config)
+        with pytest.raises(ValueError, match="Configuration validation failed"):
+            config.validate(verbose=False)
+
+    def test_validation_group_size_mismatch(self, minimal_config):
+        """Test validation with group size mismatch"""
+        import copy
+
+        bad_config = copy.deepcopy(minimal_config)
+        bad_config["epidemic_params"]["ηᵍ"] = [0.3, 0.3]  # Only 2 values instead of 3
+        config = EpiSimConfig(bad_config)
+        with pytest.raises(ValueError, match="Configuration validation failed"):
+            config.validate(verbose=False)
 
     def test_episim_config_with_schema_validation(self, minimal_config):
         """Test EpiSimConfig validation with schema enabled"""

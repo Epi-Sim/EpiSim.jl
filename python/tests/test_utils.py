@@ -10,9 +10,10 @@ import xarray as xr
 
 from episim_python.epi_sim import date_addition
 from episim_python.episim_utils import compute_observables, update_params
+from .conftest import BaseTestCase
 
 
-class TestUpdateParams:
+class TestUpdateParams(BaseTestCase):
     """Test cases for update_params function"""
 
     def test_update_beta_I(self):
@@ -190,7 +191,7 @@ class TestUpdateParams:
         assert result["NPI"]["ϕs"] == [0.3]
 
 
-class TestComputeObservables:
+class TestComputeObservables(BaseTestCase):
     """Test cases for compute_observables function"""
 
     def test_compute_observables_basic(self, temp_dir):
@@ -246,7 +247,7 @@ class TestComputeObservables:
         )
 
 
-class TestDateAddition:
+class TestDateAddition(BaseTestCase):
     """Test cases for date_addition function"""
 
     def test_date_addition_basic(self):

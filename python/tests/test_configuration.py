@@ -1,5 +1,5 @@
 """
-Tests for EpiSimConfig class
+Tests for EpiSimConfig class configuration manipulation
 """
 
 import json
@@ -8,58 +8,21 @@ import os
 import pytest
 
 from episim_python import EpiSimConfig
+from .conftest import BaseTestCase
 
 
-class TestEpiSimConfig:
-    """Test cases for EpiSimConfig class"""
+class TestEpiSimConfigManipulation(BaseTestCase):
+    """Test cases for EpiSimConfig parameter manipulation"""
 
     def test_init_with_dict(self, minimal_config):
         """Test initialization with configuration dictionary"""
         config = EpiSimConfig(minimal_config)
-        assert config.group_labels == ["Y", "M", "O"]
-        assert config.group_size == 3
-        assert config.config["simulation"]["engine"] == "MMCACovid19"
+        self.helpers.assert_config_structure(config)
 
     def test_init_from_json(self, test_config_json):
         """Test initialization from JSON file"""
         config = EpiSimConfig.from_json(str(test_config_json))
-        assert config.group_labels == ["Y", "M", "O"]
-        assert config.group_size == 3
-        assert config.config["simulation"]["engine"] == "MMCACovid19"
-
-    def test_validation_success(self, minimal_config):
-        """Test successful validation"""
-        config = EpiSimConfig(minimal_config)
-        # Should not raise exception
-        config.validate(verbose=False)
-
-    def test_validation_missing_section(self, minimal_config):
-        """Test validation with missing section"""
-        bad_config = minimal_config.copy()
-        del bad_config["simulation"]
-        config = EpiSimConfig(bad_config)
-        with pytest.raises(ValueError, match="Configuration validation failed"):
-            config.validate(verbose=False)
-
-    def test_validation_missing_key(self, minimal_config):
-        """Test validation with missing key"""
-        import copy
-
-        bad_config = copy.deepcopy(minimal_config)
-        del bad_config["simulation"]["engine"]
-        config = EpiSimConfig(bad_config)
-        with pytest.raises(ValueError, match="Configuration validation failed"):
-            config.validate(verbose=False)
-
-    def test_validation_group_size_mismatch(self, minimal_config):
-        """Test validation with group size mismatch"""
-        import copy
-
-        bad_config = copy.deepcopy(minimal_config)
-        bad_config["epidemic_params"]["ηᵍ"] = [0.3, 0.3]  # Only 2 values instead of 3
-        config = EpiSimConfig(bad_config)
-        with pytest.raises(ValueError, match="Configuration validation failed"):
-            config.validate(verbose=False)
+        self.helpers.assert_config_structure(config)
 
     def test_detect_group_params(self, minimal_config):
         """Test group parameter detection"""

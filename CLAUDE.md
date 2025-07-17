@@ -145,9 +145,8 @@ new_state, next_date = model.step(current_date, length_days=7)
 
 ### Python Development
 - Prefer `uv` for running python code eg. `uv run pytest`
+- Use uv to run python commands with the venv eg. `uv run pytest`
 
 ## Input File Manipulation
 
 EpiSim.jl uses multiple input file formats that can be manipulated both manually and programmatically.
-
-[... rest of the file remains the same ...]

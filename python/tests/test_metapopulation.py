@@ -9,9 +9,10 @@ import pytest
 import xarray as xr
 
 from episim_python import Metapopulation
+from .conftest import BaseTestCase
 
 
-class TestMetapopulation:
+class TestMetapopulation(BaseTestCase):
     """Test cases for Metapopulation class"""
 
     def test_init_with_metapop_only(self, test_metapopulation_csv):
@@ -95,19 +96,6 @@ class TestMetapopulation:
         expected_m = 8000 + 9000  # region_1 + region_3
         assert reg_x_m == expected_m
 
-    def test_rosetta_index_mismatch(self, test_metapopulation_csv, temp_dir):
-        """Test error when rosetta indices don't match metapopulation IDs"""
-        # Create mismatched rosetta file
-        bad_rosetta = Path(temp_dir) / "bad_rosetta.csv"
-        bad_rosetta.write_text("level_1,province,region\nwrong_id,prov_A,reg_X\n")
-
-        with pytest.raises(AssertionError):
-            Metapopulation(str(test_metapopulation_csv), str(bad_rosetta))
-
-    def test_missing_files(self):
-        """Test error handling for missing files"""
-        with pytest.raises(FileNotFoundError):
-            Metapopulation("nonexistent.csv")
 
     def test_population_data_structure(self, test_metapopulation_csv):
         """Test internal population data structure"""

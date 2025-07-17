@@ -5,11 +5,24 @@ pytest configuration and fixtures for episim_python tests
 import shutil
 import tempfile
 from pathlib import Path
+from typing import Dict, Any, List
+from unittest.mock import Mock, patch
 
 import pytest
 
+from .test_helpers import TestHelpers, MockResult, AssertionHelpers
+
 # Test data directory
 TEST_DATA_DIR = Path(__file__).parent / "fixtures"
+
+
+class BaseTestCase:
+    """Base test case class with common setup methods"""
+    
+    def setup_method(self):
+        """Setup method called before each test method"""
+        self.helpers = TestHelpers()
+        self.assertions = AssertionHelpers()
 
 
 @pytest.fixture
@@ -21,72 +34,75 @@ def temp_dir():
 
 
 @pytest.fixture
+def test_helpers():
+    """Test helpers instance"""
+    return TestHelpers()
+
+
+@pytest.fixture
+def assertion_helpers():
+    """Assertion helpers instance"""
+    return AssertionHelpers()
+
+
+# Configuration fixtures
+@pytest.fixture
 def test_config_json():
     """Path to test configuration JSON file"""
     return TEST_DATA_DIR / "test_config.json"
 
 
 @pytest.fixture
-def test_metapopulation_csv():
-    """Path to test metapopulation CSV file"""
-    return TEST_DATA_DIR / "test_metapopulation.csv"
-
-
-@pytest.fixture
-def test_rosetta_csv():
-    """Path to test rosetta CSV file"""
-    return TEST_DATA_DIR / "test_rosetta.csv"
-
-
-@pytest.fixture
 def minimal_config():
-    """Minimal valid configuration dictionary"""
-    return {
-        "simulation": {
-            "engine": "MMCACovid19",
-            "start_date": "2020-01-01",
-            "end_date": "2020-01-10",
-            "save_full_output": True,
-            "output_format": "netcdf",
-        },
-        "data": {
-            "initial_condition_filename": "test_initial.nc",
-            "metapopulation_data_filename": "test_metapop.csv",
-            "mobility_matrix_filename": "test_mobility.csv",
-            "kappa0_filename": "test_kappa0.csv",
-        },
-        "epidemic_params": {
-            "βᴵ": 0.09,
-            "βᴬ": 0.045,
-            "ηᵍ": [0.3, 0.3, 0.3],
-            "αᵍ": [0.25, 0.6, 0.6],
-            "μᵍ": [1.0, 0.3, 0.3],
-            "θᵍ": [0.0, 0.0, 0.0],
-            "γᵍ": [0.003, 0.01, 0.08],
-            "ζᵍ": [0.13, 0.13, 0.13],
-            "λᵍ": [1.0, 1.0, 1.0],
-            "ωᵍ": [0.0, 0.04, 0.3],
-            "ψᵍ": [0.14, 0.14, 0.14],
-            "χᵍ": [0.05, 0.05, 0.05],
-        },
-        "population_params": {
-            "G_labels": ["Y", "M", "O"],
-            "C": [[0.6, 0.4, 0.02], [0.25, 0.7, 0.04], [0.2, 0.55, 0.25]],
-            "kᵍ": [12.0, 13.0, 7.0],
-            "kᵍ_h": [3.0, 3.0, 3.0],
-            "kᵍ_w": [2.0, 5.0, 0.0],
-            "pᵍ": [0.0, 1.0, 0.0],
-            "ξ": 0.01,
-            "σ": 2.5,
-        },
-        "NPI": {
-            "κ₀s": [0.8],
-            "ϕs": [0.2],
-            "δs": [0.8],
-            "tᶜs": [50],
-            "are_there_npi": True,
-        },
-    }
+    """Minimal valid configuration dictionary (3 age groups)"""
+    return TestHelpers.create_minimal_config(group_size=3)
+
+
+@pytest.fixture
+def two_group_config():
+    """Configuration with 2 age groups"""
+    return TestHelpers.create_minimal_config(group_size=2)
+
+
+@pytest.fixture
+def four_group_config():
+    """Configuration with 4 age groups"""
+    return TestHelpers.create_minimal_config(group_size=4)
+
+
+@pytest.fixture(params=[2, 3, 4])
+def parametrized_config(request):
+    """Parametrized configuration with different group sizes"""
+    return TestHelpers.create_minimal_config(group_size=request.param)
+
+
+@pytest.fixture
+def integration_config(minimal_config):
+    """Configuration suitable for integration testing"""
+    config = minimal_config.copy()
+    # Use very short simulation period for faster tests
+    config["simulation"]["start_date"] = "2020-01-01"
+    config["simulation"]["end_date"] = "2020-01-03"  # Just 3 days
+    return config
+
+
+# Test data fixtures
+@pytest.fixture
+def test_metapopulation_csv(temp_dir):
+    """Create test metapopulation CSV file"""
+    csv_path = Path(temp_dir) / "test_metapopulation.csv"
+    content = TestHelpers.create_test_csv_content()
+    csv_path.write_text(content)
+    return csv_path
+
+
+@pytest.fixture
+def test_rosetta_csv(temp_dir):
+    """Create test rosetta CSV file"""
+    csv_path = Path(temp_dir) / "test_rosetta.csv"
+    content = TestHelpers.create_test_rosetta_content()
+    csv_path.write_text(content)
+    return csv_path
 
 
 @pytest.fixture
@@ -110,3 +126,117 @@ def sample_rosetta_data():
         "province": ["prov_A", "prov_B", "prov_A"],
         "region": ["reg_X", "reg_Y", "reg_X"],
     }
+
+
+# Mock fixtures
+@pytest.fixture
+def mock_success_result():
+    """Mock successful subprocess result"""
+    return TestHelpers.create_mock_success_result()
+
+
+@pytest.fixture
+def mock_failure_result():
+    """Mock failed subprocess result"""
+    return TestHelpers.create_mock_failure_result()
+
+
+@pytest.fixture
+def mock_subprocess_run():
+    """Mock subprocess.run with success result"""
+    mock_result = TestHelpers.create_mock_success_result()
+    with patch("subprocess.run", return_value=mock_result) as mock_run:
+        yield mock_run
+
+
+@pytest.fixture
+def mock_subprocess_run_failure():
+    """Mock subprocess.run with failure result"""
+    mock_result = TestHelpers.create_mock_failure_result()
+    with patch("subprocess.run", return_value=mock_result) as mock_run:
+        yield mock_run
+
+
+@pytest.fixture
+def mock_julia_available():
+    """Mock Julia interpreter availability"""
+    with patch("shutil.which", return_value="/usr/bin/julia"):
+        yield
+
+
+@pytest.fixture
+def mock_julia_unavailable():
+    """Mock Julia interpreter unavailability"""
+    with patch("shutil.which", return_value=None):
+        yield
+
+
+# EpiSim model fixtures
+@pytest.fixture
+def basic_episim_model(minimal_config, temp_dir):
+    """Basic EpiSim model instance"""
+    return TestHelpers.setup_episim_model(minimal_config, temp_dir)
+
+
+@pytest.fixture
+def episim_model_with_interpreter(minimal_config, temp_dir):
+    """EpiSim model set up with interpreter mode"""
+    return TestHelpers.setup_episim_with_interpreter(minimal_config, temp_dir)
+
+
+@pytest.fixture
+def episim_model_with_compiled(minimal_config, temp_dir):
+    """EpiSim model set up with compiled mode"""
+    return TestHelpers.setup_episim_with_compiled(minimal_config, temp_dir)
+
+
+# Invalid configuration fixtures
+@pytest.fixture
+def invalid_config_missing_simulation(minimal_config):
+    """Invalid config with missing simulation section"""
+    return TestHelpers.create_invalid_config_missing_section(minimal_config, "simulation")
+
+
+@pytest.fixture
+def invalid_config_missing_engine(minimal_config):
+    """Invalid config with missing engine key"""
+    return TestHelpers.create_invalid_config_missing_key(minimal_config, "simulation", "engine")
+
+
+@pytest.fixture
+def invalid_config_wrong_group_size(minimal_config):
+    """Invalid config with wrong group size"""
+    return TestHelpers.create_invalid_config_wrong_group_size(minimal_config, "ηᵍ", 2)
+
+
+# XArray test data
+@pytest.fixture
+def test_xarray_data():
+    """Test xarray data for compute_observables testing"""
+    return TestHelpers.create_test_xarray_data()
+
+
+# Utility fixtures
+@pytest.fixture
+def instance_folder(temp_dir):
+    """Create instance folder"""
+    folder = Path(temp_dir) / "instances"
+    folder.mkdir(exist_ok=True)
+    return str(folder)
+
+
+@pytest.fixture
+def dummy_initial_conditions(temp_dir):
+    """Create dummy initial conditions file"""
+    ic_path = Path(temp_dir) / "initial.nc"
+    ic_path.write_text("dummy nc content")
+    return str(ic_path)
+
+
+@pytest.fixture
+def dummy_executable(temp_dir):
+    """Create dummy executable file"""
+    executable_path = Path(temp_dir) / "episim"
+    executable_path.write_text("#!/bin/bash\necho 'compiled episim'")
+    executable_path.chmod(0o755)
+    return str(executable_path)
