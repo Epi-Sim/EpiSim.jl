@@ -54,7 +54,6 @@ RUN if [ "$SHOULD_COMPILE" = "true" ]; then \
 
 # Set environment variables for executable discovery
 ENV EPISIM_EXECUTABLE_PATH=/usr/local/bin/episim
-ENV JULIA_PROJECT=/app
 
 # Default command shows help
 CMD ["julia", "--project", "src/run.jl", "--help"] 
