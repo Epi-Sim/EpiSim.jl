@@ -115,31 +115,124 @@ Tests are located in `test/runtests.jl` and run simulations with both engines us
 
 ## Python Interface
 
-The `python/` directory contains a Python package (`episim_python`) that provides a high-level interface to EpiSim.jl.
+The `python/` directory contains a Python package (`episim_python`) that provides a high-level interface to EpiSim.jl for step-by-step simulation execution, configuration management, and input file manipulation.
+
+### Features
+
+- **Step-by-step simulation**: Execute simulations in discrete time steps with dynamic parameter updates
+- **Configuration management**: Comprehensive configuration validation and manipulation
+- **Input file handling**: Support for NetCDF, CSV, and JSON input formats
+- **Metapopulation support**: Handle complex metapopulation structures with aggregation
+- **Multiple engines**: Support for both MMCACovid19 and MMCACovid19Vac engines
 
 ### Installation
 ```bash
 cd python
 pip install -e .
+
+# Or install from requirements
+pip install -r requirements.txt
 ```
 
 ### Usage
 ```python
-from episim_python import EpiSim, EpiSimConfig
 import json
+from episim_python import EpiSim, EpiSimConfig
 
 # Load configuration
+with open("../models/mitma/config_MMCACovid19.json", 'r') as f:
+    config = json.load(f)
+
+# Initialize model
+model = EpiSim(
+    config=config,
+    data_folder="../models/mitma",
+    instance_folder="../runs",
+    initial_conditions="../models/mitma/initial_conditions.nc"
+)
+
+# Setup execution (compiled or interpreter)
+model.setup(executable_type='interpreter')
+
+# Run step-by-step simulation
+current_date = "2020-02-09"
+for i in range(10):
+    new_state, next_date = model.step(current_date, length_days=7)
+    
+    # Update parameters dynamically
+    config["NPI"]["κ₀s"] = [config["NPI"]["κ₀s"][0] * 0.95]
+    model.update_config(config)
+    
+    current_date = next_date
+```
+
+### Configuration Management
+```python
+from episim_python import EpiSimConfig
+
+# Load and validate configuration
 config = EpiSimConfig.from_json("config.json")
 config.validate()
 
-# Initialize model
-model = EpiSim(config.config, data_folder, instance_folder)
-model.setup(executable_type='interpreter')
+# Update parameters
+config.update_param("epidemic_params.βᴵ", 0.1)
+config.update_group_param("epidemic_params.γᵍ", "Y", 0.005)
 
-# Run step-by-step
-current_date = "2020-02-09"
-new_state, next_date = model.step(current_date, length_days=7)
+# Batch updates
+config.inject({
+    "epidemic_params.βᴵ": 0.1,
+    "NPI.κ₀s": [0.8]
+})
 ```
+
+### Input File Resolution
+
+The Python interface handles file paths as follows:
+1. Configuration file paths are relative to the data folder
+2. If a file is not found in the data folder, it searches the instance folder
+3. Absolute paths in the configuration are used as-is
+
+Required input files in the data folder:
+- **`Metapopulation_data.csv`**: Population data by region and age group
+- **`Mobility_Network.csv`**: Connectivity matrix between metapopulations  
+- **`Contact_Matrices_data.csv`**: Age-stratified contact patterns
+
+Optional files:
+- **Initial conditions**: NetCDF file with compartment populations
+- **Seeds file**: CSV with initial infection seeds by location
+
+### Output Structure
+
+All outputs are written to: `<instance_folder>/<output_folder>/`
+
+Primary output files:
+- **`episim_output.nc`**: Main NetCDF file containing all compartments and observables
+- **`observables.nc`**: Observable quantities only (when `save_full_output: false`)
+
+NetCDF structure includes:
+- **Compartments**: Population in each disease state by time, age group, metapopulation
+- **Observables**: Daily new infections, hospitalizations, deaths, mobility flow
+
+### Environment Variables
+
+The Python interface supports these environment variables:
+
+- **`JULIA_PROJECT`**: Sets the Julia project directory (equivalent to `--project` flag)
+- **`EPISIM_EXECUTABLE_PATH`**: Path to compiled EpiSim executable (for compiled mode)
+
+Example:
+```bash
+export JULIA_PROJECT=/path/to/EpiSim.jl
+export EPISIM_EXECUTABLE_PATH=/path/to/compiled/episim
+python your_script.py
+```
+
+### Dependencies
+
+- numpy (>= 1.19.0)
+- pandas (>= 1.2.0)  
+- xarray (>= 0.16.0)
+- netcdf4 (>= 1.5.0)
 
 ## Preferences and Recommendations
 

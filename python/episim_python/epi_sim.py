@@ -75,17 +75,31 @@ class EpiSim:
         env_path = os.environ.get("EPISIM_EXECUTABLE_PATH")
         if env_path and os.path.exists(env_path) and os.access(env_path, os.X_OK):
             return env_path
+        
+        # Check if we're in a container with JULIA_PROJECT set
+        julia_project = os.environ.get("JULIA_PROJECT")
+        if julia_project and os.path.exists(julia_project):
+            # Try to find the executable relative to JULIA_PROJECT
+            project_exe_path = os.path.join(julia_project, "episim")
+            if os.path.exists(project_exe_path) and os.access(project_exe_path, os.X_OK):
+                return project_exe_path
+        
         return EpiSim.DEFAULT_EXECUTABLE_PATH
 
     @staticmethod
     def get_interpreter_path():
-        """Get the interpreter path, checking environment variables first."""
-        env_project = os.environ.get("EPISIM_JULIA_PROJECT")
-        if env_project and os.path.exists(env_project):
-            run_jl_path = os.path.join(env_project, "src", "run.jl")
-            if os.path.exists(run_jl_path):
-                return ["julia", run_jl_path]
-        return EpiSim.DEFAULT_INTERPRETER_PATH
+        """Get the interpreter path. Julia will use JULIA_PROJECT env var for project location."""
+        julia_project = os.environ.get("JULIA_PROJECT")
+        
+        if julia_project and os.path.exists(julia_project):
+            # Use JULIA_PROJECT as the base path for finding run.jl
+            script_path = os.path.join(julia_project, "src", "run.jl")
+            if os.path.exists(script_path):
+                return ["julia", script_path]
+        
+        # Fallback to relative path calculation for development environments
+        fallback_path = os.path.join(os.path.dirname(__file__), os.pardir, os.pardir, "src", "run.jl")
+        return ["julia", fallback_path]
 
     DEFAULT_BACKEND_ENGINE = "MMCACovid19Vac"
     BACKEND_ENGINES: ClassVar[list[dict[str, str]]] = [
@@ -258,11 +272,14 @@ class EpiSim:
         logger.debug(f"Running command:\n{cmdstr}")
 
         # Run subprocess and capture both stdout and stderr
+        # Ensure Julia environment variables are passed through
+        env = os.environ.copy()
         result = subprocess.run(
             cmd,
             check=False,
             capture_output=True,
             text=True,
+            env=env,
         )
 
         # Log the output for debugging
