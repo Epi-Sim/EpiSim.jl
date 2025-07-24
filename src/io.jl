@@ -428,7 +428,7 @@ function save_observables(engine::MMCACovid19Engine,
         newH  = NcVar("new_hospitalized" , dimlist; atts=Dict("description" => "Daily hospitalizations"), t=Float64, compress=-1)
         newD  = NcVar("new_deaths" , dimlist; atts=Dict("description" => "Daily deaths"), t=Float64, compress=-1)
         R_eff = NcVar("R_eff" , dimlist; atts=Dict("description" => "Effective reproduction number over an infectious period of 14 days"), t=Float64, compress=-1)
-        varlist = [newI, newH, newD, R_eff]
+        
      
         data_dict = Dict()
         data_dict["new_infected"] = (epi_params.ρᴬᵍ  .* population.nᵢᵍ) .* epi_params.αᵍ
@@ -442,11 +442,21 @@ function save_observables(engine::MMCACovid19Engine,
         data_dict["new_deaths"] = zeros(size(D))
         data_dict["new_deaths"][:, :, 2:end] = diff((D .* population.nᵢᵍ), dims=3)
 
-        data_dict["R_eff"] = zeros(Float64, G, M, T)
         τ = 14
-        Rᵢᵍ_eff = MMCAcovid19.compute_R_eff_matrix(epi_params, population, τ)[1]
-        data_dict["R_eff"][:, :, τ+1:end] = Rᵢᵍ_eff
+
+        if T <= τ
+            @warn "The number of time steps T ($(T)) is smaller than τ ($(τ)), R is not computable"
+            varlist = [newI, newH, newD]
+
+        else
+            data_dict["R_eff"] = zeros(Float64, G, M, T)
         
+            Rᵢᵍ_eff = MMCAcovid19.compute_R_eff_matrix(epi_params, population, τ)[1]
+            data_dict["R_eff"][:, :, τ+1:end] = Rᵢᵍ_eff
+            varlist = [newI, newH, newD, R_eff]
+
+        end
+
         isfile(filename) && rm(filename)
         NetCDF.create(filename, varlist, mode=NC_NETCDF4)
         for (var_label, data) in data_dict
