@@ -38,6 +38,7 @@ function julia_main()::Cint
     """
     This is the entrypoint for the compiled version of EpiSim.
     """
+    command = "unknown"  # Initialize command to avoid UndefVarError in catch block
     try
         args = parse_command_line()
         command = args["%COMMAND%"]
