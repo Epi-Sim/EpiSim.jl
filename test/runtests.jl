@@ -3,8 +3,6 @@ using DataFrames
 using EpiSim
 
 
-
-
 command = "run"
 
 episim_src_dir = @__DIR__
