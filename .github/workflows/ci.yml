@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [ '**' ]
+    branches: [ main, master ]
     tags: [ 'v*' ]
   pull_request:
     branches: [ '**' ]
@@ -90,7 +90,8 @@ jobs:
   docker-publish:
     runs-on: ubuntu-latest
     needs: [python-tests, julia-tests]
-    if: github.event_name == 'push'
+    # Run on all triggers since CI only runs on PRs and main pushes
+    if: always() && !cancelled() && !failure()
     permissions:
       contents: read
       packages: write
