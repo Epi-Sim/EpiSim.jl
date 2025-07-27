@@ -90,8 +90,8 @@ jobs:
   docker-publish:
     runs-on: ubuntu-latest
     needs: [python-tests, julia-tests]
-    # Run on all triggers since CI only runs on PRs and main pushes
-    if: always() && !cancelled() && !failure()
+    # Run when tests succeed
+    if: success()
     permissions:
       contents: read
       packages: write
