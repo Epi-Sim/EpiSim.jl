@@ -9,6 +9,7 @@ EpiSim.jl is a Julia package for simulating epidemic spreading in metapopulation
 ## Common Commands
 
 ### Installation and Setup
+
 ```bash
 # Install dependencies and optionally compile
 julia ./install.jl -c -i     # Compile with incremental compilation
@@ -17,6 +18,7 @@ julia ./install.jl           # Install without compilation (creates wrapper scri
 ```
 
 ### Running Simulations
+
 ```bash
 # Run simulation with config file
 ./episim run -c models/mitma/config_MMCACovid19.json -d models/mitma -i runs
@@ -29,6 +31,7 @@ julia ./install.jl           # Install without compilation (creates wrapper scri
 ```
 
 ### Model Setup and Initialization
+
 ```bash
 # Create model template
 ./episim setup -n model_name -M 10 -G 3 -e MMCACovid19 -o models
@@ -38,6 +41,7 @@ julia ./install.jl           # Install without compilation (creates wrapper scri
 ```
 
 ### Testing
+
 ```bash
 # Run test suite
 julia --project=. test/runtests.jl
@@ -73,6 +77,7 @@ Each engine has its own parameter structure and validation requirements.
 ### Configuration Format
 
 The system uses JSON configuration files with these sections:
+
 - `simulation`: Engine type, dates, output settings
 - `data`: File paths for input data
 - `epidemic_params`: Disease-specific parameters
@@ -126,6 +131,7 @@ The `python/` directory contains a Python package (`episim_python`) that provide
 - **Multiple engines**: Support for both MMCACovid19 and MMCACovid19Vac engines
 
 ### Installation
+
 ```bash
 cd python
 pip install -e .
@@ -135,6 +141,7 @@ pip install -r requirements.txt
 ```
 
 ### Usage
+
 ```python
 import json
 from episim_python import EpiSim, EpiSimConfig
@@ -167,14 +174,18 @@ for i in range(10):
 ```
 
 ### Configuration Management
+
+The Python interface provides comprehensive configuration management utilities through the `EpiSimConfig` class and `update_params()` function. For complete documentation, see [Python Configuration Utilities Guide](docs/PYTHON_CONFIG_UTILS.md).
+
 ```python
 from episim_python import EpiSimConfig
+from episim_python.episim_utils import update_params
 
-# Load and validate configuration
+# High-level interface with type safety and validation
 config = EpiSimConfig.from_json("config.json")
 config.validate()
 
-# Update parameters
+# Update parameters with automatic type checking
 config.update_param("epidemic_params.βᴵ", 0.1)
 config.update_group_param("epidemic_params.γᵍ", "Y", 0.005)
 
@@ -183,21 +194,41 @@ config.inject({
     "epidemic_params.βᴵ": 0.1,
     "NPI.κ₀s": [0.8]
 })
+
+# Low-level interface with parameter aliases and conversions
+base_config = {"epidemic_params": {}, "NPI": {}}
+updated_config = update_params(base_config, {
+    "β": 0.12,           # Alias for βᴵ
+    "τ_inc": 5.2,        # Incubation period -> ηᵍ
+    "scale_ea": 0.4,     # E->A fraction
+    "ϕs": 0.3            # Contact reduction
+})
 ```
+
+#### Key Configuration Utilities
+
+- **Parameter Aliases**: Use intuitive names like `β` instead of `βᴵ`
+- **Automatic Conversions**: Convert epidemiological timescales to rates
+- **Group Parameter Handling**: Type-safe updates for age-stratified parameters
+- **Schema Validation**: Comprehensive configuration validation
+- **Complex Parameter Derivation**: Compute interdependent parameters automatically
 
 ### Input File Resolution
 
 The Python interface handles file paths as follows:
+
 1. Configuration file paths are relative to the data folder
 2. If a file is not found in the data folder, it searches the instance folder
 3. Absolute paths in the configuration are used as-is
 
 Required input files in the data folder:
+
 - **`Metapopulation_data.csv`**: Population data by region and age group
 - **`Mobility_Network.csv`**: Connectivity matrix between metapopulations  
 - **`Contact_Matrices_data.csv`**: Age-stratified contact patterns
 
 Optional files:
+
 - **Initial conditions**: NetCDF file with compartment populations
 - **Seeds file**: CSV with initial infection seeds by location
 
@@ -206,10 +237,12 @@ Optional files:
 All outputs are written to: `<instance_folder>/<output_folder>/`
 
 Primary output files:
+
 - **`episim_output.nc`**: Main NetCDF file containing all compartments and observables
 - **`observables.nc`**: Observable quantities only (when `save_full_output: false`)
 
 NetCDF structure includes:
+
 - **Compartments**: Population in each disease state by time, age group, metapopulation
 - **Observables**: Daily new infections, hospitalizations, deaths, mobility flow
 
@@ -221,6 +254,7 @@ The Python interface supports these environment variables:
 - **`EPISIM_EXECUTABLE_PATH`**: Path to compiled EpiSim executable (for compiled mode)
 
 Example:
+
 ```bash
 export JULIA_PROJECT=/path/to/EpiSim.jl
 export EPISIM_EXECUTABLE_PATH=/path/to/compiled/episim
@@ -237,9 +271,11 @@ python your_script.py
 ## Preferences and Recommendations
 
 ### Python Development
+
 - Prefer `uv` for running python code eg. `uv run pytest`
 - Use uv to run python commands with the venv eg. `uv run pytest`
 
 ## Input File Manipulation
 
 EpiSim.jl uses multiple input file formats that can be manipulated both manually and programmatically.
+
