@@ -1,34 +1,59 @@
-# Use Julia official image as base
-FROM julia:1.11.4
+# Single-stage build with Python base
+FROM python:3.12
 
-# Install system dependencies for NetCDF and HDF5
+# Install system dependencies for NetCDF, HDF5, and Julia
 RUN apt-get update && apt-get install -y \
     libnetcdf-dev \
     libhdf5-dev \
     build-essential \
+    wget \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Julia runtime
+RUN wget https://julialang-s3.julialang.org/bin/linux/x64/1.11/julia-1.11.4-linux-x86_64.tar.gz && \
+    tar -xvf julia-1.11.4-linux-x86_64.tar.gz && \
+    mv julia-1.11.4 /opt/julia && \
+    ln -s /opt/julia/bin/julia /usr/local/bin/julia && \
+    rm julia-1.11.4-linux-x86_64.tar.gz
 
 # Set working directory
 WORKDIR /app
 
-# Copy project files
-COPY . .
+# Copy dependency files first for better layer caching
+COPY Project.toml Manifest.toml ./
+COPY python/pyproject.toml python/
 
 # Set Julia environment and install dependencies
 ENV JULIA_PROJECT=/app
 
-# Initialize Julia registries and install dependencies step by step
+# Initialize Julia registries and install Julia dependencies (but not EpiSim itself yet)
 RUN julia -e "using Pkg; Pkg.Registry.add(\"General\")"
 RUN julia -e "using Pkg; Pkg.instantiate()"
+
+# Install uv for Python package management
+RUN pip install uv
+
+# Copy rest of the source code
+COPY . .
+
+# Install Python dependencies in editable mode after source code is copied
+RUN cd python && uv pip install --system -e .
+
+# Now precompile everything including EpiSim
 RUN julia -e "using Pkg; Pkg.precompile()"
 
-# Now run the install script to compile the application
-RUN julia install.jl -i -t /usr/local/bin
+# Build argument to control compilation (default to false for dev builds)
+ARG SHOULD_COMPILE=false
 
-# # Create a symbolic link in PATH if not already created
-# RUN if [ ! -L /usr/local/bin/episim ]; then \
-#         ln -s /app/build/bin/EpiSim /usr/local/bin/episim; \
-#     fi
+# Compile the Julia application (conditional based on build arg)
+RUN if [ "$SHOULD_COMPILE" = "true" ]; then \
+        julia install.jl -c -i -t /usr/local/bin; \
+    else \
+        julia install.jl -i -t /usr/local/bin; \
+    fi
+
+# Set environment variables for executable discovery
+ENV EPISIM_EXECUTABLE_PATH=/usr/local/bin/episim
 
 # Default command shows help
 CMD ["julia", "--project", "src/run.jl", "--help"] 
