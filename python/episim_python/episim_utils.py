@@ -85,6 +85,9 @@ class EpiSimConfig:
         self.group_labels = self._get_nested(["population_params", "G_labels"])
         self.group_size = len(self.group_labels)
 
+        # Parameters that should always be arrays regardless of group size
+        self._always_array_params = {"NPI.ϕs", "NPI.δs"}
+
         # Automatically detect all parameters that are group-dependent
         self.group_params = self._detect_group_params()
 
@@ -217,11 +220,27 @@ class EpiSimConfig:
         """
         keys = key_path.split(".")
         is_grouped = self.is_group_param(key_path)
+        is_always_array = key_path in self._always_array_params
 
         if is_grouped:
             if not (isinstance(value, list) and len(value) == self.group_size):
                 raise ValueError(
                     f"Expected a list of length {self.group_size} for group-dependent parameter '{key_path}'",
+                )
+        elif is_always_array:
+            # Handle parameters that should always be arrays
+            if isinstance(value, (int, float)):
+                # Convert scalar to single-element array
+                value = [value]
+            elif isinstance(value, list):
+                # Validate it's a proper array
+                if not all(isinstance(x, (int, float)) for x in value):
+                    raise ValueError(
+                        f"Parameter '{key_path}' must contain numeric values"
+                    )
+            else:
+                raise ValueError(
+                    f"Parameter '{key_path}' must be a number or array of numbers"
                 )
         elif isinstance(value, list):
             raise ValueError(f"Expected a scalar for scalar parameter '{key_path}'")

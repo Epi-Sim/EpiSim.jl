@@ -5,12 +5,11 @@ pytest configuration and fixtures for episim_python tests
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Dict, Any, List
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import pytest
 
-from .test_helpers import TestHelpers, MockResult, AssertionHelpers
+from .test_helpers import AssertionHelpers, TestHelpers
 
 # Test data directory
 TEST_DATA_DIR = Path(__file__).parent / "fixtures"
@@ -18,7 +17,7 @@ TEST_DATA_DIR = Path(__file__).parent / "fixtures"
 
 class BaseTestCase:
     """Base test case class with common setup methods"""
-    
+
     def setup_method(self):
         """Setup method called before each test method"""
         self.helpers = TestHelpers()
@@ -194,13 +193,17 @@ def episim_model_with_compiled(minimal_config, temp_dir):
 @pytest.fixture
 def invalid_config_missing_simulation(minimal_config):
     """Invalid config with missing simulation section"""
-    return TestHelpers.create_invalid_config_missing_section(minimal_config, "simulation")
+    return TestHelpers.create_invalid_config_missing_section(
+        minimal_config, "simulation"
+    )
 
 
 @pytest.fixture
 def invalid_config_missing_engine(minimal_config):
     """Invalid config with missing engine key"""
-    return TestHelpers.create_invalid_config_missing_key(minimal_config, "simulation", "engine")
+    return TestHelpers.create_invalid_config_missing_key(
+        minimal_config, "simulation", "engine"
+    )
 
 
 @pytest.fixture

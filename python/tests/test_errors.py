@@ -5,18 +5,19 @@ This module consolidates all error handling test cases from across the test suit
 to provide a single location for testing error conditions and exception handling.
 """
 
-import json
 import os
 from unittest.mock import patch
 
 import pytest
 
 from episim_python import EpiSim, EpiSimConfig
+
 from .conftest import BaseTestCase
 
 # Try to import schema validation components for schema-related error tests
 try:
-    from episim_python.schema_validator import SchemaValidator, EpiSimSchemaValidator
+    from episim_python.schema_validator import EpiSimSchemaValidator, SchemaValidator
+
     SCHEMA_AVAILABLE = True
 except ImportError:
     SCHEMA_AVAILABLE = False
@@ -59,7 +60,9 @@ class TestEpiSimSetupErrors(BaseTestCase):
         with pytest.raises(AssertionError, match="Julia interpreter not found"):
             basic_episim_model.setup(executable_type="interpreter")
 
-    @pytest.mark.skip(reason="Test behavior differs between CI (compiled) and local (wrapper script) environments")
+    @pytest.mark.skip(
+        reason="Test behavior differs between CI (compiled) and local (wrapper script) environments"
+    )
     def test_setup_missing_compiled_executable(self, basic_episim_model):
         """Test setup when compiled executable is missing - SKIPPED due to environment differences"""
         with pytest.raises(AssertionError):
@@ -68,9 +71,9 @@ class TestEpiSimSetupErrors(BaseTestCase):
     def test_compiled_executable_symlink_validation(self):
         """Test that if episim executable exists as symlink, its target is valid"""
         from episim_python.epi_sim import EpiSim
-        
+
         executable_path = EpiSim.get_executable_path()
-        
+
         # Only run this test if the executable exists
         if executable_path and os.path.exists(executable_path):
             # If it's a symlink (indicating compilation occurred), validate the target
@@ -78,12 +81,20 @@ class TestEpiSimSetupErrors(BaseTestCase):
                 target_path = os.readlink(executable_path)
                 # Target should exist (either absolute or relative to executable location)
                 if not os.path.isabs(target_path):
-                    target_path = os.path.join(os.path.dirname(executable_path), target_path)
-                assert os.path.exists(target_path), f"Symlink target {target_path} does not exist"
-                assert os.access(target_path, os.X_OK), f"Symlink target {target_path} is not executable"
+                    target_path = os.path.join(
+                        os.path.dirname(executable_path), target_path
+                    )
+                assert os.path.exists(target_path), (
+                    f"Symlink target {target_path} does not exist"
+                )
+                assert os.access(target_path, os.X_OK), (
+                    f"Symlink target {target_path} is not executable"
+                )
             else:
                 # If it's not a symlink, it should still be executable (wrapper script)
-                assert os.access(executable_path, os.X_OK), f"Executable {executable_path} is not executable"
+                assert os.access(executable_path, os.X_OK), (
+                    f"Executable {executable_path} is not executable"
+                )
 
     def test_operation_before_setup(self, basic_episim_model):
         """Test operations before setup is called"""
@@ -99,11 +110,13 @@ class TestEpiSimSetupErrors(BaseTestCase):
 class TestEpiSimRuntimeErrors(BaseTestCase):
     """Test EpiSim runtime error conditions"""
 
-    def test_run_model_failure(self, episim_model_with_interpreter, mock_subprocess_run_failure):
+    def test_run_model_failure(
+        self, episim_model_with_interpreter, mock_subprocess_run_failure
+    ):
         """Test model run failure handling"""
         with pytest.raises(RuntimeError) as exc_info:
             episim_model_with_interpreter.run_model()
-        
+
         error_message = str(exc_info.value)
         assert "Model execution failed with return code 1" in error_message
         assert "Simulation failed" in error_message
@@ -223,7 +236,7 @@ class TestSchemaValidationErrors:
         validator = EpiSimSchemaValidator()
         invalid_config = minimal_config.copy()
         del invalid_config["simulation"]["engine"]
-        
+
         with pytest.raises(ValueError):
             validator.validate_config(invalid_config, verbose=False)
 
@@ -232,7 +245,7 @@ class TestSchemaValidationErrors:
         validator = EpiSimSchemaValidator()
         invalid_config = minimal_config.copy()
         invalid_config["epidemic_params"]["ηᵍ"] = [0.3, 0.3]  # Wrong size
-        
+
         with pytest.raises(ValueError):
             validator.validate_config(invalid_config, verbose=False)
 
@@ -276,18 +289,18 @@ class TestMetapopulationErrors(BaseTestCase):
         with open(csv_path, "w") as f:
             f.write("id,wrong_column\n")
             f.write("1,value1\n")
-        
+
         from episim_python.episim_utils import Metapopulation
+
         with pytest.raises(KeyError):  # Should raise KeyError for missing columns
             Metapopulation(csv_path)
 
     def test_metapopulation_nonexistent_file(self):
         """Test metapopulation loading with nonexistent file"""
         from episim_python.episim_utils import Metapopulation
+
         with pytest.raises(FileNotFoundError):
             Metapopulation("/nonexistent/file.csv")
-
-
 
 
 @pytest.mark.skipif(not SCHEMA_AVAILABLE, reason="JSON schema validation not available")

@@ -4,14 +4,14 @@ Integration tests for episim_python package
 These tests verify end-to-end functionality and require a working Julia environment.
 """
 
-import json
 import os
 import shutil
 from unittest.mock import patch
 
 import pytest
 
-from episim_python import EpiSim, EpiSimConfig
+from episim_python import EpiSimConfig
+
 from .conftest import BaseTestCase
 
 
@@ -54,14 +54,18 @@ class TestIntegration(BaseTestCase):
                 "epidemic_params.βᴵ": 0.15,
                 "epidemic_params.ηᵍ": [0.3, 0.4, 0.3],  # M group (index 1) modified
                 "simulation.start_date": "2020-02-01",
-                "epidemic_params.γᵍ": [0.005, 0.010, 0.080]
-            }
+                "epidemic_params.γᵍ": [0.005, 0.010, 0.080],
+            },
         )
 
-    def test_episim_initialization_workflow(self, integration_config, instance_folder, temp_dir):
+    def test_episim_initialization_workflow(
+        self, integration_config, instance_folder, temp_dir
+    ):
         """Test EpiSim initialization and setup workflow"""
         # Test initialization with dict config
-        model = self.helpers.setup_episim_model(integration_config, temp_dir, instance_folder)
+        model = self.helpers.setup_episim_model(
+            integration_config, temp_dir, instance_folder
+        )
 
         self.helpers.assert_episim_model_structure(model)
 
@@ -72,18 +76,21 @@ class TestIntegration(BaseTestCase):
 
         # Verify config was updated
         self.assertions.assert_config_saved_correctly(
-            model.config_path,
-            {"simulation.start_date": "2020-01-05"}
+            model.config_path, {"simulation.start_date": "2020-01-05"}
         )
 
         # Test backend engine setting
         model.set_backend_engine("MMCACovid19")
         assert model.backend_engine == "MMCACovid19"
 
-    def test_episim_mock_simulation_workflow(self, integration_config, instance_folder, temp_dir, mock_subprocess_run):
+    def test_episim_mock_simulation_workflow(
+        self, integration_config, instance_folder, temp_dir, mock_subprocess_run
+    ):
         """Test complete simulation workflow with mocked subprocess"""
         # Initialize model
-        model = self.helpers.setup_episim_model(integration_config, temp_dir, instance_folder)
+        model = self.helpers.setup_episim_model(
+            integration_config, temp_dir, instance_folder
+        )
 
         # Setup with mocked Julia check
         with patch("shutil.which", return_value="/usr/bin/julia"):
@@ -99,7 +106,7 @@ class TestIntegration(BaseTestCase):
         self.assertions.assert_subprocess_called_correctly(
             mock_subprocess_run,
             ["julia", "run", "--config", "--data-folder", "--instance-folder"],
-            ["run.jl"]
+            ["run.jl"],
         )
 
     @pytest.mark.skip(
@@ -143,7 +150,6 @@ class TestIntegration(BaseTestCase):
         # Test validation after updates
         config.validate(verbose=False)  # Should not raise exception
 
-
     @pytest.mark.skipif(not shutil.which("julia"), reason="Julia not available")
     def test_real_julia_check(self):
         """Test that Julia is actually available (only runs if Julia is installed)"""
@@ -178,7 +184,7 @@ class TestIntegration(BaseTestCase):
             pop_array,
             ["M", "G"],
             {"G": expected_groups},
-            (3, len(expected_groups))  # 3 regions, N age groups
+            (3, len(expected_groups)),  # 3 regions, N age groups
         )
 
         # Update config to use metapopulation file
@@ -187,10 +193,12 @@ class TestIntegration(BaseTestCase):
         )
 
         # Initialize EpiSim with updated config
-        model = self.helpers.setup_episim_model(integration_config, temp_dir, instance_folder)
+        model = self.helpers.setup_episim_model(
+            integration_config, temp_dir, instance_folder
+        )
 
         # Verify config was saved correctly
         self.assertions.assert_config_saved_correctly(
             model.config_path,
-            {"data.metapopulation_data_filename": str(test_metapopulation_csv)}
+            {"data.metapopulation_data_filename": str(test_metapopulation_csv)},
         )

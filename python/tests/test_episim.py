@@ -2,14 +2,12 @@
 Tests for EpiSim class
 """
 
-import json
 import os
-from pathlib import Path
-from unittest.mock import Mock, patch
 
 import pytest
 
 from episim_python import EpiSim
+
 from .conftest import BaseTestCase
 
 
@@ -33,16 +31,19 @@ class TestEpiSim(BaseTestCase):
         self.helpers.assert_episim_model_structure(model)
         assert model.instance_folder == instance_folder
         assert model.data_folder == temp_dir
-        
+
         # Check that config was copied to model folder
         self.assertions.assert_config_saved_correctly(
-            model.config_path, 
-            {"simulation.engine": "MMCACovid19"}
+            model.config_path, {"simulation.engine": "MMCACovid19"}
         )
 
-    def test_init_with_initial_conditions(self, minimal_config, instance_folder, temp_dir, dummy_initial_conditions):
+    def test_init_with_initial_conditions(
+        self, minimal_config, instance_folder, temp_dir, dummy_initial_conditions
+    ):
         """Test initialization with initial conditions file"""
-        model = EpiSim(minimal_config, temp_dir, instance_folder, dummy_initial_conditions)
+        model = EpiSim(
+            minimal_config, temp_dir, instance_folder, dummy_initial_conditions
+        )
 
         assert model.model_state is not None
         self.assertions.assert_file_exists(model.model_state)
@@ -59,7 +60,9 @@ class TestEpiSim(BaseTestCase):
 
     def test_setup_compiled_mode(self, basic_episim_model, dummy_executable):
         """Test setup with compiled mode"""
-        basic_episim_model.setup(executable_type="compiled", executable_path=dummy_executable)
+        basic_episim_model.setup(
+            executable_type="compiled", executable_path=dummy_executable
+        )
 
         assert basic_episim_model.setup_complete
         assert basic_episim_model.executable_type == "compiled"
@@ -86,8 +89,7 @@ class TestEpiSim(BaseTestCase):
 
         # New config should be saved
         self.assertions.assert_config_saved_correctly(
-            basic_episim_model.config_path,
-            {"simulation.start_date": "2020-02-01"}
+            basic_episim_model.config_path, {"simulation.start_date": "2020-02-01"}
         )
 
     def test_model_state_filename(self, basic_episim_model):
@@ -112,7 +114,9 @@ class TestEpiSim(BaseTestCase):
         )
         assert basic_episim_model.model_state == expected
 
-    def test_run_model_success(self, episim_model_with_interpreter, mock_subprocess_run):
+    def test_run_model_success(
+        self, episim_model_with_interpreter, mock_subprocess_run
+    ):
         """Test successful model execution"""
         uuid_result, stdout = episim_model_with_interpreter.run_model()
 
@@ -123,11 +127,12 @@ class TestEpiSim(BaseTestCase):
         self.assertions.assert_subprocess_called_correctly(
             mock_subprocess_run,
             ["julia", "run", "--config", "--data-folder", "--instance-folder"],
-            ["run.jl"]
+            ["run.jl"],
         )
 
-
-    def test_run_model_with_override_config(self, episim_model_with_interpreter, mock_subprocess_run):
+    def test_run_model_with_override_config(
+        self, episim_model_with_interpreter, mock_subprocess_run
+    ):
         """Test model execution with override configuration"""
         override_config = {
             "start_date": "2020-02-01",
@@ -140,7 +145,14 @@ class TestEpiSim(BaseTestCase):
         # Check that override parameters were added to command
         self.assertions.assert_subprocess_called_correctly(
             mock_subprocess_run,
-            ["--start-date", "2020-02-01", "--end-date", "2020-02-10", "--export-compartments-time-t", "5"]
+            [
+                "--start-date",
+                "2020-02-01",
+                "--end-date",
+                "2020-02-10",
+                "--export-compartments-time-t",
+                "5",
+            ],
         )
 
     @pytest.mark.skip(
@@ -157,10 +169,9 @@ class TestEpiSim(BaseTestCase):
 
         self.assertions.assert_file_exists(config_path)
         assert config_path.endswith("config_auto_py.json")
-        
+
         self.assertions.assert_config_saved_correctly(
-            config_path,
-            {"simulation.engine": "MMCACovid19"}
+            config_path, {"simulation.engine": "MMCACovid19"}
         )
 
     def test_handle_config_input_file(self, test_config_json, temp_dir):
@@ -169,4 +180,3 @@ class TestEpiSim(BaseTestCase):
 
         self.assertions.assert_file_exists(config_path)
         assert os.path.basename(config_path) == "test_config.json"
-

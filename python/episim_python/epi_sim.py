@@ -26,6 +26,8 @@ from typing import ClassVar
 
 import pandas as pd
 
+from .schema_validator import EpiSimSchemaValidator
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
@@ -75,30 +77,34 @@ class EpiSim:
         env_path = os.environ.get("EPISIM_EXECUTABLE_PATH")
         if env_path and os.path.exists(env_path) and os.access(env_path, os.X_OK):
             return env_path
-        
+
         # Check if we're in a container with JULIA_PROJECT set
         julia_project = os.environ.get("JULIA_PROJECT")
         if julia_project and os.path.exists(julia_project):
             # Try to find the executable relative to JULIA_PROJECT
             project_exe_path = os.path.join(julia_project, "episim")
-            if os.path.exists(project_exe_path) and os.access(project_exe_path, os.X_OK):
+            if os.path.exists(project_exe_path) and os.access(
+                project_exe_path, os.X_OK
+            ):
                 return project_exe_path
-        
+
         return EpiSim.DEFAULT_EXECUTABLE_PATH
 
     @staticmethod
     def get_interpreter_path():
         """Get the interpreter path. Julia will use JULIA_PROJECT env var for project location."""
         julia_project = os.environ.get("JULIA_PROJECT")
-        
+
         if julia_project and os.path.exists(julia_project):
             # Use JULIA_PROJECT as the base path for finding run.jl
             script_path = os.path.join(julia_project, "src", "run.jl")
             if os.path.exists(script_path):
                 return ["julia", script_path]
-        
+
         # Fallback to relative path calculation for development environments
-        fallback_path = os.path.join(os.path.dirname(__file__), os.pardir, os.pardir, "src", "run.jl")
+        fallback_path = os.path.join(
+            os.path.dirname(__file__), os.pardir, os.pardir, "src", "run.jl"
+        )
         return ["julia", fallback_path]
 
     DEFAULT_BACKEND_ENGINE = "MMCACovid19Vac"
@@ -189,6 +195,34 @@ class EpiSim:
         if not self.setup_complete:
             raise RuntimeError("EpiSim not set up. Call setup() first.")
 
+    def _validate_current_config(self):
+        """
+        Validate the current configuration using JSON schema.
+
+        Raises:
+            ValueError: If configuration validation fails.
+        """
+        try:
+            # Load the current config
+            with open(self.config_path) as f:
+                config = json.load(f)
+
+            # Validate using schema validator
+            validator = EpiSimSchemaValidator()
+            validator.validate_config(config, verbose=False)
+
+            logger.debug("Configuration validation passed")
+
+        except FileNotFoundError:
+            raise ValueError(f"Configuration file not found: {self.config_path}")
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON in configuration file: {e}")
+        except ValueError as e:
+            # Re-raise validation errors with more context
+            raise ValueError(f"Configuration validation failed: {e}")
+        except Exception as e:
+            raise ValueError(f"Unexpected error during config validation: {e}")
+
     def step(self, start_date, length_days):
         """
         EXPERIMENTAL: Run the model for a given number of days starting from a given start date.
@@ -224,26 +258,34 @@ class EpiSim:
         logger.debug("Step complete")
         return self.model_state, date_addition(end_date, 1)
 
-    def update_config(self, config):
-        self.config_path = self.handle_config_input(self.model_state_folder, config)
+    def update_config(self, config, validate=False):
+        self.config_path = self.handle_config_input(
+            self.model_state_folder, config, validate=validate
+        )
 
-    def run_model(self, override_config=None, override_model_state=None):
+    def run_model(
+        self, override_config=None, override_model_state=None, validate_config=True
+    ):
         """
         Run the compiled model for a specific time period.
 
         Args:
-            length_days (int): Number of days to simulate.
-            start_date (str): Start date for the simulation (format: 'YYYY-MM-DD').
-            end_date (str): End date for the simulation (format: 'YYYY-MM-DD').
-            model_state (str, optional): Path to the initial model state file.
+            override_config (dict, optional): Override configuration parameters.
+            override_model_state (str, optional): Path to the initial model state file.
+            validate_config (bool): Whether to validate configuration before running (default: True).
 
         Returns:
             str: Output from the model execution.
 
         Raises:
             RuntimeError: If the model execution fails.
+            ValueError: If configuration validation fails.
         """
         self._check_setup()
+
+        # Validate configuration before running if requested
+        if validate_config:
+            self._validate_current_config()
 
         cmd = list(self.executable_path)
         cmd.extend(["run"])  # Use the selected backend engine
@@ -329,30 +371,48 @@ class EpiSim:
         return self
 
     @staticmethod
-    def handle_config_input(model_state_folder, config):
+    def handle_config_input(model_state_folder, config, validate=False):
         """
         Process the configuration input and save it to a file.
 
         Args:
             model_state_folder (str): Folder to save the configuration file.
             config (dict or str): Configuration as a dictionary or path to a JSON file.
+            validate (bool): Whether to validate the configuration before saving.
 
         Returns:
             str: Path to the processed configuration file.
 
         Raises:
-            ValueError: If the config input is invalid.
+            ValueError: If the config input is invalid or validation fails.
         """
+        config_dict = None
+
         if isinstance(config, dict):
+            config_dict = config
             # write our own config file for the model to use
             config_path = os.path.join(model_state_folder, "config_auto_py.json")
             with open(config_path, "w") as f:
                 json.dump(config, f, indent=4)
         elif isinstance(config, str) and os.path.exists(config):
+            # Load config for validation if requested
+            if validate:
+                with open(config) as f:
+                    config_dict = json.load(f)
+
             config_path = os.path.join(model_state_folder, os.path.basename(config))
             shutil.copy(config, config_path)
         else:
             raise ValueError(f"Invalid config: {config}")
+
+        # Validate if requested
+        if validate and config_dict:
+            try:
+                validator = EpiSimSchemaValidator()
+                validator.validate_config(config_dict, verbose=False)
+                logger.debug("Configuration validation passed during input handling")
+            except ValueError as e:
+                raise ValueError(f"Configuration validation failed: {e}")
 
         logger.debug(f"Using config at: {config_path}")
         return config_path

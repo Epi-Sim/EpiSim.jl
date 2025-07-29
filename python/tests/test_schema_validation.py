@@ -22,6 +22,7 @@ except ImportError:
     SCHEMA_AVAILABLE = False
 
 from episim_python import EpiSimConfig
+
 from .conftest import BaseTestCase
 
 
@@ -236,7 +237,7 @@ class TestDynamicGroupSizes(BaseTestCase):
     def test_two_group_config(self):
         """Test validation with 2 age groups"""
         config = self.helpers.create_minimal_config(group_size=2)
-        
+
         validator = EpiSimSchemaValidator()
         result = validator.validate_config(config, verbose=False)
         assert result is True
@@ -244,7 +245,7 @@ class TestDynamicGroupSizes(BaseTestCase):
     def test_four_group_config(self):
         """Test validation with 4 age groups"""
         config = self.helpers.create_minimal_config(group_size=4)
-        
+
         validator = EpiSimSchemaValidator()
         result = validator.validate_config(config, verbose=False)
         assert result is True
@@ -252,9 +253,7 @@ class TestDynamicGroupSizes(BaseTestCase):
     def test_mismatched_group_sizes(self):
         """Test validation fails with mismatched group sizes"""
         config = self.helpers.create_invalid_config_wrong_group_size(
-            self.helpers.create_minimal_config(group_size=3), 
-            "αᵍ", 
-            2
+            self.helpers.create_minimal_config(group_size=3), "αᵍ", 2
         )
 
         validator = EpiSimSchemaValidator()

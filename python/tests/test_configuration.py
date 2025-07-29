@@ -8,6 +8,7 @@ import os
 import pytest
 
 from episim_python import EpiSimConfig
+
 from .conftest import BaseTestCase
 
 

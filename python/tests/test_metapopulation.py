@@ -5,10 +5,10 @@ Tests for Metapopulation class
 from pathlib import Path
 
 import pandas as pd
-import pytest
 import xarray as xr
 
 from episim_python import Metapopulation
+
 from .conftest import BaseTestCase
 
 
@@ -95,7 +95,6 @@ class TestMetapopulation(BaseTestCase):
         reg_x_m = da.sel(M="reg_X", G="M").values
         expected_m = 8000 + 9000  # region_1 + region_3
         assert reg_x_m == expected_m
-
 
     def test_population_data_structure(self, test_metapopulation_csv):
         """Test internal population data structure"""
