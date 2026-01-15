@@ -36,3 +36,5 @@ __pycache__/
 
 # Testing output directory
 test_output/
+
+.DS_store
