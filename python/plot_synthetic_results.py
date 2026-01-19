@@ -18,6 +18,36 @@ logging.basicConfig(
 logger = logging.getLogger("Plotter")
 
 
+def parse_intervention_window_from_csv(kappa0_file):
+    """Extract intervention window info from kappa0 CSV.
+
+    Returns:
+        event_start_day: int (day index)
+        event_end_day: int (day index)
+        strength: float (κ₀ value during intervention)
+    """
+    df = pd.read_csv(kappa0_file)
+
+    # Access columns by index to avoid special character issues
+    kappa_vals = df.iloc[:, 1].values  # Second column (reduction)
+    times = df.iloc[:, 3].values  # Fourth column (time)
+
+    # Find intervention window: where κ₀ > 0
+    intervention_mask = kappa_vals > 0.01
+
+    if intervention_mask.any():
+        intervention_times = times[intervention_mask]
+        event_start = int(intervention_times.min())
+        event_end = int(intervention_times.max()) + 1
+        strength = float(kappa_vals[intervention_mask].mean())
+    else:
+        event_start = 0
+        event_end = 0
+        strength = 0.0
+
+    return event_start, event_end, strength
+
+
 def parse_run_dir(run_dir_name):
     # Expected format: run_{pid}_{scenario}_s{strength} or run_{pid}_{scenario}
     # Example: run_0_Baseline, run_0_Global_Const_s50
@@ -39,6 +69,9 @@ def load_run_data(run_dir):
     """
     Load configuration and simulation results for a single run.
     Returns a dictionary with parameters and time series data.
+
+    Directory structure (new): run_{id}/config_auto_py.json, run_{id}/output/observables.nc
+    Directory structure (old): run_{id}/{uuid}/config_auto_py.json, run_{id}/{uuid}/output/observables.nc
     """
     run_path = Path(run_dir)
     pid, scenario_name = parse_run_dir(run_path.name)
@@ -47,18 +80,20 @@ def load_run_data(run_dir):
         logger.warning(f"Could not parse run directory name: {run_path.name}")
         return None
 
-    # Find the UUID folder (assuming only one per run)
-    subdirs = [d for d in run_path.iterdir() if d.is_dir()]
-    if not subdirs:
-        logger.warning(f"No UUID folder found in {run_dir}")
-        return None
+    # Try new structure first (no UUID nesting)
+    config_path = run_path / "config_auto_py.json"
+    output_path = run_path / "output" / "observables.nc"
 
-    uuid_dir = subdirs[0]
-    config_path = uuid_dir / "config_auto_py.json"
-    output_path = uuid_dir / "output" / "observables.nc"
+    # Fall back to old structure (UUID subdirectory)
+    if not config_path.exists() or not output_path.exists():
+        subdirs = [d for d in run_path.iterdir() if d.is_dir()]
+        if subdirs:
+            uuid_dir = subdirs[0]
+            config_path = uuid_dir / "config_auto_py.json"
+            output_path = uuid_dir / "output" / "observables.nc"
 
     if not config_path.exists() or not output_path.exists():
-        logger.warning(f"Missing config or output in {uuid_dir}")
+        logger.warning(f"Missing config or output in {run_dir}")
         return None
 
     # Load Config
@@ -70,40 +105,61 @@ def load_run_data(run_dir):
         r0 = config["epidemic_params"].get("scale_β", 0)
         npi = config.get("NPI", {})
 
+        # CSV is now single source of truth - check kappa0_filename FIRST
+        kappa0_file = config.get("data", {}).get("kappa0_filename", None)
+        if kappa0_file and os.path.exists(kappa0_file):
+            kappa0_df = pd.read_csv(kappa0_file)
+            kappas = kappa0_df["reduction"].values.tolist()
+            times = kappa0_df["time"].values.tolist()
+            min_kappa = min(kappas)
+            global_strength = min_kappa
+            logger.info(f"Loaded kappa0 from file: {kappa0_file}")
+        else:
+            # Fallback to JSON κ₀s if no CSV (should not happen after generator fix)
+            kappas = npi.get("κ₀s", [0.0])
+            times = npi.get("tᶜs", [0])
+            min_kappa = min(kappas)
+            global_strength = min_kappa
+            logger.info(f"Using JSON κ₀s: {kappas} (no CSV found)")
+
         # Check for custom direct mobility reduction (used by Local_Static scenarios)
+        # This modifies mobility matrix, not κ₀
         custom = npi.get("custom", {})
         if (
             "direct_mobility_reduction" in custom
             and custom["direct_mobility_reduction"] > 0
         ):
             global_strength = custom["direct_mobility_reduction"]
-            min_kappa = 1.0 - global_strength
-            kappas = [min_kappa]
-            times = [0]
+            min_kappa = 0.0  # κ₀ stays 0.0 for Local scenarios
             logger.info(f"Using custom mobility reduction: {global_strength}")
+        elif scenario_name == "Global_Timed" and len(kappas) > 1:
+            # For Global_Timed, strength is max kappa (intervention level)
+            global_strength = max(kappas)
+            logger.debug(
+                f"Global_Timed: using max_kappa={global_strength} as strength (scenario_name={scenario_name})"
+            )
         else:
-            # Standard kappa0 processing
-            kappas = npi.get("κ₀s", None)
-            times = npi.get("tᶜs", [0])
+            logger.debug(f"Scenario {scenario_name}: using min_kappa={global_strength}")
 
-            # If κ₀s is not in config, check for kappa0_filename
-            if kappas is None or len(kappas) == 0:
-                kappa0_file = config.get("data", {}).get("kappa0_filename", None)
-                if kappa0_file and os.path.exists(kappa0_file):
-                    kappa0_df = pd.read_csv(kappa0_file)
-                    kappas = kappa0_df["reduction"].values.tolist()
-                    times = kappa0_df["time"].values.tolist()
-                    logger.info(f"Loaded kappa0 from file: {kappa0_file}")
-                else:
-                    kappas = [1.0]
+        # Debug print kappa values before processing
+        logger.debug(
+            f"Scenario {scenario_name}: kappas range [{min(kappas):.3f}, {max(kappas):.3f}], final strength={global_strength:.3f}"
+        )
 
-            # Calculate NPI metrics
-            min_kappa = min(kappas)
-            global_strength = 1.0 - min_kappa
-
-        # Calculate duration of reduction
+        # Calculate duration of reduction and extract intervention window
+        event_start = 0
+        event_end = 0
         duration = 0
-        if len(kappas) >= 3 and kappas[1] < 1.0:
+
+        if (
+            scenario_name == "Global_Timed"
+            and kappa0_file
+            and os.path.exists(kappa0_file)
+        ):
+            # Parse intervention window from CSV
+            event_start, event_end, _ = parse_intervention_window_from_csv(kappa0_file)
+            duration = event_end - event_start
+        elif len(kappas) >= 3 and kappas[1] < 1.0:
             duration = times[2] - times[1]
         elif len(kappas) > 1:
             # Calculate duration from kappa0 file: number of days where kappa < 1.0
@@ -112,6 +168,9 @@ def load_run_data(run_dir):
                 duration = reduced_days
         elif len(kappas) == 1 and kappas[0] < 1.0:
             duration = 999  # Constant reduction
+        elif scenario_name == "Global_Const":
+            # Full simulation period
+            duration = times[-1] if len(times) > 0 else 0
 
     except Exception as e:
         logger.error(f"Error parsing config {config_path}: {e}")
@@ -141,13 +200,16 @@ def load_run_data(run_dir):
         logger.error(f"Error reading NetCDF {output_path}: {e}")
         return None
 
-    return {
+    result = {
         "run_id": run_path.name,
         "Profile_ID": pid,
         "Scenario": scenario_name,
         "R0": r0,
         "Strength": global_strength,
         "Duration": duration,
+        "Event_Start": event_start,
+        "Event_End": event_end,
+        "Window_Center": (event_start + event_end) / 2 if event_end > 0 else 0,
         "Total_Infections": total_infections,
         "Peak_Infections": peak_infections,
         "Time": time_steps,
@@ -157,6 +219,15 @@ def load_run_data(run_dir):
         "Cumulative Infections": cumulative_infections,
         "Cumulative Deaths": cumulative_deaths,
     }
+
+    # Debug print for each run
+    print(
+        f"[DEBUG] {result['run_id']}: Profile={pid}, Scenario={scenario_name}, "
+        f"kappas=[{min(kappas):.2f}, {max(kappas):.2f}], Strength={global_strength:.2f}, "
+        f"Infections={total_infections:.1f}"
+    )
+
+    return result
 
 
 def calculate_relative_metrics(results):
@@ -303,6 +374,32 @@ def create_timeseries_dataframe(results):
     return pd.concat(dfs, ignore_index=True)
 
 
+def print_summary_stats(results):
+    """Print summary statistics for all runs."""
+    print("\n" + "=" * 80)
+    print("SUMMARY STATISTICS")
+    print("=" * 80)
+
+    # Group by scenario
+    by_scenario = {}
+    for r in results:
+        scen = r["Scenario"]
+        if scen not in by_scenario:
+            by_scenario[scen] = []
+        by_scenario[scen].append(r)
+
+    for scen, runs in sorted(by_scenario.items()):
+        infections = [r["Total_Infections"] for r in runs]
+        strengths = [r["Strength"] for r in runs]
+        print(f"\n{scen}:")
+        print(f"  N runs: {len(runs)}")
+        print(f"  Strengths: [{min(strengths):.2f}, {max(strengths):.2f}]")
+        print(f"  Infections: [{min(infections):.1f}, {max(infections):.1f}]")
+        print(f"  Mean infections: {np.mean(infections):.1f}")
+
+    print("\n" + "=" * 80)
+
+
 def plot_epicurves_by_profile(results, output_dir):
     """Plot epicurves faceted by Profile ID (Rows) and Metric (Cols)."""
     df_ts = create_timeseries_dataframe(results)
@@ -338,6 +435,125 @@ def plot_epicurves_by_profile(results, output_dir):
     logger.info(f"Profile epicurves saved to {output_dir}")
 
 
+def plot_intervention_bubble(results, output_dir):
+    """Bubble plot showing intervention window vs effectiveness.
+
+    Dimensions:
+        - X-axis: Intervention Start Day
+        - Y-axis: Duration (days)
+        - Bubble size: Intervention strength (κ₀: 0.0 to 1.0)
+        - Bubble color: Infection reduction (green=effective, red=ineffective)
+    """
+    # Filter Global_Timed and get baseline for relative reduction
+    global_timed = [r for r in results if r["Scenario"] == "Global_Timed"]
+    baselines = {r["Profile_ID"]: r for r in results if r["Scenario"] == "Baseline"}
+
+    if not global_timed or not baselines:
+        logger.warning("No Global_Timed or Baseline data for bubble plot")
+        return
+
+    # Prepare plot data
+    plot_data = []
+    for r in global_timed:
+        baseline = baselines.get(r["Profile_ID"])
+        if baseline and baseline["Total_Infections"] > 0:
+            # Calculate relative reduction (positive = fewer infections)
+            rel_reduction = 1.0 - (r["Total_Infections"] / baseline["Total_Infections"])
+
+            plot_data.append({
+                "Start_Day": r["Event_Start"],
+                "End_Day": r["Event_End"],
+                "Duration": r["Duration"],
+                "Strength": r["Strength"],
+                "Relative_Reduction": rel_reduction,
+                "Total_Infections": r["Total_Infections"],
+            })
+
+    if not plot_data:
+        logger.warning("No plot data for bubble plot")
+        return
+
+    df = pd.DataFrame(plot_data)
+
+    # Create bubble plot
+    fig, ax = plt.subplots(figsize=(14, 8))
+
+    # Color map: RdYlGn (red=low reduction/ineffective, green=high reduction/effective)
+    cmap = plt.get_cmap("RdYlGn")
+
+    # Plot bubbles with horizontal error bars for window extent
+    for _, row in df.iterrows():
+        # Position: X = Window Center, Y = Duration
+        # Size = Strength (log scale for better visibility)
+        # Color = Relative Reduction
+        window_center = row["Start_Day"] + row["Duration"] / 2
+        y_pos = row["Duration"]
+
+        # Bubble size: use log scale for strength (0.0 -> small, 1.0 -> large)
+        bubble_size = (row["Strength"] * 500 + 50) ** 1.5
+
+        # Color based on reduction (clip to valid range)
+        color_val = np.clip(row["Relative_Reduction"], -1.0, 1.0)
+        color = cmap((color_val + 1.0) / 2.0)  # Map [-1,1] to [0,1]
+
+        scatter = ax.scatter(
+            window_center, y_pos,
+            s=bubble_size,
+            c=color,
+            alpha=0.7,
+            edgecolor="black",
+            linewidth=0.5,
+            zorder=3,
+        )
+
+        # Add horizontal error bar showing full window extent [start, end]
+        ax.errorbar(
+            window_center, y_pos,
+            xerr=row["Duration"] / 2,
+            fmt="none",
+            ecolor="black",
+            alpha=0.4,
+            linewidth=1.5,
+            capsize=3,
+            capthick=1.5,
+            zorder=2,
+        )
+
+    # Add colorbar
+    from matplotlib.colors import Normalize
+    norm = Normalize(vmin=-1.0, vmax=1.0)
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+    cbar = plt.colorbar(sm, ax=ax, shrink=0.8)
+    cbar.set_label("Relative Infection Reduction\n(1 - Interventions/Baseline)", fontsize=10)
+
+    # Labels and title
+    ax.set_xlabel("Intervention Window Center (Day)", fontsize=12)
+    ax.set_ylabel("Intervention Duration (days)", fontsize=12)
+    ax.set_title(
+        "Intervention Window Analysis: Timing vs Effectiveness\n(Bubble Size = Strength κ₀, Color = Effectiveness, Error Bars = Window Extent)",
+        fontsize=14,
+        pad=20,
+    )
+    ax.grid(True, alpha=0.3)
+    ax.set_xlim(left=-5, right=120)  # Simulation is ~114 days, interventions start up to day 90
+    ax.set_ylim(bottom=0, top=65)  # Duration max is ~60 days
+
+    # Add size legend manually
+    legend_elements = [
+        plt.scatter([], [], s=(0 * 500 + 50) ** 1.5, c="gray", alpha=0.7, edgecolor="black", label=f"κ₀=0.0"),
+        plt.scatter([], [], s=(0.5 * 500 + 50) ** 1.5, c="gray", alpha=0.7, edgecolor="black", label=f"κ₀=0.5"),
+        plt.scatter([], [], s=(1.0 * 500 + 50) ** 1.5, c="gray", alpha=0.7, edgecolor="black", label=f"κ₀=1.0"),
+    ]
+    ax.legend(handles=legend_elements, title="Intervention Strength", loc="upper left", bbox_to_anchor=(1.02, 1))
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, "intervention_bubble_plot.png"), dpi=150, bbox_inches="tight")
+    plt.close()
+
+    logger.info(f"Bubble plot saved to {output_dir}")
+
+
 if __name__ == "__main__":
     runs_dir = "../runs/synthetic_test"
     output_dir = "../runs/synthetic_test"
@@ -360,6 +576,8 @@ if __name__ == "__main__":
         if enriched_results:
             plot_comparative_results(enriched_results, output_dir)
             plot_epicurves_by_profile(enriched_results, output_dir)
+            plot_intervention_bubble(enriched_results, output_dir)
+            print_summary_stats(results)
         else:
             logger.warning("Could not calculate relative metrics (missing baselines?).")
     else:
