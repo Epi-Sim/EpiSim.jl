@@ -156,20 +156,26 @@ def build_date_range(config: dict, time_len: int):
     return pd.date_range(start=start_date, periods=time_len)
 
 
-def plot_preview(run_id, dates, infections, wastewater, output_dir):
+def plot_preview(run_id, dates, infections, wastewater_stack, output_dir, targets):
     import matplotlib.pyplot as plt
 
     infections_total = infections.sum(axis=1)
-    wastewater_total = wastewater.sum(axis=1)
-
-    if wastewater_total.max() > 0:
-        wastewater_scaled = wastewater_total / wastewater_total.max() * infections_total.max()
-    else:
-        wastewater_scaled = wastewater_total
+    
+    # wastewater_stack is (Time, Region, Target) -> sum regions -> (Time, Target)
+    ww_total_by_target = wastewater_stack.sum(axis=1)
 
     fig, ax = plt.subplots(figsize=(10, 4))
-    ax.plot(dates, infections_total, label="Infections", linewidth=2)
-    ax.plot(dates, wastewater_scaled, label="Wastewater (scaled)", linewidth=2)
+    ax.plot(dates, infections_total, label="Infections", color="black", linewidth=2, linestyle="--")
+
+    for i, target in enumerate(targets):
+        sig = ww_total_by_target[:, i]
+        if sig.max() > 0:
+            # Scale for visualization against infections
+            sig_scaled = sig / sig.max() * infections_total.max()
+        else:
+            sig_scaled = sig
+        ax.plot(dates, sig_scaled, label=f"{target} (scaled)", alpha=0.7)
+
     ax.set_title(f"Observation Preview: {run_id}")
     ax.set_xlabel("Date")
     ax.set_ylabel("Daily Count (scaled)")
@@ -249,6 +255,17 @@ def main():
 
     args = parser.parse_args()
 
+    # Define Gene Targets with biological properties
+    # N1: Reference (High sensitivity, Base noise, Low LoD)
+    # N2: Lower sensitivity, Higher noise, Medium LoD
+    # IP4: Lowest sensitivity, Moderate noise, High LoD
+    GENE_TARGETS = {
+        "N1": {"sensitivity_scale": 1.0, "noise_sigma": 0.5, "limit_of_detection": 5.0},
+        "N2": {"sensitivity_scale": 0.8, "noise_sigma": 0.8, "limit_of_detection": 10.0},
+        "IP4": {"sensitivity_scale": 0.5, "noise_sigma": 0.6, "limit_of_detection": 25.0},
+    }
+    TARGET_NAMES = list(GENE_TARGETS.keys())
+
     runs_dir = Path(args.runs_dir)
     run_dirs = sorted([d for d in runs_dir.glob("run_*") if d.is_dir()])
 
@@ -316,15 +333,31 @@ def main():
         reported_cases, ascertainment_rate = generate_reported_cases(
             infections, config=reported_cfg, rng=case_rng
         )
-        wastewater = generate_wastewater(infections, config=wastewater_cfg, rng=ww_rng)
+
+        # Generate Wastewater for each target
+        ww_target_layers = []
+        for target in TARGET_NAMES:
+            t_cfg = GENE_TARGETS[target]
+            # Override base config with target-specific params
+            # Note: We keep global gamma params from args, but override noise/sensitivity
+            run_ww_cfg = wastewater_cfg.copy()
+            run_ww_cfg.update(t_cfg)
+            
+            # generate_wastewater returns (Time, Region)
+            ww = generate_wastewater(infections, config=run_ww_cfg, rng=ww_rng)
+            ww_target_layers.append(ww)
+            
+        # Stack targets: (Time, Region, Target)
+        ww_stacked = np.stack(ww_target_layers, axis=-1)
 
         if args.preview_plot and preview_count < args.preview_max:
             plot_preview(
                 sanitize_run_id(run_dir.name),
                 dates,
                 infections,
-                wastewater,
+                ww_stacked,
                 runs_dir,
+                TARGET_NAMES
             )
             preview_count += 1
 
@@ -332,7 +365,13 @@ def main():
         hospitalizations_runs.append(hospitalizations.T.astype(int))
         deaths_runs.append(deaths.T.astype(int))
         cases_runs.append(reported_cases.T.astype(int))
-        wastewater_runs.append(wastewater.T.astype(float))
+        
+        # wastewater_runs wants (Region, Time, Target) to match other arrays which are (Region, Time)
+        # ww_stacked is (Time, Region, Target). 
+        # Transpose: 1 -> 0, 0 -> 1, 2 -> 2
+        ww_transposed = ww_stacked.transpose(1, 0, 2)
+        wastewater_runs.append(ww_transposed.astype(float))
+        
         ascertainment_runs.append(ascertainment_rate.astype(float))
 
         kappa0_path = resolve_kappa0_path(config, run_dir)
@@ -349,10 +388,12 @@ def main():
     if not infections_runs:
         raise ValueError("No valid runs were processed")
 
+    # Stack runs: (Run, Region, Time, ...)
     infections_arr = np.stack(infections_runs, axis=0)
     hospitalizations_arr = np.stack(hospitalizations_runs, axis=0)
     deaths_arr = np.stack(deaths_runs, axis=0)
     cases_arr = np.stack(cases_runs, axis=0)
+    # wastewater_arr: (Run, Region, Time, Target)
     wastewater_arr = np.stack(wastewater_runs, axis=0)
     ascertainment_arr = np.stack(ascertainment_runs, axis=0)
     mobility_arr = np.stack(mobility_runs, axis=0)
@@ -376,7 +417,7 @@ def main():
                 cases_arr,
             ),
             "obs_wastewater": (
-                ("run_id", "region_id", "date"),
+                ("run_id", "region_id", "date", "target"),
                 wastewater_arr,
             ),
             "ascertainment_rate": (
@@ -392,6 +433,7 @@ def main():
             "run_id": run_ids,
             "region_id": region_ids,
             "date": dates_ref,
+            "target": TARGET_NAMES,
         },
     )
 
@@ -402,14 +444,21 @@ def main():
         }
     )
 
+    if dates_ref is None:
+        raise ValueError("No valid dates found in run outputs")
+
     chunk_size = args.chunk_size
     region_chunk = min(chunk_size, len(region_ids))
     date_chunk = min(chunk_size, len(dates_ref))
 
-    for var_name in ["ground_truth_infections", "obs_hospitalizations", "obs_deaths", "obs_cases", "obs_wastewater"]:
+    for var_name in ["ground_truth_infections", "obs_hospitalizations", "obs_deaths", "obs_cases"]:
         dataset[var_name].encoding = {
             "chunksizes": (1, region_chunk, date_chunk)
         }
+        
+    dataset["obs_wastewater"].encoding = {
+        "chunksizes": (1, region_chunk, date_chunk, len(TARGET_NAMES))
+    }
 
     for var_name in ["ascertainment_rate", "mobility_reduction"]:
         dataset[var_name].encoding = {"chunksizes": (1, date_chunk)}
@@ -425,11 +474,12 @@ def main():
             os.remove(output_path)
 
     logger.info(
-        "Writing observation zarr to %s (runs=%s, regions=%s, dates=%s)",
+        "Writing observation zarr to %s (runs=%s, regions=%s, dates=%s, targets=%s)",
         output_path,
         len(run_ids),
         len(region_ids),
         len(dates_ref),
+        len(TARGET_NAMES),
     )
     dataset.to_zarr(output_path, mode="w")
 

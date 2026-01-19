@@ -13,6 +13,8 @@ DEFAULT_WASTEWATER_CONFIG = {
     "gamma_scale": 2.0,
     "noise_sigma": 0.5,
     "kernel_quantile": 0.999,
+    "sensitivity_scale": 1.0,
+    "limit_of_detection": 0.0,
 }
 
 
@@ -99,11 +101,17 @@ def generate_wastewater(infections: np.ndarray, config=None, rng=None):
 
     for loc in range(n_locations):
         conv = np.convolve(infections[:, loc], kernel, mode="full")
-        ww_signal[:, loc] = conv[:n_time]
+        # Apply Sensitivity Scale
+        ww_signal[:, loc] = conv[:n_time] * cfg["sensitivity_scale"]
 
     epsilon = 1e-8
     noise = rng.normal(0.0, cfg["noise_sigma"], size=ww_signal.shape)
     ww_observed = (ww_signal + epsilon) * np.exp(noise)
+
+    # Apply Limit of Detection (LoD)
+    lod = cfg["limit_of_detection"]
+    if lod > 0.0:
+        ww_observed[ww_observed < lod] = 0.0
 
     if squeeze_output:
         return ww_observed[:, 0]
