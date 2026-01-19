@@ -86,7 +86,7 @@ class EpiSimConfig:
         self.group_size = len(self.group_labels)
 
         # Parameters that should always be arrays regardless of group size
-        self._always_array_params = {"NPI.ϕs", "NPI.δs"}
+        self._always_array_params = {"NPI.ϕs", "NPI.δs", "NPI.tᶜs", "NPI.κ₀s"}
 
         # Automatically detect all parameters that are group-dependent
         self.group_params = self._detect_group_params()

@@ -113,7 +113,7 @@ class EpiSim:
         {"name": "MMCACovid19", "description": "Model without vaccination"},
     ]
 
-    def __init__(self, config, data_folder, instance_folder, initial_conditions=None):
+    def __init__(self, config, data_folder, instance_folder, initial_conditions=None, name=None):
         """
         Initialize the MMCACovid19 model wrapper.
 
@@ -122,6 +122,8 @@ class EpiSim:
             data_folder (str): Folder containing input data for the model.
             instance_folder (str): Folder to store instance-specific data.
             initial_conditions (str, optional): Path to initial conditions file.
+            name (str, optional): Name for this run. If provided, creates a named subdirectory
+                instead of a UUID-nested one.
 
         Raises:
             AssertionError: If required paths do not exist or are invalid.
@@ -135,7 +137,11 @@ class EpiSim:
 
         self.instance_folder = instance_folder
         self.uuid = str(uuid.uuid4())
-        self.model_state_folder = os.path.join(instance_folder, self.uuid)
+
+        if name:
+            self.model_state_folder = os.path.join(instance_folder, name)
+        else:
+            self.model_state_folder = os.path.join(instance_folder, self.uuid)
         os.makedirs(self.model_state_folder, exist_ok=False)
 
         config_path = EpiSim.handle_config_input(self.model_state_folder, config)
@@ -247,10 +253,12 @@ class EpiSim:
 
         logger.debug(f"Running model from {start_date} to {end_date}")
         self.run_model(
-            length_days=length_days,
-            start_date=start_date,
-            end_date=end_date,
-            model_state=self.model_state,
+            override_config={
+                "start_date": start_date,
+                "end_date": end_date,
+                "save_time_step": None,
+            },
+            override_model_state=self.model_state,
         )
 
         self.model_state = self.model_state_filename(end_date)
@@ -294,7 +302,7 @@ class EpiSim:
         cmd.extend(["--instance-folder", self.model_state_folder])
 
         if override_model_state:
-            cmd.extend(["--initial-conditions", override_model_state])
+            cmd.extend(["--initial-condition", override_model_state])
 
         if override_config and isinstance(override_config, dict):
             if override_config["save_time_step"]:
