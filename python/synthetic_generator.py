@@ -49,7 +49,7 @@ class SyntheticDataGenerator:
         0: R0_scale (scale_β) [0.5, 3.0]
         1: T_inf (Infectious Period) [2.0, 10.0] -> γ = 1/T
         2: T_inc (Incubation Period) [2.0, 10.0] -> η = 1/T
-        3: Event Start [5, 40]
+        3: Event Start [5, 90] - Expanded for timing variation
         4: Event Duration [7, 60]
         5: Affected Fraction [0.1, 0.6] (For Local Scenarios)
         """
@@ -58,7 +58,7 @@ class SyntheticDataGenerator:
 
         # Scale samples
         l_bounds = [0.5, 2.0, 2.0, 5.0, 7.0, 0.1]
-        u_bounds = [3.0, 10.0, 10.0, 40.0, 60.0, 0.6]
+        u_bounds = [3.0, 10.0, 10.0, 90.0, 60.0, 0.6]
 
         scaled = qmc.scale(sample, l_bounds, u_bounds)
 
@@ -81,9 +81,13 @@ class SyntheticDataGenerator:
         return profiles
 
     def prepare_kappa0_file(
-        self, run_id, scenario, strength, profile, start_date_str, end_date_str
+        self, run_id, scenario, strength, profile, start_date_str, end_date_str, output_dir=None
     ):
-        """Generate kappa0.csv file for Global scenarios."""
+        """Generate kappa0.csv file for ALL scenarios.
+
+        Args:
+            output_dir: If provided, write file to this directory. Otherwise use self.output_folder.
+        """
         # Parse dates
         start_date = pd.to_datetime(start_date_str)
         end_date = pd.to_datetime(end_date_str)
@@ -92,19 +96,17 @@ class SyntheticDataGenerator:
         date_range = pd.date_range(start=start_date, end=end_date)
         n_days = len(date_range)
 
-        # Initialize dataframe
+        # Initialize dataframe with default κ₀=0.0 (no confinement, full mobility)
         df = pd.DataFrame(
             {
                 "date": date_range,
-                "reduction": 1.0,  # Default to no reduction (kappa=1)
+                "reduction": 0.0,
                 "datetime": date_range,
                 "time": range(n_days),
             }
         )
 
-        # Apply reduction
-        # reduction value is kappa0 = 1 - strength
-        kappa_val = max(0.0, 1.0 - strength)
+        kappa_val = strength
 
         if scenario == "Global_Const":
             df["reduction"] = kappa_val
@@ -119,53 +121,37 @@ class SyntheticDataGenerator:
             # Apply reduction during event window
             if start_idx < end_idx:
                 df.loc[start_idx : end_idx - 1, "reduction"] = kappa_val
+        elif scenario == "Baseline":
+            df["reduction"] = 0.0
 
         # Format dates as string for CSV
         df["date"] = df["date"].dt.strftime("%Y-%m-%d")
         df["datetime"] = df["datetime"].dt.strftime("%Y-%m-%d")
 
-        filename = f"kappa0_{run_id}.csv"
-        path = os.path.join(self.output_folder, filename)
+        filename = f"kappa0.csv"
+        output_path = output_dir or self.output_folder
+        path = os.path.join(output_path, filename)
         df.to_csv(path, index=False)
         return filename, path
 
     def prepare_mobility_file(
-        self, run_id, scenario, reduction_strength, affected_fraction
+        self, run_id, scenario, reduction_strength, affected_fraction, output_dir=None
     ):
         """
         Prepare mobility matrix based on scenario.
-        For Local scenarios, reduce connectivity for a subset of nodes.
         For Global scenarios, return original matrix (unscaled).
+
+        Args:
+            output_dir: If provided, write file to this directory. Otherwise use self.output_folder.
         """
         scaled_df = self.mobility_df.copy()
 
-        if "Local" in scenario:
-            # Localized reduction
-            # Select random subset of nodes
-            # Columns are source_idx, target_idx, ratio
-            unique_nodes = pd.concat(
-                [self.mobility_df["source_idx"], self.mobility_df["target_idx"]]
-            ).unique()
-            unique_nodes_list = list(unique_nodes)
-            n_affected = int(len(unique_nodes_list) * affected_fraction)
-            affected_nodes = np.random.choice(
-                unique_nodes_list, size=n_affected, replace=False
-            )
-            affected_nodes_list = list(affected_nodes)
+        # Global scenarios use kappa0 for mobility reduction
+        # Mobility matrix remains unchanged
 
-            # Reduce edges connected to these nodes
-            mask = scaled_df["source_idx"].isin(affected_nodes_list) | scaled_df[
-                "target_idx"
-            ].isin(affected_nodes_list)
-
-            # Apply reduction (1 - strength)
-            factor = 1.0 - reduction_strength
-            scaled_df.loc[mask, "ratio"] = scaled_df.loc[mask, "ratio"] * factor
-
-        # For Global scenarios, we rely on kappa0, so we use the base matrix (or the one modified above)
-
-        filename = f"mobility_matrix_{run_id}.csv"
-        path = os.path.join(self.output_folder, filename)
+        filename = "mobility_matrix.csv"
+        output_path = output_dir or self.output_folder
+        path = os.path.join(output_path, filename)
         scaled_df.to_csv(path, index=False)
         return filename, path
 
@@ -202,12 +188,6 @@ class SyntheticDataGenerator:
         r0_scale = profile["r0_scale"]
         t_inf = profile["t_inf"]
         t_inc = profile["t_inc"]
-        event_start = profile["event_start"]
-        event_duration = profile["event_duration"]
-        fraction = profile["affected_fraction"]
-
-        # Determine if mobility modification is needed
-        mob_mod = "Local" in scen_name
 
         # Construct Run ID
         # Format: {pid}_{Scenario}_s{strength_int} where strength_int is percent
@@ -218,13 +198,11 @@ class SyntheticDataGenerator:
 
         logger.info(f"Preparing {run_id} (Str={strength:.2f})")
 
-        # Prepare Mobility
-        if mob_mod:
-            mob_fname, mob_path = self.prepare_mobility_file(
-                run_id, "Local", strength, fraction
-            )
-        else:
-            mob_fname, mob_path = self.prepare_mobility_file(run_id, "Global", 0.0, 0.0)
+        # Prepare Directory Structure FIRST
+        # Use run_id as the folder name (no UUID nesting when using name parameter)
+        model_state_folder = os.path.join(self.output_folder, f"run_{run_id}")
+        if not os.path.exists(model_state_folder):
+            os.makedirs(model_state_folder)
 
         # Update Config
         import copy
@@ -239,13 +217,17 @@ class SyntheticDataGenerator:
         gamma = 1.0 / t_inf
         eta = 1.0 / t_inc
 
-        # NPI Params Setup
-        kappa0_path = None
+        # Prepare Mobility - Write to run directory
+        # All scenarios use base mobility matrix (interventions via κ₀ only)
+        _, mob_path = self.prepare_mobility_file(
+            run_id, "Global", 0.0, 0.0, output_dir=model_state_folder
+        )
 
-        if "Global" in scen_name:
-            _, kappa0_path = self.prepare_kappa0_file(
-                run_id, scen_name, strength, profile, start_date, end_date
-            )
+        # NPI Params Setup - Always create CSV for ALL scenarios
+        # Write to run directory
+        _, kappa0_path = self.prepare_kappa0_file(
+            run_id, scen_name, strength, profile, start_date, end_date, output_dir=model_state_folder
+        )
 
         # Inject updates
         updates = {
@@ -262,32 +244,8 @@ class SyntheticDataGenerator:
 
         config.inject(updates)
 
-        if kappa0_path:
-            config.update_param("data.kappa0_filename", kappa0_path)
-            # Note: We keep κ₀s and tᶜs in config to avoid KeyError in engine
-            # The engine will use kappa0 file values when provided
-        else:
-            # Ensure no kappa0 file is set for Local/Baseline
-            if "kappa0_filename" in config.config["data"]:
-                del config.config["data"]["kappa0_filename"]
-            config.update_param("NPI.tᶜs", [0])
-            config.update_param("NPI.κ₀s", [1.0])
-
-            # Store direct mobility reduction strength for Local scenarios
-            if mob_mod and strength > 0:
-                config.update_param("NPI.custom.direct_mobility_reduction", strength)
-
-        # Prepare Directory Structure
-        instance_path = os.path.join(self.output_folder, f"run_{run_id}")
-        if not os.path.exists(instance_path):
-            os.makedirs(instance_path)
-
-        # Create UUID subfolder manually (simulating what EpiSim wrapper did)
-        import uuid
-
-        run_uuid = str(uuid.uuid4())
-        model_state_folder = os.path.join(instance_path, run_uuid)
-        os.makedirs(model_state_folder)
+        # Always set kappa0_filename - CSV is now single source of truth for κ₀
+        config.update_param("data.kappa0_filename", kappa0_path)
 
         # Write Config File
         config_path = os.path.join(model_state_folder, "config_auto_py.json")
@@ -296,7 +254,7 @@ class SyntheticDataGenerator:
 
         logger.info(f"Prepared config at {config_path}")
 
-        # Note: We do NOT remove mob_path here because batch run needs it later.
+        # Note: We do NOT remove seed_path here because batch run needs it later.
         # We rely on final cleanup or manual cleanup.
 
     def run_profile_sweep(self, profile):
@@ -310,9 +268,10 @@ class SyntheticDataGenerator:
         # 2. Prepare Baseline
         self.run_single_scenario(pid, "Baseline", 0.0, profile, seed_path)
 
-        # 3. Sweep
-        strengths = np.linspace(0.0, 1.0, 6)
-        scenarios = ["Global_Const", "Global_Timed", "Local_Static"]
+        # 3. Sweep - Test valid range of intervention strengths (0 to 0.8)
+        # Note: kappa0 (κ₀) must be in range [0, 1] for model stability; we use 0.8 as practical upper bound
+        strengths = np.linspace(0.0, 0.8, 6)
+        scenarios = ["Global_Const", "Global_Timed"]
 
         for scen in scenarios:
             for s in strengths:
@@ -370,8 +329,8 @@ if __name__ == "__main__":
 
     generator = SyntheticDataGenerator(CONFIG_PATH, DATA_FOLDER, OUTPUT_FOLDER)
 
-    # Generate 5 profiles
-    profiles = generator.generate_parameter_grid(n_profiles=5)
+    # Generate profiles for intervention timing analysis
+    profiles = generator.generate_parameter_grid(n_profiles=15)
 
     # Prepare files for all profiles
     for profile in profiles:
