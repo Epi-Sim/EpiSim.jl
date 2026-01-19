@@ -38,3 +38,5 @@ __pycache__/
 test_output/
 
 .DS_store
+*.zarr
+python/prompts/*.md
