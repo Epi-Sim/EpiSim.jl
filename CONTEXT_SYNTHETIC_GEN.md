@@ -18,9 +18,8 @@ This Python script uses `scipy.stats.qmc` (Latin Hypercube Sampling) to generate
 
 1. **Sampling**: Generates $N$ **Epidemiological Profiles**.
     * Parameters: `R0_scale`, `T_inf` (Infectious Period), `T_inc` (Incubation Period), `Event Start`, `Event Duration`.
-2. **Scenario Setup**: For each profile, it prepares files for 3 intervention types (+ Baseline), swept across multiple strengths (0.0 to 1.0):
+2. **Scenario Setup**: For each profile, it prepares files for 2 intervention types (+ Baseline), swept across multiple strengths (0.05 to 0.8):
     * **Baseline**: No intervention.
-    * **Global_Const**: Constant reduction of global mobility ($\kappa_0$) by factor $S$.
     * **Global_Timed**: Reduction of $\kappa_0$ only during the event window.
     * **Local_Static**: Structural reduction of the Mobility Matrix (reducing weights of edges connected to $X$% of nodes).
 3. **File Creation**:
