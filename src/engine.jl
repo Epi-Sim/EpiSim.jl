@@ -40,7 +40,7 @@ function validate_config(config, ::MMCACovid19Engine)
     @assert haskey(config, "NPI") 
 end
 
-function read_input_files(::AbstractEngine, config::Dict, data_path::String, instance_path::String)
+function read_input_files(::AbstractEngine, config::AbstractDict, data_path::String, instance_path::String)
     data_dict       = config["data"]
     simulation_dict = config["simulation"]
     pop_params_dict = config["population_params"]
@@ -62,7 +62,7 @@ function read_input_files(::AbstractEngine, config::Dict, data_path::String, ins
     # Daily Mobility reduction
     kappa0_filename = get(data_dict, "kappa0_filename", nothing)
     first_day = Date(simulation_dict["start_date"])
-    npi_params = init_NPI_parameters_struct(data_path, npi_params_dict, kappa0_filename, first_day)
+    npi_params = init_NPI_parameters_struct(data_path, Dict(npi_params_dict), kappa0_filename, first_day)
 
     # Loading mobility network
     mobility_matrix_filename = joinpath(data_path, data_dict["mobility_matrix_filename"])
@@ -178,7 +178,7 @@ end
 Run the engine using input files (which must be available in the data_path and instance_path)
 and save the output to the output folder.
 """
-function run_engine_io(engine::AbstractEngine, config::Dict, data_path::String, instance_path::String)
+function run_engine_io(engine::AbstractEngine, config::AbstractDict, data_path::String, instance_path::String)
     
     @info "- Running EpiSim.jl using: $(engine)"
     
@@ -331,10 +331,10 @@ Function to initialize the population parameters structure for the engine MMCACo
         population: MMCACovid19Vac.Population_Params
 """
 function init_population_struct(engine::MMCACovid19VacEngine, G::Int, M::Int, 
-                                G_coords::Array{String, 1}, pop_params_dict::Dict, 
+                                G_coords::Array{String, 1}, pop_params_dict::AbstractDict, 
                                 network_df::DataFrame, metapop_df::DataFrame)
     
-    population = MMCACovid19Vac.init_pop_param_struct(G, M, G_coords, pop_params_dict, metapop_df, network_df)
+    population = MMCACovid19Vac.init_pop_param_struct(G, M, G_coords, Dict(pop_params_dict), metapop_df, network_df)
     return population
 end
 
@@ -351,7 +351,7 @@ Funtion to initialize the epidemic parameters structure for the engine MMCACovid
         epi_params: MMCACovid19.Epidemic_Params
 """
 function init_population_struct(engine::MMCACovid19Engine, G::Int, M::Int, 
-                                G_coords::Array{String, 1}, pop_params_dict::Dict, 
+                                G_coords::Array{String, 1}, pop_params_dict::AbstractDict, 
                                 network_df::DataFrame, metapop_df::DataFrame)
 
     # Subpopulations' patch surface
@@ -398,9 +398,9 @@ Funtion to initialize the epidemic parameters structure for the engine MMCACovid
         epi_params: MMCACovid19Vac.Epidemic_Params
 """
 function init_epidemic_parameters_struct(engine::MMCACovid19VacEngine, G::Int, M::Int, T::Int, 
-    G_coords::Array{String, 1}, epi_params_dict::Dict)
+    G_coords::Array{String, 1}, epi_params_dict::AbstractDict)
 
-    epi_params = MMCACovid19Vac.init_epi_parameters_struct(G, M, T, G_coords, epi_params_dict)
+    epi_params = MMCACovid19Vac.init_epi_parameters_struct(G, M, T, G_coords, Dict(epi_params_dict))
     return epi_params
 end
 
@@ -417,7 +417,7 @@ Function to initialize the epidemic parameters structure for the engine MMCACovi
         epi_params: MMCAcovid19.Epidemic_Params
 """
 function init_epidemic_parameters_struct(engine::MMCACovid19Engine, G::Int, M::Int, T::Int, 
-                                         G_coords::Array{String, 1}, epi_params_dict::Dict)
+                                         G_coords::Array{String, 1}, epi_params_dict::AbstractDict)
     
     # Scaling of the asymptomatic infectivity
     scale_β = Float64.(epi_params_dict["scale_β"])
