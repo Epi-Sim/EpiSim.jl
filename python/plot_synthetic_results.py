@@ -168,9 +168,6 @@ def load_run_data(run_dir):
                 duration = reduced_days
         elif len(kappas) == 1 and kappas[0] < 1.0:
             duration = 999  # Constant reduction
-        elif scenario_name == "Global_Const":
-            # Full simulation period
-            duration = times[-1] if len(times) > 0 else 0
 
     except Exception as e:
         logger.error(f"Error parsing config {config_path}: {e}")

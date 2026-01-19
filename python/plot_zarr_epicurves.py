@@ -367,7 +367,7 @@ def main():
     parser.add_argument(
         "--scenarios",
         nargs="+",
-        choices=["Baseline", "Global_Const", "Global_Timed", "Local_Timed"],
+        choices=["Baseline", "Global_Timed", "Local_Timed"],
         help="Filter by scenario type"
     )
     parser.add_argument(

@@ -108,9 +108,7 @@ class SyntheticDataGenerator:
 
         kappa_val = strength
 
-        if scenario == "Global_Const":
-            df["reduction"] = kappa_val
-        elif scenario == "Global_Timed":
+        if scenario == "Global_Timed":
             event_start = profile["event_start"]
             event_duration = profile["event_duration"]
 
@@ -268,10 +266,12 @@ class SyntheticDataGenerator:
         # 2. Prepare Baseline
         self.run_single_scenario(pid, "Baseline", 0.0, profile, seed_path)
 
-        # 3. Sweep - Test valid range of intervention strengths (0 to 0.8)
+        # 3. Sweep - Test valid range of intervention strengths (0.05 to 0.8)
         # Note: kappa0 (κ₀) must be in range [0, 1] for model stability; we use 0.8 as practical upper bound
-        strengths = np.linspace(0.0, 0.8, 6)
-        scenarios = ["Global_Const", "Global_Timed"]
+        # Note: 0.05 floor ensures all intervention scenarios have a meaningful (non-zero) intervention effect
+        #       since 0.0 is equivalent to the Baseline scenario
+        strengths = np.linspace(0.05, 0.8, 6)
+        scenarios = ["Global_Timed"]
 
         for scen in scenarios:
             for s in strengths:
