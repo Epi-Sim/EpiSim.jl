@@ -47,13 +47,32 @@ The simulator expects a static mobility matrix, but downstream forecasters consu
 
 Creates reported-case and wastewater observation layers from infections and consolidates results into a single zarr dataset.
 
-* **Inputs**: `run_*` folders, `observables.nc`, `metapopulation_data.csv`, and `kappa0_*.csv`.
-* **Outputs**: `synthetic_observations.zarr` with dims `(run_id, region_id, date)` and data vars:
-  * `ground_truth_infections`: Daily infections (sum over ages).
-  * `obs_cases`: Reported cases using a logistic testing ramp + binomial noise.
-  * `obs_wastewater`: Gamma-shedding convolution + log-normal noise.
-  * `ascertainment_rate`: Daily reporting probability.
-  * `mobility_reduction`: κ₀ reductions from the kappa0 CSV.
+*   **Inputs**: `run_*` folders, `observables.nc`, `metapopulation_data.csv`, `kappa0_*.csv`, and `edar_muni_edges.nc` (for EDAR-based wastewater aggregation).
+*   **Outputs**: `synthetic_observations.zarr` with dims `(run_id, region_id, date)` and data vars:
+    *   `ground_truth_infections`: Daily infections (sum over ages).
+    *   `obs_cases`: Reported cases using a logistic testing ramp + binomial noise.
+    *   `obs_wastewater`: Physical concentration model (Copies/L) incorporating dilution, decay, and shedding kinetics.
+    *   `ascertainment_rate`: Daily reporting probability.
+    *   `mobility_reduction`: κ₀ reductions from the kappa0 CSV.
+
+#### Wastewater Physics Model
+
+The wastewater generation uses a "High-Fidelity" physical model based on literature consensus (e.g., *Xu et al.*, *Ma et al.*):
+
+1.  **Age-Stratified Shedding**:
+    *   **Children (<18)**: Modeled with a "Long Tail" kernel ($\alpha=1.5, \beta=10.0$, mean 15d). Reflects prolonged fecal shedding despite rapid respiratory clearance.
+    *   **Adults**: Modeled with an "Acute Phase" kernel ($\alpha=2.5, \beta=4.0$, mean 10d). Tightly correlated with symptoms.
+    *   **Result**: "School Signatures" (residential areas) show lingering signals, while "Workforce Signatures" (business districts) are spikier.
+
+2.  **Dilution & Transport**:
+    *   **Concentration**: $C = \frac{\sum (I_g \times Shedding_g)}{Population \times FlowPerCapita}$
+    *   **Detection**: Calibrated to real-world datasets (median LoD = 375 Copies/L).
+    *   **Result**: Small clusters (30 cases) are detectable in villages (Pop 5k) but physically invisible in metropolises (Pop 500k) due to massive dilution.
+
+3.  **Gene Targets**:
+    *   **N1**: High sensitivity (Scale 500k), Robust (LoD 375).
+    *   **N2**: Moderate sensitivity (Scale 400k), Noisier (LoD 500).
+    *   **IP4**: Unstable/Low sensitivity (Scale 250k), High decay (LoD 800).
 
 ### Phase 5: Analysis & Plotting (`python/plot_synthetic_results.py`)
 
@@ -94,6 +113,7 @@ Parses the simulation outputs to generate comparative visualizations.
     uv run python process_synthetic_outputs.py \
         --runs-dir ../runs/synthetic_test \
         --metapop-csv ../models/mitma/metapopulation_data.csv \
+        --edar-edges ../edar_muni_edges.nc \
         --output ../runs/synthetic_test/synthetic_observations.zarr \
         --preview-plot
     ```
@@ -125,6 +145,9 @@ runs/synthetic_test/
 ├── synthetic_observations.zarr    # Consolidated observations + ground truth
 ├── observation_preview_*.png      # Optional wastewater preview plots
 └── seeds_*.csv                    # Generated seed inputs
+
+# EDAR-municipality mapping (typically at project root)
+edar_muni_edges.nc                 # For EDAR-based wastewater aggregation
 ```
 
 ## Key Configuration Concepts
