@@ -1,9 +1,6 @@
 import os
-import shutil
 import sys
-from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import pytest
 
@@ -11,7 +8,6 @@ import pytest
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from episim_python.epi_sim import EpiSim
-from episim_python.episim_utils import EpiSimConfig
 from synthetic_generator import SyntheticDataGenerator
 
 
@@ -35,7 +31,7 @@ class TestSyntheticMobility:
         config_path = os.path.join(run_folder, "config_auto_py.json")
 
         # Load config
-        with open(config_path, "r") as f:
+        with open(config_path) as f:
             import json
 
             config_dict = json.load(f)
@@ -43,14 +39,14 @@ class TestSyntheticMobility:
         # Log intervention parameters
         print(f"  Config κ₀s: {config_dict['NPI']['κ₀s']}")
         print(f"  Config tᶜs: {config_dict['NPI']['tᶜs']}")
-        
-        kappa0_file = config_dict['data'].get('kappa0_filename')
+
+        kappa0_file = config_dict["data"].get("kappa0_filename")
         if kappa0_file:
             print(f"  Using CSV: {kappa0_file}")
             kappa0_df = pd.read_csv(kappa0_file)
             print(f"  CSV reduction values: {kappa0_df['reduction'].unique()[:5]}")
         else:
-            print(f"  Using JSON mode (no CSV)")
+            print("  Using JSON mode (no CSV)")
 
         model = EpiSim(
             config=config_dict,
@@ -69,9 +65,7 @@ class TestSyntheticMobility:
         # Read observables NetCDF to get total infections
         # final_state is the path to the compartments file at t=end_date
         # Observables are in the same output folder as the compartments file
-        observables_path = os.path.join(
-            os.path.dirname(final_state), "observables.nc"
-        )
+        observables_path = os.path.join(os.path.dirname(final_state), "observables.nc")
 
         # Use xarray to read
         import xarray as xr
@@ -204,4 +198,3 @@ class TestSyntheticMobility:
             f"κ₀=1.0 (full confinement) must have fewer infections than κ₀=0.0 (no confinement). "
             f"Got κ₀=1.0: {infections_1}, κ₀=0.0: {infections_0}"
         )
-

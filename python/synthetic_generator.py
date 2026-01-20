@@ -12,7 +12,6 @@ from scipy.stats import qmc
 # Ensure we can import episim_python
 sys.path.append(os.path.dirname(__file__))
 
-from episim_python.epi_sim import EpiSim
 from episim_python.episim_utils import EpiSimConfig
 
 logging.basicConfig(
@@ -52,19 +51,32 @@ class SyntheticDataGenerator:
         3: Event Start [5, 90] - Expanded for timing variation
         4: Event Duration [7, 60]
         5: Affected Fraction [0.1, 0.6] (For Local Scenarios)
+        6: Ratio Beta A (ratio_beta_a) [0.1, 1.0]
+        7: Alpha Scale (alpha_scale) [0.5, 1.5]
+        8: Mu Scale (mu_scale) [0.5, 1.5]
         """
-        sampler = qmc.LatinHypercube(d=6)
+        sampler = qmc.LatinHypercube(d=9)
         sample = sampler.random(n=n_profiles)
 
         # Scale samples
-        l_bounds = [0.5, 2.0, 2.0, 5.0, 7.0, 0.1]
-        u_bounds = [3.0, 10.0, 10.0, 90.0, 60.0, 0.6]
+        l_bounds = [0.5, 2.0, 2.0, 5.0, 7.0, 0.1, 0.1, 0.5, 0.5]
+        u_bounds = [3.0, 10.0, 10.0, 90.0, 60.0, 0.6, 1.0, 1.5, 1.5]
 
         scaled = qmc.scale(sample, l_bounds, u_bounds)
 
         profiles = []
         for i, row in enumerate(scaled):
-            r0, t_inf, t_inc, start, duration, fraction = row
+            (
+                r0,
+                t_inf,
+                t_inc,
+                start,
+                duration,
+                fraction,
+                ratio_beta_a,
+                alpha_scale,
+                mu_scale,
+            ) = row
 
             profiles.append(
                 {
@@ -75,13 +87,23 @@ class SyntheticDataGenerator:
                     "event_start": int(start),
                     "event_duration": int(duration),
                     "affected_fraction": fraction,
+                    "ratio_beta_a": ratio_beta_a,
+                    "alpha_scale": alpha_scale,
+                    "mu_scale": mu_scale,
                 }
             )
 
         return profiles
 
     def prepare_kappa0_file(
-        self, run_id, scenario, strength, profile, start_date_str, end_date_str, output_dir=None
+        self,
+        run_id,
+        scenario,
+        strength,
+        profile,
+        start_date_str,
+        end_date_str,
+        output_dir=None,
     ):
         """Generate kappa0.csv file for ALL scenarios.
 
@@ -126,7 +148,7 @@ class SyntheticDataGenerator:
         df["date"] = df["date"].dt.strftime("%Y-%m-%d")
         df["datetime"] = df["datetime"].dt.strftime("%Y-%m-%d")
 
-        filename = f"kappa0.csv"
+        filename = "kappa0.csv"
         output_path = output_dir or self.output_folder
         path = os.path.join(output_path, filename)
         df.to_csv(path, index=False)
@@ -186,6 +208,9 @@ class SyntheticDataGenerator:
         r0_scale = profile["r0_scale"]
         t_inf = profile["t_inf"]
         t_inc = profile["t_inc"]
+        ratio_beta_a = profile.get("ratio_beta_a", 0.5)
+        alpha_scale = profile.get("alpha_scale", 1.0)
+        mu_scale = profile.get("mu_scale", 1.0)
 
         # Construct Run ID
         # Format: {pid}_{Scenario}_s{strength_int} where strength_int is percent
@@ -215,6 +240,15 @@ class SyntheticDataGenerator:
         gamma = 1.0 / t_inf
         eta = 1.0 / t_inc
 
+        # Calculate derived params
+        base_beta_I = config.get_param("epidemic_params.βᴵ")
+        base_alpha = config.get_param("epidemic_params.αᵍ")
+        base_mu = config.get_param("epidemic_params.μᵍ")
+
+        new_beta_A = base_beta_I * ratio_beta_a
+        new_alpha = [min(1.0, x * alpha_scale) for x in base_alpha]
+        new_mu = [x * mu_scale for x in base_mu]
+
         # Prepare Mobility - Write to run directory
         # All scenarios use base mobility matrix (interventions via κ₀ only)
         _, mob_path = self.prepare_mobility_file(
@@ -224,7 +258,13 @@ class SyntheticDataGenerator:
         # NPI Params Setup - Always create CSV for ALL scenarios
         # Write to run directory
         _, kappa0_path = self.prepare_kappa0_file(
-            run_id, scen_name, strength, profile, start_date, end_date, output_dir=model_state_folder
+            run_id,
+            scen_name,
+            strength,
+            profile,
+            start_date,
+            end_date,
+            output_dir=model_state_folder,
         )
 
         # Inject updates
@@ -233,6 +273,9 @@ class SyntheticDataGenerator:
             "simulation.save_full_output": False,
             "simulation.save_observables": True,
             "epidemic_params.scale_β": r0_scale,
+            "epidemic_params.βᴬ": new_beta_A,
+            "epidemic_params.αᵍ": new_alpha,
+            "epidemic_params.μᵍ": new_mu,
             "epidemic_params.γᵍ": [gamma] * 3,
             "epidemic_params.ηᵍ": [eta] * 3,
             "data.mobility_matrix_filename": mob_path,

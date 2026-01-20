@@ -457,14 +457,16 @@ def plot_intervention_bubble(results, output_dir):
             # Calculate relative reduction (positive = fewer infections)
             rel_reduction = 1.0 - (r["Total_Infections"] / baseline["Total_Infections"])
 
-            plot_data.append({
-                "Start_Day": r["Event_Start"],
-                "End_Day": r["Event_End"],
-                "Duration": r["Duration"],
-                "Strength": r["Strength"],
-                "Relative_Reduction": rel_reduction,
-                "Total_Infections": r["Total_Infections"],
-            })
+            plot_data.append(
+                {
+                    "Start_Day": r["Event_Start"],
+                    "End_Day": r["Event_End"],
+                    "Duration": r["Duration"],
+                    "Strength": r["Strength"],
+                    "Relative_Reduction": rel_reduction,
+                    "Total_Infections": r["Total_Infections"],
+                }
+            )
 
     if not plot_data:
         logger.warning("No plot data for bubble plot")
@@ -494,7 +496,8 @@ def plot_intervention_bubble(results, output_dir):
         color = cmap((color_val + 1.0) / 2.0)  # Map [-1,1] to [0,1]
 
         scatter = ax.scatter(
-            window_center, y_pos,
+            window_center,
+            y_pos,
             s=bubble_size,
             c=color,
             alpha=0.7,
@@ -505,7 +508,8 @@ def plot_intervention_bubble(results, output_dir):
 
         # Add horizontal error bar showing full window extent [start, end]
         ax.errorbar(
-            window_center, y_pos,
+            window_center,
+            y_pos,
             xerr=row["Duration"] / 2,
             fmt="none",
             ecolor="black",
@@ -518,11 +522,14 @@ def plot_intervention_bubble(results, output_dir):
 
     # Add colorbar
     from matplotlib.colors import Normalize
+
     norm = Normalize(vmin=-1.0, vmax=1.0)
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
     cbar = plt.colorbar(sm, ax=ax, shrink=0.8)
-    cbar.set_label("Relative Infection Reduction\n(1 - Interventions/Baseline)", fontsize=10)
+    cbar.set_label(
+        "Relative Infection Reduction\n(1 - Interventions/Baseline)", fontsize=10
+    )
 
     # Labels and title
     ax.set_xlabel("Intervention Window Center (Day)", fontsize=12)
@@ -533,19 +540,54 @@ def plot_intervention_bubble(results, output_dir):
         pad=20,
     )
     ax.grid(True, alpha=0.3)
-    ax.set_xlim(left=-5, right=120)  # Simulation is ~114 days, interventions start up to day 90
+    ax.set_xlim(
+        left=-5, right=120
+    )  # Simulation is ~114 days, interventions start up to day 90
     ax.set_ylim(bottom=0, top=65)  # Duration max is ~60 days
 
     # Add size legend manually
     legend_elements = [
-        plt.scatter([], [], s=(0 * 500 + 50) ** 1.5, c="gray", alpha=0.7, edgecolor="black", label=f"κ₀=0.0"),
-        plt.scatter([], [], s=(0.5 * 500 + 50) ** 1.5, c="gray", alpha=0.7, edgecolor="black", label=f"κ₀=0.5"),
-        plt.scatter([], [], s=(1.0 * 500 + 50) ** 1.5, c="gray", alpha=0.7, edgecolor="black", label=f"κ₀=1.0"),
+        plt.scatter(
+            [],
+            [],
+            s=(0 * 500 + 50) ** 1.5,
+            c="gray",
+            alpha=0.7,
+            edgecolor="black",
+            label="κ₀=0.0",
+        ),
+        plt.scatter(
+            [],
+            [],
+            s=(0.5 * 500 + 50) ** 1.5,
+            c="gray",
+            alpha=0.7,
+            edgecolor="black",
+            label="κ₀=0.5",
+        ),
+        plt.scatter(
+            [],
+            [],
+            s=(1.0 * 500 + 50) ** 1.5,
+            c="gray",
+            alpha=0.7,
+            edgecolor="black",
+            label="κ₀=1.0",
+        ),
     ]
-    ax.legend(handles=legend_elements, title="Intervention Strength", loc="upper left", bbox_to_anchor=(1.02, 1))
+    ax.legend(
+        handles=legend_elements,
+        title="Intervention Strength",
+        loc="upper left",
+        bbox_to_anchor=(1.02, 1),
+    )
 
     plt.tight_layout()
-    plt.savefig(os.path.join(output_dir, "intervention_bubble_plot.png"), dpi=150, bbox_inches="tight")
+    plt.savefig(
+        os.path.join(output_dir, "intervention_bubble_plot.png"),
+        dpi=150,
+        bbox_inches="tight",
+    )
     plt.close()
 
     logger.info(f"Bubble plot saved to {output_dir}")
