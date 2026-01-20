@@ -400,6 +400,11 @@ def main():
         default=None,
         help="Path to EDAR-municipality edges NetCDF file for wastewater aggregation",
     )
+    parser.add_argument(
+        "--append",
+        action="store_true",
+        help="Append to existing Zarr store instead of overwriting",
+    )
 
     args = parser.parse_args()
 
@@ -702,25 +707,34 @@ def main():
         dataset[var_name].encoding = {"chunksizes": (1, date_chunk)}
 
     output_path = args.output
-    if os.path.exists(output_path):
-        logger.info("Removing existing output at %s", output_path)
-        if os.path.isdir(output_path):
-            import shutil
 
-            shutil.rmtree(output_path)
-        else:
-            os.remove(output_path)
+    if args.append and os.path.exists(output_path):
+        logger.info(
+            "Appending to observation zarr at %s (runs=%s)",
+            output_path,
+            len(run_ids),
+        )
+        dataset.to_zarr(output_path, mode="a", append_dim="run_id")
+    else:
+        if os.path.exists(output_path):
+            logger.info("Removing existing output at %s", output_path)
+            if os.path.isdir(output_path):
+                import shutil
 
-    logger.info(
-        "Writing observation zarr to %s (runs=%s, regions=%s, dates=%s, targets=%s, edars=%s)",
-        output_path,
-        len(run_ids),
-        len(region_ids),
-        len(dates_ref),
-        len(TARGET_NAMES),
-        len(edar_ids) if region_to_edar else 0,
-    )
-    dataset.to_zarr(output_path, mode="w")
+                shutil.rmtree(output_path)
+            else:
+                os.remove(output_path)
+
+        logger.info(
+            "Writing observation zarr to %s (runs=%s, regions=%s, dates=%s, targets=%s, edars=%s)",
+            output_path,
+            len(run_ids),
+            len(region_ids),
+            len(dates_ref),
+            len(TARGET_NAMES),
+            len(edar_ids) if region_to_edar else 0,
+        )
+        dataset.to_zarr(output_path, mode="w")
 
 
 if __name__ == "__main__":

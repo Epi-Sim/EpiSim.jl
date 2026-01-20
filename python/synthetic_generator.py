@@ -42,7 +42,7 @@ class SyntheticDataGenerator:
             os.path.join(data_folder, "R_mobility_matrix.csv")
         )
 
-    def generate_parameter_grid(self, n_profiles=5):
+    def generate_parameter_grid(self, n_profiles=5, seed=42):
         """
         Generate Latin Hypercube Samples for Epidemiological Profiles:
         0: R0_scale (scale_β) [0.5, 3.0]
@@ -56,7 +56,7 @@ class SyntheticDataGenerator:
         8: Mu Scale (mu_scale) [0.5, 1.5]
         9: Seed Size [10, 500] (Log-uniform sampled)
         """
-        sampler = qmc.LatinHypercube(d=10)
+        sampler = qmc.LatinHypercube(d=10, seed=seed)
         sample = sampler.random(n=n_profiles)
 
         # Scale samples
@@ -386,28 +386,89 @@ class SyntheticDataGenerator:
 
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Generate synthetic data for EpiSim")
+    parser.add_argument("--config", default=None, help="Path to base config json")
+    parser.add_argument("--data-folder", default=None, help="Path to data folder")
+    parser.add_argument("--output-folder", default=None, help="Path to output folder")
+    parser.add_argument(
+        "--n-profiles",
+        type=int,
+        default=15,
+        help="Total number of profiles to generate",
+    )
+    parser.add_argument(
+        "--start-index",
+        type=int,
+        default=0,
+        help="Start index for processing (inclusive)",
+    )
+    parser.add_argument(
+        "--end-index",
+        type=int,
+        default=None,
+        help="End index for processing (exclusive)",
+    )
+    parser.add_argument(
+        "--clean", action="store_true", help="Clean output folder before running"
+    )
+    parser.add_argument(
+        "--skip-run",
+        action="store_true",
+        help="Skip running the simulation (generation only)",
+    )
+
+    args = parser.parse_args()
+
     # Paths
     PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    DATA_FOLDER = os.path.join(PROJECT_ROOT, "models", "mitma")
-    CONFIG_PATH = os.path.join(DATA_FOLDER, "config_MMCACovid19.json")
-    OUTPUT_FOLDER = os.path.join(PROJECT_ROOT, "runs", "synthetic_test")
+
+    DATA_FOLDER = args.data_folder
+    if not DATA_FOLDER:
+        DATA_FOLDER = os.path.join(PROJECT_ROOT, "models", "mitma")
+
+    CONFIG_PATH = args.config
+    if not CONFIG_PATH:
+        CONFIG_PATH = os.path.join(DATA_FOLDER, "config_MMCACovid19.json")
+
+    OUTPUT_FOLDER = args.output_folder
+    if not OUTPUT_FOLDER:
+        OUTPUT_FOLDER = os.path.join(PROJECT_ROOT, "runs", "synthetic_test")
 
     logger.info(f"Project Root: {PROJECT_ROOT}")
 
-    # Clean previous runs
-    if os.path.exists(OUTPUT_FOLDER):
+    # Clean previous runs if requested
+    if args.clean and os.path.exists(OUTPUT_FOLDER):
         logger.info(f"Cleaning output folder {OUTPUT_FOLDER}")
         shutil.rmtree(OUTPUT_FOLDER)
-    os.makedirs(OUTPUT_FOLDER)
+
+    if not os.path.exists(OUTPUT_FOLDER):
+        os.makedirs(OUTPUT_FOLDER)
 
     generator = SyntheticDataGenerator(CONFIG_PATH, DATA_FOLDER, OUTPUT_FOLDER)
 
     # Generate profiles for intervention timing analysis
-    profiles = generator.generate_parameter_grid(n_profiles=15)
+    # We always generate the FULL set to maintain Latin Hypercube properties
+    profiles = generator.generate_parameter_grid(n_profiles=args.n_profiles)
 
-    # Prepare files for all profiles
-    for profile in profiles:
+    # Determine subset to process
+    start_idx = args.start_index
+    end_idx = args.end_index if args.end_index is not None else args.n_profiles
+
+    # Clip to bounds
+    start_idx = max(0, start_idx)
+    end_idx = min(len(profiles), end_idx)
+
+    logger.info(
+        f"Processing profiles {start_idx} to {end_idx} (Total: {len(profiles)})"
+    )
+
+    # Prepare files for selected profiles
+    for i in range(start_idx, end_idx):
+        profile = profiles[i]
         generator.run_profile_sweep(profile)
 
-    # Execute all at once
-    generator.run_batch()
+    # Execute batch if not skipped
+    if not args.skip_run and start_idx < end_idx:
+        generator.run_batch()
