@@ -3,8 +3,6 @@ import os
 import sys
 import tempfile
 
-import pandas as pd
-
 sys.path.append(os.path.dirname(__file__))
 import xarray as xr
 
@@ -17,7 +15,7 @@ config_path = os.path.join(data_folder, "config_MMCACovid19.json")
 
 def run_scenario(name, kappa_val, tc_val):
     with tempfile.TemporaryDirectory() as temp_dir:
-        with open(config_path, "r") as f:
+        with open(config_path) as f:
             config_dict = json.load(f)
 
         if "kappa0_filename" in config_dict["data"]:
