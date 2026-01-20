@@ -113,7 +113,9 @@ class EpiSim:
         {"name": "MMCACovid19", "description": "Model without vaccination"},
     ]
 
-    def __init__(self, config, data_folder, instance_folder, initial_conditions=None, name=None):
+    def __init__(
+        self, config, data_folder, instance_folder, initial_conditions=None, name=None
+    ):
         """
         Initialize the MMCACovid19 model wrapper.
 
