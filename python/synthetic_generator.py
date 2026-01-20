@@ -48,35 +48,63 @@ class SyntheticDataGenerator:
         0: R0_scale (scale_β) [0.5, 3.0]
         1: T_inf (Infectious Period) [2.0, 10.0] -> γ = 1/T
         2: T_inc (Incubation Period) [2.0, 10.0] -> η = 1/T
-        3: Event Start [5, 90] - Expanded for timing variation
+        3: Reaction Delay [0, 30] (Replaces absolute Event Start)
         4: Event Duration [7, 60]
         5: Affected Fraction [0.1, 0.6] (For Local Scenarios)
         6: Ratio Beta A (ratio_beta_a) [0.1, 1.0]
         7: Alpha Scale (alpha_scale) [0.5, 1.5]
         8: Mu Scale (mu_scale) [0.5, 1.5]
+        9: Seed Size [10, 500] (Log-uniform sampled)
         """
-        sampler = qmc.LatinHypercube(d=9)
+        sampler = qmc.LatinHypercube(d=10)
         sample = sampler.random(n=n_profiles)
 
         # Scale samples
-        l_bounds = [0.5, 2.0, 2.0, 5.0, 7.0, 0.1, 0.1, 0.5, 0.5]
-        u_bounds = [3.0, 10.0, 10.0, 90.0, 60.0, 0.6, 1.0, 1.5, 1.5]
+        # Note: We'll transform seed_size to log scale later if desired,
+        # but for now linear [10, 500] is fine or we can do manual log transform.
+        # Let's do linear for simplicity unless specified.
+        l_bounds = [0.5, 2.0, 2.0, 0.0, 7.0, 0.1, 0.1, 0.5, 0.5, 10.0]
+        u_bounds = [3.0, 10.0, 10.0, 30.0, 60.0, 0.6, 1.0, 1.5, 1.5, 500.0]
 
         scaled = qmc.scale(sample, l_bounds, u_bounds)
 
         profiles = []
+        detection_threshold = 100.0  # Assumed detected cases
+
         for i, row in enumerate(scaled):
             (
                 r0,
                 t_inf,
                 t_inc,
-                start,
+                delay,
                 duration,
                 fraction,
                 ratio_beta_a,
                 alpha_scale,
                 mu_scale,
+                seed,
             ) = row
+
+            # Heuristic for Event Start
+            # Time to detection ~ T_inf * ln(Threshold/Seed) / (R0 - 1)
+            # If R0 <= 1, growth is negative or flat. Set a default late start or based on delay.
+            if r0 > 1.05:
+                # Basic SIR growth approximation
+                # Doubling time Td = T_inf * ln(2) / (R0 - 1)
+                # Time to grow from Seed to Threshold
+                if seed < detection_threshold:
+                    growth_rate = (r0 - 1.0) / t_inf
+                    time_to_detect = np.log(detection_threshold / seed) / growth_rate
+                else:
+                    time_to_detect = 0.0
+            else:
+                # Low R0: Epidemic won't grow fast.
+                # Intervention is less critical/realistic.
+                # Set a baseline delay or "late" start.
+                time_to_detect = 20.0
+
+            # event_start is detection time + reaction delay
+            event_start = max(1, int(time_to_detect + delay))
 
             profiles.append(
                 {
@@ -84,12 +112,13 @@ class SyntheticDataGenerator:
                     "r0_scale": r0,
                     "t_inf": t_inf,
                     "t_inc": t_inc,
-                    "event_start": int(start),
+                    "event_start": event_start,
                     "event_duration": int(duration),
                     "affected_fraction": fraction,
                     "ratio_beta_a": ratio_beta_a,
                     "alpha_scale": alpha_scale,
                     "mu_scale": mu_scale,
+                    "seed_size": int(seed),
                 }
             )
 
@@ -175,7 +204,7 @@ class SyntheticDataGenerator:
         scaled_df.to_csv(path, index=False)
         return filename, path
 
-    def prepare_seed_file(self, run_id):
+    def prepare_seed_file(self, run_id, seed_size=10.0):
         """Generate random seed file"""
         # Pick a random region (row index)
         random_idx = np.random.randint(0, len(self.metapop_df))
@@ -186,13 +215,13 @@ class SyntheticDataGenerator:
         idx = random_idx + 1
 
         # Create seed dataframe
-        # We start with 10 Exposed/Asymptomatic individuals in Middle age group (M)
+        # We start with `seed_size` Exposed/Asymptomatic individuals in Middle age group (M)
         seed_data = {
             "name": ["SeedRegion"],
             "id": [region_id],
             "idx": [idx],
             "Y": [0.0],
-            "M": [10.0],
+            "M": [float(seed_size)],
             "O": [0.0],
         }
 
@@ -301,10 +330,11 @@ class SyntheticDataGenerator:
     def run_profile_sweep(self, profile):
         """Prepare files for Baseline and Sweep of Interventions for a profile."""
         pid = profile["profile_id"]
-        logger.info(f"--- Processing Profile {pid} ---")
+        seed_size = profile.get("seed_size", 10.0)
+        logger.info(f"--- Processing Profile {pid} (Seed={seed_size}) ---")
 
         # 1. Generate Seed ONCE for this profile
-        seed_fname, seed_path = self.prepare_seed_file(pid)
+        seed_fname, seed_path = self.prepare_seed_file(pid, seed_size=seed_size)
 
         # 2. Prepare Baseline
         self.run_single_scenario(pid, "Baseline", 0.0, profile, seed_path)
