@@ -41,6 +41,30 @@ COLOR_HOSPITALIZATIONS = "#d62728"  # red
 COLOR_DEATHS = "#9467bd"  # purple
 
 
+def get_combined_wastewater(run_data, spatial_dim):
+    """Combine all biomarker targets into a single wastewater signal.
+
+    Args:
+        run_data: xarray Dataset for a single run
+        spatial_dim: Spatial dimension to sum over ('edar_id' or 'region_id')
+
+    Returns:
+        numpy.ndarray: Combined wastewater signal summed across spatial dimension
+    """
+    # Check if using raw format (biomarkers) or processed format (obs_wastewater)
+    if "edar_biomarker_N1" in run_data:
+        # Raw format: combine the three biomarker targets
+        n1 = run_data["edar_biomarker_N1"].sum(dim=spatial_dim).values
+        n2 = run_data["edar_biomarker_N2"].sum(dim=spatial_dim).values
+        ip4 = run_data["edar_biomarker_IP4"].sum(dim=spatial_dim).values
+        return n1 + n2 + ip4
+    elif "obs_wastewater" in run_data:
+        # Processed format: use obs_wastewater directly
+        return run_data["obs_wastewater"].sum(dim=spatial_dim).values
+    else:
+        raise ValueError("No wastewater or biomarker variables found in run_data")
+
+
 def load_zarr_data(zarr_path):
     """Load the consolidated zarr dataset.
 
@@ -53,32 +77,63 @@ def load_zarr_data(zarr_path):
             - obs_hospitalizations: (run_id, region_id, date)
             - obs_deaths: (run_id, region_id, date)
             - obs_cases: (run_id, region_id, date)
-            - obs_wastewater: (run_id, edar_id, date, target) or (run_id, region_id, date, target)
+            - edar_biomarker_N1, edar_biomarker_N2, edar_biomarker_IP4:
+              (run_id, edar_id, date) or (run_id, region_id, date)
             - ascertainment_rate: (run_id, date)
             - mobility_reduction: (run_id, date)
 
-    Note: Wastewater spatial dimension can be either 'edar_id' or 'region_id'
+    Note: Biomarker spatial dimension can be either 'edar_id' or 'region_id'
     depending on whether EDAR-municipality aggregation was used.
     """
     logger.info(f"Loading zarr data from {zarr_path}")
     ds = xr.open_zarr(zarr_path)
 
-    # Detect wastewater spatial dimension
-    ww_dims = ds["obs_wastewater"].dims
-    if "edar_id" in ww_dims:
-        ww_spatial_dim = "edar_id"
-        spatial_count = len(ds.edar_id)
-        logger.info(f"Wastewater uses EDAR-based aggregation: {spatial_count} EDARs")
-    elif "region_id" in ww_dims:
-        ww_spatial_dim = "region_id"
-        spatial_count = len(ds.region_id)
-        logger.info(
-            f"Wastewater uses region-based aggregation: {spatial_count} regions"
-        )
+    # Detect zarr format and wastewater spatial dimension
+    # Try biomarker variables first (raw format)
+    target_vars = [
+        var
+        for var in ds.data_vars
+        if var.startswith("edar_biomarker_") and not var.endswith("_censor_hints")
+    ]
+
+    if target_vars:
+        # Raw format with biomarkers
+        ww_dims = ds[target_vars[0]].dims
+        if "edar_id" in ww_dims:
+            ww_spatial_dim = "edar_id"
+            spatial_count = len(ds.edar_id)
+            logger.info(f"Biomarkers use EDAR-based aggregation: {spatial_count} EDARs")
+        elif "region_id" in ww_dims:
+            ww_spatial_dim = "region_id"
+            spatial_count = len(ds.region_id)
+            logger.info(
+                f"Biomarkers use region-based aggregation: {spatial_count} regions"
+            )
+        else:
+            raise ValueError(
+                f"Cannot determine biomarker spatial dimension from {ww_dims}"
+            )
+    elif "obs_wastewater" in ds.data_vars:
+        # Processed format with obs_wastewater
+        ww_dims = ds["obs_wastewater"].dims
+        if "edar_id" in ww_dims:
+            ww_spatial_dim = "edar_id"
+            spatial_count = len(ds.edar_id)
+            logger.info(
+                f"Wastewater (obs_wastewater) uses EDAR-based aggregation: {spatial_count} EDARs"
+            )
+        elif "region_id" in ww_dims:
+            ww_spatial_dim = "region_id"
+            spatial_count = len(ds.region_id)
+            logger.info(
+                f"Wastewater (obs_wastewater) uses region-based aggregation: {spatial_count} regions"
+            )
+        else:
+            raise ValueError(
+                f"Cannot determine wastewater spatial dimension from {ww_dims}"
+            )
     else:
-        raise ValueError(
-            f"Cannot determine wastewater spatial dimension from {ww_dims}"
-        )
+        raise ValueError("No wastewater or biomarker variables found in zarr dataset")
 
     # Store the dimension name as an attribute for later use
     ds.attrs["wastewater_spatial_dim"] = ww_spatial_dim
@@ -99,6 +154,63 @@ def get_wastewater_spatial_dim(ds):
         str: Either 'edar_id' or 'region_id'
     """
     return ds.attrs.get("wastewater_spatial_dim", "region_id")
+
+
+def detect_zarr_format(ds):
+    """Detect whether zarr is raw or processed format and return variable mapping.
+
+    Args:
+        ds: xarray Dataset
+
+    Returns:
+        dict: Variable name mapping for common variables
+    """
+    # Check for processed format (has ground_truth_infections)
+    if "ground_truth_infections" in ds.data_vars:
+        return {
+            "format": "processed",
+            "infections": "ground_truth_infections",
+            "hospitalizations": "obs_hospitalizations",
+            "deaths": "obs_deaths",
+            "cases": "obs_cases",
+            "scenario": "scenario_type",
+            "strength": "strength",
+            "mobility": "mobility_reduction",
+        }
+    # Check for raw format (has infections_true)
+    elif "infections_true" in ds.data_vars:
+        return {
+            "format": "raw",
+            "infections": "infections_true",
+            "hospitalizations": "hospitalizations_true",
+            "deaths": "deaths_true",
+            "cases": "cases",
+            "scenario": "synthetic_scenario_type",
+            "strength": "synthetic_strength",
+            "mobility_base": "mobility_base",
+            "mobility_kappa0": "mobility_kappa0",
+        }
+    else:
+        raise ValueError("Unknown zarr format - cannot find expected variables")
+
+
+def get_mobility_reduction(ds, run_id, var_map):
+    """Get mobility reduction series for a run.
+
+    Args:
+        ds: xarray Dataset
+        run_id: Run ID
+        var_map: Variable mapping from detect_zarr_format
+
+    Returns:
+        numpy.ndarray: Mobility reduction values
+    """
+    if var_map["format"] == "processed":
+        return ds.sel(run_id=run_id)[var_map["mobility"]].values
+    else:
+        # Raw format: mobility is mobility_base * (1 - mobility_kappa0)
+        # For plotting, we just need kappa0 as the reduction value
+        return ds.sel(run_id=run_id)[var_map["mobility_kappa0"]].values
 
 
 def convert_dates(ds):
@@ -155,7 +267,7 @@ def detect_lockdown_periods(mobility_reduction, dates, threshold=LOCKDOWN_THRESH
     return periods
 
 
-def plot_run_epicurves(ds, run_id, output_dir, aggregate_regions=True):
+def plot_run_epicurves(ds, run_id, output_dir, aggregate_regions=True, var_map=None):
     """Plot epicurves for a single run with lockdown highlighting.
 
     Panel layout (2 subplots, stacked vertically):
@@ -168,32 +280,37 @@ def plot_run_epicurves(ds, run_id, output_dir, aggregate_regions=True):
         run_id: Run ID to plot
         output_dir: Directory to save output
         aggregate_regions: If True, sum across all regions/EDARs
+        var_map: Variable mapping from detect_zarr_format (auto-detected if None)
     """
+    if var_map is None:
+        var_map = detect_zarr_format(ds)
+
     run_data = ds.sel(run_id=run_id)
     dates = convert_dates(ds)
 
-    # Extract data for this run
-    mobility = run_data["mobility_reduction"].values
+    # Extract data for this run using variable mapping
+    mobility = get_mobility_reduction(ds, run_id, var_map)
 
     # Get wastewater spatial dimension (edar_id or region_id)
     ww_spatial_dim = get_wastewater_spatial_dim(ds)
 
+    # Combine biomarkers into single wastewater signal
+    wastewater = get_combined_wastewater(run_data, ww_spatial_dim)
+
     if aggregate_regions:
-        infections = run_data["ground_truth_infections"].sum(dim="region_id").values
-        hospitalizations = run_data["obs_hospitalizations"].sum(dim="region_id").values
-        deaths = run_data["obs_deaths"].sum(dim="region_id").values
-        cases = run_data["obs_cases"].sum(dim="region_id").values
-        wastewater = run_data["obs_wastewater"].sum(dim=ww_spatial_dim).values
+        infections = run_data[var_map["infections"]].sum(dim="region_id").values
+        hospitalizations = run_data[var_map["hospitalizations"]].sum(dim="region_id").values
+        deaths = run_data[var_map["deaths"]].sum(dim="region_id").values
+        cases = run_data[var_map["cases"]].sum(dim="region_id").values
     else:
-        infections = run_data["ground_truth_infections"].values
-        hospitalizations = run_data["obs_hospitalizations"].values
-        deaths = run_data["obs_deaths"].values
-        cases = run_data["obs_cases"].values
-        wastewater = run_data["obs_wastewater"].values
+        infections = run_data[var_map["infections"]].values
+        hospitalizations = run_data[var_map["hospitalizations"]].values
+        deaths = run_data[var_map["deaths"]].values
+        cases = run_data[var_map["cases"]].values
 
     # Get scenario info
-    scenario = str(run_data["scenario_type"].values)
-    strength = run_data["strength"].values
+    scenario = str(run_data[var_map["scenario"]].values)
+    strength = run_data[var_map["strength"]].values
 
     # Create figure with 2 subplots
     fig, (ax1, ax2) = plt.subplots(
@@ -299,7 +416,7 @@ def plot_run_epicurves(ds, run_id, output_dir, aggregate_regions=True):
     logger.info(f"Saved single-run plot to {output_path}")
 
 
-def plot_faceted_grid(ds, run_ids, output_dir, scenarios=None, n_runs=None):
+def plot_faceted_grid(ds, run_ids, output_dir, scenarios=None, n_runs=None, var_map=None):
     """Plot epicurves in a faceted grid layout.
 
     Layout:
@@ -313,7 +430,11 @@ def plot_faceted_grid(ds, run_ids, output_dir, scenarios=None, n_runs=None):
         output_dir: Directory to save output
         scenarios: List of scenario types to filter by (None = all)
         n_runs: Limit number of runs per scenario (None = all)
+        var_map: Variable mapping from detect_zarr_format (auto-detected if None)
     """
+    if var_map is None:
+        var_map = detect_zarr_format(ds)
+
     dates = convert_dates(ds)
 
     # Filter by scenarios if specified
@@ -321,13 +442,13 @@ def plot_faceted_grid(ds, run_ids, output_dir, scenarios=None, n_runs=None):
         run_ids = [
             r
             for r in run_ids
-            if str(ds.sel(run_id=r)["scenario_type"].values) in scenarios
+            if str(ds.sel(run_id=r)[var_map["scenario"]].values) in scenarios
         ]
 
     # Group runs by scenario
     scenario_groups = {}
     for run_id in run_ids:
-        scenario = str(ds.sel(run_id=run_id)["scenario_type"].values)
+        scenario = str(ds.sel(run_id=run_id)[var_map["scenario"]].values)
         if scenario not in scenario_groups:
             scenario_groups[scenario] = []
         scenario_groups[scenario].append(run_id)
@@ -371,13 +492,13 @@ def plot_faceted_grid(ds, run_ids, output_dir, scenarios=None, n_runs=None):
         # Get wastewater spatial dimension (edar_id or region_id)
         ww_spatial_dim = get_wastewater_spatial_dim(ds)
 
-        # Aggregate across regions
-        infections = run_data["ground_truth_infections"].sum(dim="region_id").values
-        hospitalizations = run_data["obs_hospitalizations"].sum(dim="region_id").values
-        deaths = run_data["obs_deaths"].sum(dim="region_id").values
-        cases = run_data["obs_cases"].sum(dim="region_id").values
-        wastewater = run_data["obs_wastewater"].sum(dim=ww_spatial_dim).values
-        mobility = run_data["mobility_reduction"].values
+        # Aggregate across regions and combine biomarkers
+        infections = run_data[var_map["infections"]].sum(dim="region_id").values
+        hospitalizations = run_data[var_map["hospitalizations"]].sum(dim="region_id").values
+        deaths = run_data[var_map["deaths"]].sum(dim="region_id").values
+        cases = run_data[var_map["cases"]].sum(dim="region_id").values
+        wastewater = get_combined_wastewater(run_data, ww_spatial_dim)
+        mobility = get_mobility_reduction(ds, run_id, var_map)
 
         # Plot epicurves
         ax.plot(
@@ -436,7 +557,7 @@ def plot_faceted_grid(ds, run_ids, output_dir, scenarios=None, n_runs=None):
         ax.grid(True, alpha=0.3)
 
         # Title with run info
-        strength = run_data["strength"].values
+        strength = run_data[var_map["strength"]].values
         title = f"{scenario}"
         if not np.isnan(strength):
             title += f"\nStrength: {strength * 100:.0f}%"
