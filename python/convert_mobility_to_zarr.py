@@ -130,7 +130,7 @@ def main():
         len(dates),
         len(region_ids),
     )
-    dataset.to_zarr(output_path, mode="w")
+    dataset.to_zarr(output_path, mode="w", zarr_format=2)
 
 
 if __name__ == "__main__":
