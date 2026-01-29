@@ -8,6 +8,7 @@ using EpiSim
 using JSON
 using ArgParse
 using Logging
+using Dates
 
 function parse_batch_command_line()
     s = ArgParseSettings()
@@ -25,36 +26,55 @@ function parse_batch_command_line()
     return parse_args(s)
 end
 
+function write_error_file(instance_folder, e, bt)
+    """Write error details to ERROR.json in the failed run directory."""
+    error_data = Dict(
+        "timestamp" => string(now()),
+        "run_folder" => basename(instance_folder),
+        "error_type" => string(typeof(e)),
+        "error_message" => string(e),
+        "stacktrace" => sprint(show, bt)
+    )
+    error_path = joinpath(instance_folder, "ERROR.json")
+    open(error_path, "w") do f
+        JSON.print(f, error_data, 2)
+    end
+end
+
 function run_batch_simulation(config_path, data_folder, instance_folder)
     try
         # Load Config
         config = JSON.parsefile(config_path)
-        
+
         # Determine Engine
-        # We assume MMCACovid19 as per current synthetic setup, 
+        # We assume MMCACovid19 as per current synthetic setup,
         # or verify if we need to support Vac via config inspection
         engine_name = config["simulation"]["engine"]
         engine = EpiSim.get_engine(engine_name)
-        
+
         # Validate Config
         engine = EpiSim.validate_config(config)
-        
+
         # Run Simulation
         # run_engine_io handles reading inputs, init variables, and running the loop
         EpiSim.run_engine_io(engine, config, data_folder, instance_folder)
-        
+
         # println("Completed: $(basename(instance_folder))")
-        
+
     catch e
-        @error "Failed run: $(basename(instance_folder))" exception=(e, catch_backtrace())
+        bt = catch_backtrace()
+        @error "Failed run: $(basename(instance_folder))" exception=(e, bt)
+        write_error_file(instance_folder, e, bt)
+        return false  # Indicate failure
     end
+    return true  # Indicate success
 end
 
-function main()
+function main_with_tracking()
     args = parse_batch_command_line()
     batch_folder = args["batch-folder"]
     data_folder = args["data-folder"]
-    
+
     # Find all run folders
     # We look for config_auto_py.json files to identify valid run directories
     configs = []
@@ -63,19 +83,46 @@ function main()
             push!(configs, joinpath(root, "config_auto_py.json"))
         end
     end
-    
+
     println("Found $(length(configs)) simulations to run.")
-    
+
+    # Track results
+    results = Dict(
+        "total" => length(configs),
+        "succeeded" => 0,
+        "failed" => 0,
+        "failures" => []
+    )
+
     # Threaded Execution
-    # Julia starts with -t/--threads threads. 
+    # Julia starts with -t/--threads threads.
     # @threads distributes the loop iterations across these threads.
     Threads.@threads for config_path in configs
         instance_folder = dirname(config_path)
         # println("Starting on thread $(Threads.threadid()): $(basename(instance_folder))")
-        run_batch_simulation(config_path, data_folder, instance_folder)
+        success = run_batch_simulation(config_path, data_folder, instance_folder)
+        if success
+            results["succeeded"] += 1
+        else
+            results["failed"] += 1
+            push!(results["failures"], basename(instance_folder))
+        end
     end
-    
+
+    # Write results summary
+    results_path = joinpath(batch_folder, "BATCH_RESULTS.json")
+    open(results_path, "w") do f
+        JSON.print(f, results, 2)
+    end
+
     println("Batch execution complete.")
+    println("  Succeeded: $(results["succeeded"])")
+    println("  Failed: $(results["failed"])")
+
+    # Exit with error if any failures
+    if results["failed"] > 0
+        exit(1)
+    end
 end
 
-main()
+main_with_tracking()
