@@ -122,7 +122,57 @@ Tests are located in `test/runtests.jl` and run simulations with both engines us
 
 For benchmarking mobility intervention strategies, a synthetic data generation pipeline is available. It generates counterfactual "twin" scenarios to compare global vs. local interventions.
 
-See [CONTEXT_SYNTHETIC_GEN.md](CONTEXT_SYNTHETIC_GEN.md) for detailed documentation on the generator architecture, batch execution, and analysis tools.
+### Default Pipeline: Two-Phase Spike-Based Generation
+
+The synthetic data generator uses a **two-phase approach** to ensure realistic intervention timing:
+
+1. **Phase 1 (Baseline Generation)**: Generate and run all baseline scenarios (no interventions) to establish true epidemic dynamics
+2. **Phase 2 (Spike-Based Interventions)**: Analyze baseline outputs to detect actual infection spike periods, then generate intervention scenarios with realistic timing based on observed data
+
+**Why This Matters**: The previous heuristic-based approach (fixed detection threshold of 100 cases + reaction delay) resulted in unrealistic premature lockdowns, often on day 1-10. The new spike-based approach ensures interventions are timed to coincide with actual epidemic growth.
+
+### Running the Two-Phase Pipeline
+
+```bash
+# Run the two-phase pipeline (default behavior)
+uv run python/run_synthetic_pipeline.py --two-phase --n-profiles 15 --spike-threshold 0.1
+
+# Output: runs/synthetic_two_phase/baselines/raw_synthetic_observations.zarr
+```
+
+**Key Options:**
+- `--n-profiles`: Number of epidemiological profiles (default: 15)
+- `--spike-threshold`: Percentile threshold for spike detection (default: 0.1 = 10th percentile)
+- `--dataset`: Dataset to use (catalonia or mitma, default: catalonia)
+- `--skip-sim`: Skip simulation stage (use existing runs)
+- `--skip-process`: Skip processing stage (use existing zarr)
+- `--skip-plot`: Skip plotting stage
+- `--dry-run`: Show what would be run without executing
+
+**Manual Execution:**
+
+For more control, you can run each phase separately:
+
+```bash
+# Phase 1: Generate baselines
+uv run python/synthetic_generator.py --n-profiles 15 --baseline-only --output-folder runs/two_phase/baselines
+uv run python/process_synthetic_outputs.py --runs-dir runs/two_phase/baselines --baseline-only --output runs/two_phase/baselines/baseline.zarr
+
+# Phase 2: Generate spike-based interventions
+uv run python/synthetic_generator.py --intervention-only runs/two_phase/baselines --spike-threshold 0.1 --output-folder runs/two_phase/interventions
+uv run python/process_synthetic_outputs.py --runs-dir runs/two_phase/interventions --append --output runs/two_phase/baselines/baseline.zarr
+```
+
+**Spike Detection:**
+
+Analyze spikes in existing baseline zarr files:
+
+```bash
+# Detect and display spikes
+uv run python/python/spike_detector.py runs/two_phase/baselines/baseline.zarr --spike-threshold 0.1
+```
+
+See [CONTEXT_SYNTHETIC_GEN.md](CONTEXT_SYNTHETIC_GEN.md) for detailed documentation on the generator architecture, batch execution, spike detection methods, and analysis tools.
 
 ## Python Interface
 
