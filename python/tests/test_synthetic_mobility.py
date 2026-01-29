@@ -104,22 +104,18 @@ class TestSyntheticMobility:
             seed_path=seed_path,
         )
 
-        baseline_folder = os.path.join(output_folder, "run_test_Baseline")
-        baseline_uuid = os.listdir(baseline_folder)[0]
-        baseline_run_path = os.path.join(baseline_folder, baseline_uuid)
+        baseline_run_path = os.path.join(output_folder, "run_test_Baseline")
 
-        # 2. Prepare Intervention (κ₀=1.0, i.e., full confinement) - Global Constant
+        # 2. Prepare Intervention (κ₀=1.0, i.e., full confinement) - Global Timed
         generator.run_single_scenario(
             pid="test",
-            scen_name="Global_Const",
+            scen_name="Global_Timed",
             strength=1.0,
             profile=profile,
             seed_path=seed_path,
         )
 
-        intervention_folder = os.path.join(output_folder, "run_test_Global_Const_s100")
-        intervention_uuid = os.listdir(intervention_folder)[0]
-        intervention_run_path = os.path.join(intervention_folder, intervention_uuid)
+        intervention_run_path = os.path.join(output_folder, "run_test_Global_Timed_s100")
 
         # Run Simulations
         print("Running Baseline (κ₀=0.0) Simulation...")
@@ -160,28 +156,24 @@ class TestSyntheticMobility:
         # κ₀=0.0 (no confinement) via CSV
         generator.run_single_scenario(
             pid="test_extremes",
-            scen_name="Global_Const",
+            scen_name="Global_Timed",
             strength=0.0,
             profile=profile,
             seed_path=seed_path,
         )
 
-        folder_0 = os.path.join(output_folder, "run_test_extremes_Global_Const_s00")
-        uuid_0 = os.listdir(folder_0)[0]
-        run_path_0 = os.path.join(folder_0, uuid_0)
+        run_path_0 = os.path.join(output_folder, "run_test_extremes_Global_Timed_s00")
 
         # κ₀=1.0 (full confinement) via CSV
         generator.run_single_scenario(
             pid="test_extremes",
-            scen_name="Global_Const",
+            scen_name="Global_Timed",
             strength=1.0,
             profile=profile,
             seed_path=seed_path,
         )
 
-        folder_1 = os.path.join(output_folder, "run_test_extremes_Global_Const_s100")
-        uuid_1 = os.listdir(folder_1)[0]
-        run_path_1 = os.path.join(folder_1, uuid_1)
+        run_path_1 = os.path.join(output_folder, "run_test_extremes_Global_Timed_s100")
 
         # Run both
         print("Running κ₀=0.0 (no confinement)...")

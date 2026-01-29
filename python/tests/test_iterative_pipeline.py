@@ -30,6 +30,10 @@ class TestIterativePipeline:
             json.dump(
                 {
                     "simulation": {},
+                    "data": {
+                        "metapopulation_data_filename": "metapopulation_data.csv",
+                        "mobility_matrix_filename": "R_mobility_matrix.csv",
+                    },
                     "epidemic_params": {},
                     "population_params": {"G_labels": ["Y", "M", "O"]},
                     "NPI": {},
@@ -47,6 +51,12 @@ class TestIterativePipeline:
         mobility_csv = data_folder / "R_mobility_matrix.csv"
         pd.DataFrame({"from": [1, 2], "to": [2, 1], "weight": [0.1, 0.1]}).to_csv(
             mobility_csv, index=False
+        )
+
+        # Create dummy rosetta csv
+        rosetta_csv = data_folder / "rosetta.csv"
+        pd.DataFrame({"id": ["1", "2"], "idx": [1, 2]}).to_csv(
+            rosetta_csv, index=False
         )
 
         return {
@@ -148,12 +158,12 @@ class TestIterativePipeline:
         )
 
         # Verify Process calls: 3 batches
-        # Batch 1 (idx=0): append=False
-        # Batch 2 (idx=1): append=True
-        # Batch 3 (idx=2): append=True
+        # Batch 1 (idx=0): append=False, edar_edges=None
+        # Batch 2 (idx=1): append=True, edar_edges=None
+        # Batch 3 (idx=2): append=True, edar_edges=None
         assert mock_process.call_count == 3
         mock_process.assert_has_calls(
-            [call(append=False), call(append=True), call(append=True)]
+            [call(append=False, edar_edges=None), call(append=True, edar_edges=None), call(append=True, edar_edges=None)]
         )
 
         # Verify Cleanup: 1 (before 1st batch) + 1 (before 2nd) + 1 (before 3rd) + 1 (final) = 4
@@ -191,10 +201,10 @@ class TestIterativePipeline:
         )
 
         # Write first batch
-        ds1.to_zarr(zarr_path, mode="w")
+        ds1.to_zarr(zarr_path, mode="w", zarr_format=2)
 
         # Append second batch
-        ds2.to_zarr(zarr_path, mode="a", append_dim="run")
+        ds2.to_zarr(zarr_path, mode="a", append_dim="run", zarr_format=2)
 
         # Read back
         ds_combined = xr.open_zarr(zarr_path)

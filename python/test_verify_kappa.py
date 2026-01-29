@@ -28,14 +28,13 @@ with tempfile.TemporaryDirectory() as temp_dir:
     # Baseline
     generator.run_single_scenario("test", "Baseline", 0.0, profile, seed_path)
     baseline_config = os.path.join(output_folder, "run_test_Baseline")
-    baseline_uuid = os.listdir(baseline_config)[0]
     baseline_config_path = os.path.join(
-        baseline_config, baseline_uuid, "config_auto_py.json"
+        baseline_config, "config_auto_py.json"
     )
 
     # Intervention
     generator.run_single_scenario("test", "Global_Const", 0.8, profile, seed_path)
-    intervention_csv = os.path.join(output_folder, "kappa0_test_Global_Const_s80.csv")
+    intervention_csv = os.path.join(output_folder, "run_test_Global_Const_s80", "kappa0.csv")
 
     print("=== Baseline Config (JSON mode) ===")
     import json
