@@ -6,7 +6,7 @@ simulation outputs, which can be used to time interventions realistically.
 """
 
 import logging
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Optional
 
 import numpy as np
 import xarray as xr
@@ -23,6 +23,11 @@ def detect_spike_periods(
     threshold_pct: float = 0.1,
     min_duration: int = 7,
     method: str = "percentile",
+    population: Optional[float] = None,
+    growth_factor_threshold: float = 1.5,
+    min_growth_duration: int = 3,
+    min_cases_per_capita: float = 1e-4,
+    growth_window: int = 3,
 ) -> List[Tuple[int, int]]:
     """
     Detect significant spike periods in infection time series.
@@ -33,7 +38,12 @@ def detect_spike_periods(
             For method='percentile': values above this percentile are considered elevated
             For method='prominence': relative prominence threshold for peak detection
         min_duration: Minimum days above threshold to qualify as spike (default: 7)
-        method: Detection method - 'percentile' (threshold-based) or 'prominence' (peak-based)
+        method: Detection method - 'percentile', 'prominence', or 'growth_rate'
+        population: Total population (required for growth_rate method)
+        growth_factor_threshold: Minimum growth factor for growth_rate method (default: 1.5)
+        min_growth_duration: Minimum consecutive days of growth for growth_rate (default: 3)
+        min_cases_per_capita: Minimum cases per person for growth_rate (default: 1e-4)
+        growth_window: Window size for growth rate calculation in days (default: 3)
 
     Returns:
         List of (start_day, end_day) spike periods (end_day exclusive)
@@ -124,8 +134,33 @@ def detect_spike_periods(
 
         return spike_periods
 
+    elif method == "growth_rate":
+        from growth_rate_detector import detect_spike_periods_growth_rate
+
+        if population is None:
+            raise ValueError(
+                f"population parameter is required for growth_rate method. "
+                f"Provide population size for per-capita threshold calculation."
+            )
+
+        logger.info(f"Growth-rate detection: GF_threshold={growth_factor_threshold}, "
+                    f"min_growth_duration={min_growth_duration}, "
+                    f"min_cases_per_capita={min_cases_per_capita}")
+
+        return detect_spike_periods_growth_rate(
+            infections_array=infections_array,
+            population=population,
+            growth_factor_threshold=growth_factor_threshold,
+            min_growth_duration=min_growth_duration,
+            min_cases_per_capita=min_cases_per_capita,
+            growth_window=growth_window,
+            min_spike_duration=min_duration,
+        )
+
     else:
-        raise ValueError(f"Unknown method: {method}. Use 'percentile' or 'prominence'")
+        raise ValueError(
+            f"Unknown method: {method}. Use 'percentile', 'prominence', or 'growth_rate'"
+        )
 
 
 def detect_spike_periods_from_zarr(
@@ -134,6 +169,10 @@ def detect_spike_periods_from_zarr(
     min_duration: int = 7,
     method: str = "percentile",
     baseline_filter: bool = True,
+    growth_factor_threshold: float = 1.5,
+    min_growth_duration: int = 3,
+    min_cases_per_capita: float = 1e-4,
+    growth_window: int = 3,
 ) -> Dict[str, List[Tuple[int, int]]]:
     """
     Detect spike periods for all baseline runs in a zarr file.
@@ -142,8 +181,12 @@ def detect_spike_periods_from_zarr(
         zarr_path: Path to raw_synthetic_observations.zarr
         threshold_pct: Percentile threshold for spike detection (default: 0.1)
         min_duration: Minimum days for spike period (default: 7)
-        method: Detection method - 'percentile' or 'prominence'
+        method: Detection method - 'percentile', 'prominence', or 'growth_rate'
         baseline_filter: Only process runs where scenario_type == 'Baseline' (default: True)
+        growth_factor_threshold: Minimum growth factor for growth_rate method (default: 1.5)
+        min_growth_duration: Minimum consecutive days of growth for growth_rate (default: 3)
+        min_cases_per_capita: Minimum cases per person for growth_rate (default: 1e-4)
+        growth_window: Window size for growth rate calculation in days (default: 3)
 
     Returns:
         Dict mapping run_id -> list of (start_day, end_day) tuples
@@ -180,6 +223,19 @@ def detect_spike_periods_from_zarr(
 
     infections = ds["infections_true"]  # (run_id, region_id, date)
     scenario_types = ds.get("synthetic_scenario_type", None)
+    population_var = ds.get("population", None)
+
+    # Extract population for growth_rate method
+    # population shape: (run_id, region_id) -> sum over region_id for total population
+    if population_var is not None and method == "growth_rate":
+        # For each run, sum population across regions
+        population_by_run = {}
+        for run_id_val in population_var.run_id.values:
+            pop = float(population_var.sel(run_id=str(run_id_val)).sum().values)
+            population_by_run[str(run_id_val)] = pop
+        logger.info(f"Extracted population for {len(population_by_run)} runs for growth_rate method")
+    else:
+        population_by_run = {}
 
     spikes_by_run = {}
 
@@ -211,12 +267,20 @@ def detect_spike_periods_from_zarr(
         # infections shape: (region_id, date) -> sum over region_id -> (date,)
         national_infections = run_infections.sum(dim="region_id").values
 
+        # Get population for this run (for growth_rate method)
+        run_population = population_by_run.get(run_id, None)
+
         # Detect spikes
         spike_windows = detect_spike_periods(
             national_infections,
             threshold_pct=threshold_pct,
             min_duration=min_duration,
             method=method,
+            population=run_population,
+            growth_factor_threshold=growth_factor_threshold,
+            min_growth_duration=min_growth_duration,
+            min_cases_per_capita=min_cases_per_capita,
+            growth_window=growth_window,
         )
 
         if spike_windows:
@@ -279,8 +343,32 @@ if __name__ == "__main__":
         "--method",
         type=str,
         default="percentile",
-        choices=["percentile", "prominence"],
+        choices=["percentile", "prominence", "growth_rate"],
         help="Detection method (default: percentile)",
+    )
+    parser.add_argument(
+        "--growth-factor-threshold",
+        type=float,
+        default=1.5,
+        help="Growth factor threshold for growth_rate method (default: 1.5 = 50%% growth)",
+    )
+    parser.add_argument(
+        "--min-growth-duration",
+        type=int,
+        default=3,
+        help="Minimum consecutive days of growth for growth_rate method (default: 3)",
+    )
+    parser.add_argument(
+        "--min-cases-per-capita",
+        type=float,
+        default=1e-4,
+        help="Minimum cases per person for growth_rate method (default: 1e-4 = 1 per 10K)",
+    )
+    parser.add_argument(
+        "--growth-window",
+        type=int,
+        default=3,
+        help="Window size for growth rate calculation in days (default: 3)",
     )
     parser.add_argument(
         "--include-non-baseline",
@@ -297,6 +385,10 @@ if __name__ == "__main__":
             min_duration=args.min_spike_duration,
             method=args.method,
             baseline_filter=not args.include_non_baseline,
+            growth_factor_threshold=args.growth_factor_threshold,
+            min_growth_duration=args.min_growth_duration,
+            min_cases_per_capita=args.min_cases_per_capita,
+            growth_window=args.growth_window,
         )
         print_spike_summary(spikes)
     except (FileNotFoundError, ValueError) as e:

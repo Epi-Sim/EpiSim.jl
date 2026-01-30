@@ -2,20 +2,27 @@
 """
 Master script to run the full synthetic data generation pipeline.
 
-Pipeline stages:
-1. Generate configs and run SIR simulations (synthetic_generator.py)
-2. Process outputs into raw-ish observations for EpiForecaster (process_synthetic_outputs.py)
-3. Plot results (plot_synthetic_results.py)
-4. Plot zarr-based epicurves with lockdown highlighting (plot_zarr_epicurves.py)
+Two-Phase Spike-Based Pipeline:
+1. Phase 1: Generate and run all baseline scenarios (no interventions)
+2. Phase 2: Analyze baseline outputs to detect infection spikes, then generate
+             intervention scenarios with realistic timing based on observed spikes
+3. Process outputs into raw-ish observations for EpiForecaster
+4. Plot results (plot_synthetic_results.py)
+5. Plot zarr-based epicurves with lockdown highlighting (plot_zarr_epicurves.py)
 
 Usage:
-    uv run python/run_synthetic_pipeline.py [--dataset DATASET] [--clean] [--skip-sim] [--skip-process] [--skip-plot] [--skip-zarr-plot]
+    uv run python/run_synthetic_pipeline.py [--dataset DATASET] [--n-profiles N] [--batch-size N] [--spike-threshold X] [--clean] [--skip-sim] [--skip-process] [--skip-plot] [--skip-zarr-plot] [--sparsity-mode MODE] [--sparsity-tiers TIERS]
 
 Arguments:
     --dataset: Dataset to use (default: catalonia, options: catalonia, mitma)
+    --n-profiles: Number of epidemiological profiles to generate (default: 15)
+    --batch-size: Number of profiles to process in each batch during Phase 1 (default: 5)
+    --spike-threshold: Spike detection threshold percentile (default: 0.1 = 10th percentile)
+    --sparsity-mode: Sparsity distribution mode (default: tiers, options: uniform, tiers)
+    --sparsity-tiers: Sparsity levels for tier assignment (default: 0.05 0.20 0.40 0.60 0.80)
     --clean: Clean output folder before running
-    --skip-sim: Skip simulation stage (use existing runs)
-    --skip-process: Skip processing stage (use existing zarr)
+    --skip-sim: Skip simulation stages (use existing runs)
+    --skip-process: Skip processing stages (use existing zarr)
     --skip-plot: Skip plotting stage
     --skip-zarr-plot: Skip zarr epicurves plotting stage
 
@@ -77,77 +84,16 @@ def run_stage(name, cmd, cwd=None):
     return result
 
 
-def run_simulation_batch(n_profiles, start_idx, end_idx, clean_output_dir=False, failure_tolerance=10):
-    """Stage 1: Generate configs and run SIR simulations for a batch."""
-    global DATA_FOLDER, OUTPUT_FOLDER, CONFIG_PATH
+def clean_run_folders(directory=None):
+    """Remove run folders but keep the Zarr output.
 
-    cmd = [
-        sys.executable,
-        "python/synthetic_generator.py",
-        "--n-profiles",
-        str(n_profiles),
-        "--start-index",
-        str(start_idx),
-        "--end-index",
-        str(end_idx),
-        "--data-folder",
-        str(DATA_FOLDER),
-        "--output-folder",
-        str(OUTPUT_FOLDER),
-        "--config",
-        str(CONFIG_PATH),
-        "--failure-tolerance",
-        str(failure_tolerance),
-    ]
-
-    if clean_output_dir:
-        cmd.append("--clean")
-
-    # Set up environment for Julia
-    env = os.environ.copy()
-    env["JULIA_PROJECT"] = str(PROJECT_ROOT)
-
-    result = subprocess.run(
-        cmd,
-        cwd=PROJECT_ROOT,
-        check=True,
-        env=env,
-        capture_output=False,
-        text=True,
-    )
-    return result
-
-
-def process_outputs_batch(append=False, edar_edges=None):
-    """Stage 2: Process outputs into raw-ish observations for EpiForecaster preprocessing."""
-    global OUTPUT_FOLDER, METAPOP_CSV
-    zarr_output = OUTPUT_FOLDER / "raw_synthetic_observations.zarr"
-
-    cmd = [
-        sys.executable,
-        "python/process_synthetic_outputs.py",
-        "--runs-dir",
-        str(OUTPUT_FOLDER),
-        "--metapop-csv",
-        str(METAPOP_CSV),
-        "--output",
-        str(zarr_output),
-    ]
-
-    if append:
-        cmd.append("--append")
-
-    if edar_edges:
-        cmd.extend(["--edar-edges", str(edar_edges)])
-
-    return run_stage(f"Process Outputs (Append={append})", cmd)
-
-
-def clean_run_folders():
-    """Remove run folders but keep the Zarr output."""
+    Args:
+        directory: Directory to clean (defaults to global OUTPUT_FOLDER)
+    """
     global OUTPUT_FOLDER
-    logger.info(f"Cleaning run folders in {OUTPUT_FOLDER}")
-    for item in OUTPUT_FOLDER.iterdir():
+    target_dir = directory if directory is not None else OUTPUT_FOLDER
+    logger.info(f"Cleaning run folders in {target_dir}")
+    for item in target_dir.iterdir():
         if item.is_dir() and item.name.startswith("run_"):
             shutil.rmtree(item)
     logger.info("Run folders cleaned.")
@@ -192,86 +138,48 @@ def plot_zarr_epicurves():
     return run_stage("Plot Zarr Epicurves", cmd)
 
 
-def run_iterative_pipeline(n_profiles, batch_size, skip_sim=False, skip_process=False, edar_edges=None, failure_tolerance=10):
-    """Execute the pipeline in batches to save disk space."""
-    global OUTPUT_FOLDER
+def run_two_phase_pipeline(n_profiles=15, batch_size=5, spike_threshold=0.1, spike_method="percentile",
+                           growth_factor_threshold=1.5, min_growth_duration=3, min_cases_per_capita=1e-4,
+                           skip_sim=False, skip_process=False, edar_edges=None, failure_tolerance=10,
+                           sparsity_mode="tiers", sparsity_tiers=None, sparsity_seed=42):
+    """Execute the two-phase synthetic data generation pipeline with batching support.
 
-    # Clean everything initially if this is a fresh start
-    if not skip_sim and not skip_process:
-        if OUTPUT_FOLDER.exists():
-            # We want to keep the folder but remove contents to start fresh
-            # BUT we must be careful not to delete if user wanted to resume?
-            # For now, let's assume a fresh run implies cleaning
-            pass
-
-    total_batches = (n_profiles + batch_size - 1) // batch_size
-
-    for batch_idx in range(total_batches):
-        start_idx = batch_idx * batch_size
-        end_idx = min(start_idx + batch_size, n_profiles)
-
-        logger.info(
-            f"=== Processing Batch {batch_idx + 1}/{total_batches} (Profiles {start_idx}-{end_idx}) ==="
-        )
-
-        # 1. Simulate Batch
-        if not skip_sim:
-            # Clean run folders from previous batch before starting new one
-            # BUT do NOT remove the Zarr file
-            clean_run_folders()
-
-            run_simulation_batch(
-                n_profiles=n_profiles,
-                start_idx=start_idx,
-                end_idx=end_idx,
-                clean_output_dir=False,  # We handle cleaning manually
-                failure_tolerance=failure_tolerance,
-            )
-
-        # 2. Process Batch
-        if not skip_process:
-            # Append if this is not the first batch OR if we are resuming
-            # Actually, logic is: Append if batch_idx > 0.
-            # If batch_idx == 0, we overwrite (create new).
-
-            is_append = batch_idx > 0
-            process_outputs_batch(append=is_append, edar_edges=edar_edges)
-
-        logger.info(f"=== Batch {batch_idx + 1} Completed ===")
-
-    # Final cleanup of run folders
-    if not skip_sim:
-        clean_run_folders()
-
-
-def run_two_phase_pipeline(n_profiles=15, spike_threshold=0.1, skip_sim=False, skip_process=False, edar_edges=None, failure_tolerance=10):
-    """Execute the two-phase synthetic data generation pipeline.
-
-    Phase 1: Generate and run all baseline scenarios (no interventions)
+    Phase 1: Generate and run all baseline scenarios (no interventions), processed in batches
     Phase 2: Analyze baseline outputs to detect infection spikes, then generate
              intervention scenarios with realistic timing based on observed spikes
 
     Args:
         n_profiles: Number of epidemiological profiles to generate
+        batch_size: Number of profiles to process in each batch during Phase 1
         spike_threshold: Percentile threshold for spike detection (default: 0.1 = 10th percentile)
+        spike_method: Spike detection method (default: "percentile")
+        growth_factor_threshold: Growth factor threshold for growth_rate method (default: 1.5)
+        min_growth_duration: Minimum consecutive days of growth for growth_rate (default: 3)
+        min_cases_per_capita: Minimum cases per person for growth_rate (default: 1e-4)
         skip_sim: Skip simulation stages (use existing runs)
         skip_process: Skip processing stages (use existing zarr)
         edar_edges: Path to EDAR-municipality edges file
         failure_tolerance: Number of consecutive failures before aborting
+        sparsity_mode: Sparsity distribution mode for post-processing (default: "tiers")
+        sparsity_tiers: Sparsity levels for tier assignment (default: [0.05, 0.20, 0.40, 0.60, 0.80])
+        sparsity_seed: Seed for deterministic tier assignment (default: 42)
     """
     global OUTPUT_FOLDER, METAPOP_CSV, DATA_FOLDER, CONFIG_PATH
 
-    output_base = PROJECT_ROOT / "runs" / "synthetic_two_phase"
+    # Use the OUTPUT_FOLDER that was set in main() based on dataset
+    output_base = OUTPUT_FOLDER
     baseline_dir = output_base / "baselines"
     intervention_dir = output_base / "interventions"
 
-    # Update global OUTPUT_FOLDER for process_outputs_batch
-    # We'll update it per phase
+    # Save original OUTPUT_FOLDER for restoration
     original_output_folder = OUTPUT_FOLDER
 
-    # Phase 1: Generate baselines
+    # Calculate batches for Phase 1
+    total_batches = (n_profiles + batch_size - 1) // batch_size
+
+    # Phase 1: Generate baselines (with batching)
     print("=" * 60)
-    print("PHASE 1: Generating baseline scenarios...")
+    print(f"PHASE 1: Generating baseline scenarios ({n_profiles} profiles in {total_batches} batches)...")
     print("=" * 60)
 
     if not skip_sim:
@@ -281,23 +189,36 @@ def run_two_phase_pipeline(n_profiles=15, spike_threshold=0.1, skip_sim=False, s
             shutil.rmtree(baseline_dir)
         baseline_dir.mkdir(parents=True, exist_ok=True)
 
-        cmd = [
-            sys.executable,
-            "python/synthetic_generator.py",
-            "--n-profiles", str(n_profiles),
-            "--output-folder", str(baseline_dir),
-            "--data-folder", str(DATA_FOLDER),
-            "--config", str(CONFIG_PATH),
-            "--baseline-only",
-            "--failure-tolerance", str(failure_tolerance),
-        ]
+        for batch_idx in range(total_batches):
+            start_idx = batch_idx * batch_size
+            end_idx = min(start_idx + batch_size, n_profiles)
 
-        run_stage("Generate Baselines", cmd)
+            logger.info(
+                f"=== Processing Baseline Batch {batch_idx + 1}/{total_batches} (Profiles {start_idx}-{end_idx}) ==="
+            )
+
+            # Clean run folders from previous batch
+            clean_run_folders(baseline_dir)
+
+            cmd = [
+                sys.executable,
+                "python/synthetic_generator.py",
+                "--n-profiles", str(n_profiles),
+                "--start-index", str(start_idx),
+                "--end-index", str(end_idx),
+                "--output-folder", str(baseline_dir),
+                "--data-folder", str(DATA_FOLDER),
+                "--config", str(CONFIG_PATH),
+                "--baseline-only",
+                "--failure-tolerance", str(failure_tolerance),
+            ]
+
+            run_stage(f"Generate Baselines (Batch {batch_idx + 1}/{total_batches})", cmd)
 
     # Process baseline outputs
     if not skip_process:
-        OUTPUT_FOLDER = baseline_dir  # Update global for process_outputs_batch
-        baseline_zarr = baseline_dir / "raw_synthetic_observations.zarr"
+        OUTPUT_FOLDER = baseline_dir  # Update global for clean_run_folders
+        baseline_zarr = output_base / "raw_synthetic_observations.zarr"
 
         cmd = [
             sys.executable,
@@ -306,7 +227,12 @@ def run_two_phase_pipeline(n_profiles=15, spike_threshold=0.1, skip_sim=False, s
             "--metapop-csv", str(METAPOP_CSV),
             "--output", str(baseline_zarr),
             "--baseline-only",
+            "--sparsity-mode", sparsity_mode,
+            "--sparsity-seed", str(sparsity_seed),
         ]
+
+        if sparsity_tiers:
+            cmd.extend(["--sparsity-tiers"] + [str(t) for t in sparsity_tiers])
 
         if edar_edges:
             cmd.extend(["--edar-edges", str(edar_edges)])
@@ -330,6 +256,10 @@ def run_two_phase_pipeline(n_profiles=15, spike_threshold=0.1, skip_sim=False, s
             "python/synthetic_generator.py",
             "--intervention-only", str(baseline_dir),
             "--spike-threshold", str(spike_threshold),
+            "--spike-method", str(spike_method),
+            "--growth-factor-threshold", str(growth_factor_threshold),
+            "--min-growth-duration", str(min_growth_duration),
+            "--min-cases-per-capita", str(min_cases_per_capita),
             "--output-folder", str(intervention_dir),
             "--data-folder", str(DATA_FOLDER),
             "--config", str(CONFIG_PATH),
@@ -340,8 +270,8 @@ def run_two_phase_pipeline(n_profiles=15, spike_threshold=0.1, skip_sim=False, s
 
     # Process intervention outputs and append to baseline zarr
     if not skip_process:
-        OUTPUT_FOLDER = intervention_dir  # Update global for process_outputs_batch
-        baseline_zarr = baseline_dir / "raw_synthetic_observations.zarr"
+        OUTPUT_FOLDER = intervention_dir  # Update global for clean_run_folders
+        baseline_zarr = output_base / "raw_synthetic_observations.zarr"
 
         cmd = [
             sys.executable,
@@ -350,19 +280,31 @@ def run_two_phase_pipeline(n_profiles=15, spike_threshold=0.1, skip_sim=False, s
             "--metapop-csv", str(METAPOP_CSV),
             "--output", str(baseline_zarr),
             "--append",
+            "--init",
+            "--sparsity-mode", sparsity_mode,
+            "--sparsity-seed", str(sparsity_seed),
         ]
+
+        if sparsity_tiers:
+            cmd.extend(["--sparsity-tiers"] + [str(t) for t in sparsity_tiers])
 
         if edar_edges:
             cmd.extend(["--edar-edges", str(edar_edges)])
 
         run_stage("Process Interventions (Append)", cmd)
 
+    # Clean up run folders after Phase 2 processing
+    if not skip_sim:
+        clean_run_folders(intervention_dir)
+        # Also clean up baseline run folders now that intervention generation is complete
+        clean_run_folders(baseline_dir)
+
     # Restore original OUTPUT_FOLDER
     OUTPUT_FOLDER = original_output_folder
 
     print("\n" + "=" * 60)
     print("Two-Phase Pipeline Complete!")
-    print(f"Final output: {baseline_dir / 'raw_synthetic_observations.zarr'}")
+    print(f"Final output: {output_base / 'raw_synthetic_observations.zarr'}")
     print("=" * 60)
 
 
@@ -407,7 +349,7 @@ def main():
         "--batch-size",
         type=int,
         default=5,
-        help="Number of profiles to process in each batch to save disk space (default: 5)",
+        help="Number of profiles to process in each batch during Phase 1 baseline generation (default: 5)",
     )
     parser.add_argument(
         "--dry-run",
@@ -434,20 +376,58 @@ def main():
         help="Number of consecutive failures before aborting (default: 10)",
     )
     parser.add_argument(
-        "--legacy",
-        action="store_true",
-        help="Use legacy single-phase pipeline instead of default two-phase spike-based pipeline",
-    )
-    parser.add_argument(
         "--spike-threshold",
         type=float,
         default=0.1,
         help="Spike detection threshold percentile for two-phase pipeline (default: 0.1 = 10th percentile)",
     )
+    parser.add_argument(
+        "--spike-method",
+        type=str,
+        default="percentile",
+        choices=["percentile", "prominence", "growth_rate"],
+        help="Spike detection method for two-phase pipeline (default: percentile)",
+    )
+    parser.add_argument(
+        "--growth-factor-threshold",
+        type=float,
+        default=1.5,
+        help="Growth factor threshold for growth_rate method (default: 1.5 = 50%% growth)",
+    )
+    parser.add_argument(
+        "--min-growth-duration",
+        type=int,
+        default=3,
+        help="Minimum consecutive days of growth for growth_rate method (default: 3)",
+    )
+    parser.add_argument(
+        "--min-cases-per-capita",
+        type=float,
+        default=1e-4,
+        help="Minimum cases per person for growth_rate method (default: 1e-4 = 1 per 10K)",
+    )
+    # Sparsity configuration for curriculum learning
+    parser.add_argument(
+        "--sparsity-mode",
+        choices=["uniform", "tiers"],
+        default="tiers",
+        help="Sparsity distribution mode for post-processing (default: tiers)",
+    )
+    parser.add_argument(
+        "--sparsity-tiers",
+        type=float,
+        nargs="+",
+        default=[0.05, 0.20, 0.40, 0.60, 0.80],
+        help="Sparsity levels for tier assignment (default: 0.05 0.20 0.40 0.60 0.80)",
+    )
+    parser.add_argument(
+        "--sparsity-seed",
+        type=int,
+        default=42,
+        help="Seed for deterministic tier assignment (default: 42)",
+    )
 
     args = parser.parse_args()
-    # Default to two-phase mode unless --legacy is specified
-    args.two_phase = not args.legacy
 
     # Update paths based on dataset selection
     global DATA_FOLDER, CONFIG_PATH, OUTPUT_FOLDER, METAPOP_CSV
@@ -479,58 +459,37 @@ def main():
         OUTPUT_FOLDER.mkdir(parents=True, exist_ok=True)
 
     if args.dry_run:
-        if args.two_phase:
-            logger.info("DRY RUN - Two-Phase Pipeline:")
-            logger.info(f"  Total Profiles: {args.n_profiles}")
-            logger.info(f"  Spike Threshold: {args.spike_threshold}")
-        else:
-            logger.info("DRY RUN - Iterative Pipeline:")
-            logger.info(f"  Total Profiles: {args.n_profiles}")
-            logger.info(f"  Batch Size: {args.batch_size}")
-            logger.info(
-                f"  Batches: {(args.n_profiles + args.batch_size - 1) // args.batch_size}"
-            )
+        logger.info("DRY RUN - Two-Phase Pipeline:")
+        logger.info(f"  Total Profiles: {args.n_profiles}")
+        logger.info(f"  Batch Size: {args.batch_size}")
+        logger.info(f"  Spike Threshold: {args.spike_threshold}")
+        logger.info(f"  Batches: {(args.n_profiles + args.batch_size - 1) // args.batch_size}")
         return
 
-    # Execute Two-Phase Pipeline (if enabled) or Iterative Pipeline
-    if args.two_phase:
-        try:
-            run_two_phase_pipeline(
-                n_profiles=args.n_profiles,
-                spike_threshold=args.spike_threshold,
-                skip_sim=args.skip_sim,
-                skip_process=args.skip_process,
-                edar_edges=args.edar_edges,
-                failure_tolerance=args.failure_tolerance,
-            )
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Two-phase pipeline failed with exit code {e.returncode}")
-            sys.exit(1)
-        except Exception as e:
-            logger.error(f"Two-phase pipeline failed with exception: {e}")
-            sys.exit(1)
-    else:
-        # Standard Iterative Pipeline
-        try:
-            run_iterative_pipeline(
-                args.n_profiles,
-                args.batch_size,
-                skip_sim=args.skip_sim,
-                skip_process=args.skip_process,
-                edar_edges=args.edar_edges,
-                failure_tolerance=args.failure_tolerance,
-            )
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Pipeline failed with exit code {e.returncode}")
-            sys.exit(1)
-        except Exception as e:
-            logger.error(f"Pipeline failed with exception: {e}")
-            sys.exit(1)
-
-    # Run Plotting Stages (on the final consolidated Zarr)
-    # Update OUTPUT_FOLDER for two-phase mode
-    if args.two_phase:
-        OUTPUT_FOLDER = PROJECT_ROOT / "runs" / "synthetic_two_phase" / "baselines"
+    # Execute Two-Phase Pipeline
+    try:
+        run_two_phase_pipeline(
+            n_profiles=args.n_profiles,
+            batch_size=args.batch_size,
+            spike_threshold=args.spike_threshold,
+            spike_method=args.spike_method,
+            growth_factor_threshold=args.growth_factor_threshold,
+            min_growth_duration=args.min_growth_duration,
+            min_cases_per_capita=args.min_cases_per_capita,
+            skip_sim=args.skip_sim,
+            skip_process=args.skip_process,
+            edar_edges=args.edar_edges,
+            failure_tolerance=args.failure_tolerance,
+            sparsity_mode=args.sparsity_mode,
+            sparsity_tiers=args.sparsity_tiers,
+            sparsity_seed=args.sparsity_seed,
+        )
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Two-phase pipeline failed with exit code {e.returncode}")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"Two-phase pipeline failed with exception: {e}")
+        sys.exit(1)
 
     stages = []
 

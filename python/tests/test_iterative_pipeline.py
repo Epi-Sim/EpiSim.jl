@@ -1,7 +1,7 @@
 import json
 import os
 import sys
-from unittest.mock import call, patch
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -127,13 +127,12 @@ class TestIterativePipeline:
             "Profiles should be deterministic across instances!"
         )
 
-    @patch("run_synthetic_pipeline.run_simulation_batch")
-    @patch("run_synthetic_pipeline.process_outputs_batch")
     @patch("run_synthetic_pipeline.clean_run_folders")
+    @patch("run_synthetic_pipeline.subprocess.run")
     def test_pipeline_orchestration(
-        self, mock_clean, mock_process, mock_sim, mock_paths
+        self, mock_subprocess, mock_clean, mock_paths
     ):
-        """Test the batching logic of the orchestration script."""
+        """Test the two-phase pipeline orchestration with subprocess calls."""
 
         n_profiles = 15
         batch_size = 5
@@ -143,39 +142,80 @@ class TestIterativePipeline:
             "run_synthetic_pipeline.OUTPUT_FOLDER",
             new=mock_paths["root"] / "runs" / "synthetic_test",
         ):
-            run_synthetic_pipeline.run_iterative_pipeline(
-                n_profiles=n_profiles, batch_size=batch_size
+            run_synthetic_pipeline.run_two_phase_pipeline(
+                n_profiles=n_profiles,
+                batch_size=batch_size,
+                spike_threshold=0.1,
+                skip_sim=False,
+                skip_process=False,
+                edar_edges=None,
+                failure_tolerance=10
             )
 
-        # Verify Simulation calls: 3 batches (0-5, 5-10, 10-15)
-        assert mock_sim.call_count == 3
-        mock_sim.assert_has_calls(
-            [
-                call(n_profiles=15, start_idx=0, end_idx=5, clean_output_dir=False),
-                call(n_profiles=15, start_idx=5, end_idx=10, clean_output_dir=False),
-                call(n_profiles=15, start_idx=10, end_idx=15, clean_output_dir=False),
-            ]
-        )
+        # Verify subprocess calls for two-phase pipeline:
+        # Phase 1: 3 baseline generation batches (0-5, 5-10, 10-15)
+        # Phase 1: 1 baseline processing call (--baseline-only)
+        # Phase 2: 1 intervention generation call (--intervention-only)
+        # Phase 2: 1 intervention processing call (--append)
+        # Total: 6 subprocess calls
+        assert mock_subprocess.call_count == 6
 
-        # Verify Process calls: 3 batches
-        # Batch 1 (idx=0): append=False, edar_edges=None
-        # Batch 2 (idx=1): append=True, edar_edges=None
-        # Batch 3 (idx=2): append=True, edar_edges=None
-        assert mock_process.call_count == 3
-        mock_process.assert_has_calls(
-            [call(append=False, edar_edges=None), call(append=True, edar_edges=None), call(append=True, edar_edges=None)]
-        )
+        # Extract the commands from the calls (subprocess.run was called with cmd as first arg)
+        calls = mock_subprocess.call_args_list
+        commands = [call[0][0] for call in calls]
 
-        # Verify Cleanup: 1 (before 1st batch) + 1 (before 2nd) + 1 (before 3rd) + 1 (final) = 4
-        # Wait, the logic is:
-        # loop:
-        #   clean()
-        #   sim()
-        #   process()
-        # end
-        # clean()
-        # So yes, 4 calls.
-        assert mock_clean.call_count == 4
+        # Helper function to check if command list contains argument-value pairs
+        def cmd_has_pairs(cmd, pairs):
+            """Check if a command list contains all argument-value pairs as list elements.
+            pairs: list of [arg, value] pairs like [["--start-index", "0"], ["--end-index", "5"]]
+            """
+            for arg, value in pairs:
+                # Find the argument in the command list
+                try:
+                    idx = cmd.index(arg)
+                    # Check if the next element is the expected value
+                    if idx + 1 >= len(cmd) or cmd[idx + 1] != value:
+                        return False
+                except ValueError:
+                    # Argument not found
+                    return False
+            return True
+
+        # Phase 1: Baseline generation batches
+        # Batch 1: synthetic_generator.py --start-index 0 --end-index 5
+        baseline_batch_1 = [c for c in commands if cmd_has_pairs(c, [["--start-index", "0"], ["--end-index", "5"]])]
+        assert len(baseline_batch_1) == 1, "Should have baseline batch 1 (0-5)"
+        assert "--baseline-only" in baseline_batch_1[0]
+
+        # Batch 2: synthetic_generator.py --start-index 5 --end-index 10
+        baseline_batch_2 = [c for c in commands if cmd_has_pairs(c, [["--start-index", "5"], ["--end-index", "10"]])]
+        assert len(baseline_batch_2) == 1, "Should have baseline batch 2 (5-10)"
+        assert "--baseline-only" in baseline_batch_2[0]
+
+        # Batch 3: synthetic_generator.py --start-index 10 --end-index 15
+        baseline_batch_3 = [c for c in commands if cmd_has_pairs(c, [["--start-index", "10"], ["--end-index", "15"]])]
+        assert len(baseline_batch_3) == 1, "Should have baseline batch 3 (10-15)"
+        assert "--baseline-only" in baseline_batch_3[0]
+
+        # Phase 1: Baseline processing
+        baseline_process = [c for c in commands if "process_synthetic_outputs.py" in " ".join(c) and "--baseline-only" in c]
+        assert len(baseline_process) == 1, "Should have 1 baseline processing call"
+
+        # Phase 2: Intervention generation
+        intervention_gen = [c for c in commands if "--intervention-only" in c]
+        assert len(intervention_gen) == 1, "Should have 1 intervention generation call"
+        assert cmd_has_pairs(intervention_gen[0], [["--spike-threshold", "0.1"]])
+
+        # Phase 2: Intervention processing (append)
+        intervention_process = [c for c in commands if "process_synthetic_outputs.py" in " ".join(c) and "--append" in c]
+        assert len(intervention_process) == 1, "Should have 1 intervention processing call with --append"
+
+        # Verify clean_run_folders calls:
+        # - 3 calls before each baseline batch
+        # - 1 call after intervention generation
+        # - 1 call for baseline cleanup at end
+        # Total: 5 calls
+        assert mock_clean.call_count == 5
 
     def test_zarr_appending(self, mock_paths):
         """Functional test for zarr appending."""

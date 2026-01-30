@@ -35,6 +35,7 @@ import json
 import logging
 import os
 import re
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -280,9 +281,19 @@ def generate_wastewater_with_censoring(
     wastewater_cfg: dict,
     rng: Optional[np.random.Generator] = None,
     monitoring_mask: Optional[np.ndarray] = None,
+    missing_rate: float = 0.02,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Generate wastewater observations with censoring flags.
+
+    Args:
+        infections_stratified: (Time, Region, AgeGroups) array of infections
+        population: (Region,) array of population values
+        gene_targets: Dict of gene target configurations
+        wastewater_cfg: Dict of wastewater generation parameters
+        rng: Random number generator
+        monitoring_mask: (Time, Region) bool array for delayed monitoring
+        missing_rate: Fraction of wastewater data to make missing (default: 0.02)
 
     Returns:
         wastewater: (Time, Region, Target) array of observations
@@ -331,8 +342,7 @@ def generate_wastewater_with_censoring(
         else:
             censor_flags[:, :, i] = 0  # All observed
 
-        # Add some missing data
-        missing_rate = 0.02  # 2% missing
+        # Add some missing data (use parameterizable rate)
         missing_mask = rng.random(ww_signal.shape) < missing_rate
         ww_signal[missing_mask] = np.nan
         censor_flags[missing_mask] = 2  # Missing flag
@@ -478,6 +488,38 @@ def aggregate_infections_to_edar(infections_stratified, emap_matrix, population_
     return infections_edar, population_edar
 
 
+def assign_sparsity_tiers(
+    n_runs: int, tiers: list[float], seed: Optional[int] = None
+) -> np.ndarray:
+    """
+    Assign sparsity levels to runs using stratified sampling.
+
+    Ensures each tier has roughly equal number of runs.
+    Deterministic: same seed + n_runs produces same assignment.
+
+    Args:
+        n_runs: Number of runs to assign sparsity levels to
+        tiers: List of sparsity levels to assign (e.g., [0.05, 0.20, 0.40, 0.60, 0.80])
+        seed: Random seed for deterministic assignment (optional)
+
+    Returns:
+        sparsity_per_run: Array of shape (n_runs,) with sparsity level for each run
+    """
+    rng = np.random.default_rng(seed)
+    sparsity_per_run = np.zeros(n_runs, dtype=float)
+
+    # Stratified sampling: assign runs evenly across tiers
+    runs_per_tier = n_runs // len(tiers)
+    for i, tier_sparsity in enumerate(tiers):
+        start_idx = i * runs_per_tier
+        end_idx = start_idx + runs_per_tier if i < len(tiers) - 1 else n_runs
+        sparsity_per_run[start_idx:end_idx] = tier_sparsity
+
+    # Shuffle within tiers for randomness
+    rng.shuffle(sparsity_per_run)
+    return sparsity_per_run
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Process synthetic simulation outputs into a raw observation zarr dataset."
@@ -560,6 +602,11 @@ def main():
         help="Append to existing Zarr store instead of overwriting",
     )
     parser.add_argument(
+        "--init",
+        action="store_true",
+        help="Initialize zarr store if it doesn't exist (use with --append for 'create if not exists, else append' behavior)",
+    )
+    parser.add_argument(
         "--baseline-only",
         action="store_true",
         help="Process only baseline scenarios (for spike detection in two-phase pipeline)",
@@ -635,6 +682,27 @@ def main():
         help="Std dev of deaths reporting delay (default: 2)",
     )
 
+    # Sparsity tier configuration for curriculum learning
+    parser.add_argument(
+        "--sparsity-mode",
+        choices=["uniform", "tiers"],
+        default="tiers",
+        help="Sparsity distribution mode: uniform (same for all runs) or tiers (vary per run for curriculum learning)",
+    )
+    parser.add_argument(
+        "--sparsity-tiers",
+        type=float,
+        nargs="+",
+        default=[0.05, 0.20, 0.40, 0.60, 0.80],
+        help="Sparsity levels for tier assignment when --sparsity-mode=tiers (default: 0.05 0.20 0.40 0.60 0.80)",
+    )
+    parser.add_argument(
+        "--sparsity-seed",
+        type=int,
+        default=None,
+        help="Seed for deterministic tier assignment (default: None)",
+    )
+
     # Wastewater gene-specific noise parameters (can override defaults)
     parser.add_argument(
         "--ww-noise-n1",
@@ -708,6 +776,22 @@ def main():
         if not run_dirs:
             raise ValueError(f"No baseline runs found in {runs_dir}")
 
+    # Determine sparsity level for each run
+    n_runs_expected = len(run_dirs)
+    if args.sparsity_mode == "uniform":
+        sparsity_per_run = np.full(n_runs_expected, args.missing_rate)
+        logger.info(f"Sparsity mode: uniform (all runs use missing_rate={args.missing_rate})")
+    elif args.sparsity_mode == "tiers":
+        sparsity_per_run = assign_sparsity_tiers(
+            n_runs_expected, args.sparsity_tiers, seed=args.sparsity_seed
+        )
+        unique, counts = np.unique(sparsity_per_run, return_counts=True)
+        tier_summary = ", ".join([f"{u:.2f}:{c}" for u, c in zip(unique, counts)])
+        logger.info(
+            f"Sparsity mode: tiers with {len(args.sparsity_tiers)} levels - "
+            f"distribution: {tier_summary}"
+        )
+
     metapop_df = pd.read_csv(args.metapop_csv, dtype={"id": str})
     metapop_df["id"] = metapop_df["id"].astype(str)
     region_ids = metapop_df["id"].tolist()
@@ -763,6 +847,7 @@ def main():
     scenario_types = []
     strengths = []
     run_ids = []
+    sparsity_levels = []  # Track per-run sparsity levels for metadata
 
     dates_ref = None
     rng = np.random.default_rng(args.seed)
@@ -780,10 +865,17 @@ def main():
         "kernel_quantile": args.kernel_quantile,
     }
 
+    # Track run index for per-run sparsity assignment
+    # Note: Some runs may be skipped if load_run_artifacts returns None,
+    # so we need to track the index separately from the directory iteration
+    run_idx = 0
     for run_dir in run_dirs:
         artifacts = load_run_artifacts(run_dir)
         if artifacts is None:
             continue
+
+        # Get sparsity level for this run
+        run_sparsity = sparsity_per_run[run_idx]
 
         config, observables_path = artifacts
         infections_stratified = load_infections_stratified(observables_path)
@@ -815,7 +907,7 @@ def main():
         )
         cases_with_gaps, _ = apply_missing_data_patterns(
             reported_cases.T,
-            missing_rate=args.missing_rate,
+            missing_rate=run_sparsity,
             missing_gap_length=args.missing_gap_length,
             rng=case_rng,
         )
@@ -845,6 +937,7 @@ def main():
                 wastewater_cfg,
                 rng=ww_rng,
                 monitoring_mask=monitoring_mask,
+                missing_rate=run_sparsity,
             )
         else:
             # No EDAR mapping: generate wastewater directly on regions
@@ -863,6 +956,7 @@ def main():
                 wastewater_cfg,
                 rng=ww_rng,
                 monitoring_mask=monitoring_mask,
+                missing_rate=run_sparsity,
             )
 
         # Generate reported hospitalizations and deaths with reporting noise
@@ -906,6 +1000,10 @@ def main():
         scenario_types.append(scenario_type)
         strengths.append(strength)
         run_ids.append(sanitize_run_id(run_dir.name))
+        sparsity_levels.append(run_sparsity)
+
+        # Increment run index for sparsity assignment
+        run_idx += 1
 
     if not infections_true_runs:
         raise ValueError("No valid runs were processed")
@@ -1062,7 +1160,7 @@ def main():
     )
     data_vars["synthetic_sparsity_level"] = (
         ("run_id",),
-        np.full(len(run_ids), args.missing_rate, dtype=float),
+        np.array(sparsity_levels, dtype=float),
         {},
     )
 
@@ -1219,14 +1317,31 @@ def main():
 
     output_path = args.output
 
-    if args.append and os.path.exists(output_path):
-        logger.info(
-            "Appending to observation zarr at %s (runs=%s)",
-            output_path,
-            len(run_ids),
-        )
-        dataset.to_zarr(output_path, mode="a", append_dim="run_id", zarr_format=2)
+    # Determine write mode
+    if args.append:
+        if os.path.exists(output_path):
+            # Explicit append to existing file
+            logger.info(
+                "Appending to observation zarr at %s (runs=%s)",
+                output_path,
+                len(run_ids),
+            )
+            dataset.to_zarr(output_path, mode="a", append_dim="run_id", zarr_format=2)
+        elif args.init:
+            # Create new file with --init flag
+            logger.info(
+                "Initializing new zarr store at %s (runs=%s)",
+                output_path,
+                len(run_ids),
+            )
+            dataset.to_zarr(output_path, mode="w", zarr_format=2)
+        else:
+            # --append without --init and file doesn't exist
+            logger.error("Cannot append to non-existent file: %s", output_path)
+            logger.error("Use --init to create a new zarr store, or omit --append to overwrite")
+            sys.exit(1)
     else:
+        # Write mode (overwrite existing or create new)
         if os.path.exists(output_path):
             logger.info("Removing existing output at %s", output_path)
             import shutil
