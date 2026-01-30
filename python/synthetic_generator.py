@@ -567,7 +567,9 @@ class SyntheticDataGenerator:
 
         return False
 
-    def run_spike_based_interventions(self, baseline_dir, spike_threshold=0.1, min_duration=7):
+    def run_spike_based_interventions(self, baseline_dir, spike_threshold=0.1, min_duration=7,
+                                      spike_method="percentile", growth_factor_threshold=1.5,
+                                      min_growth_duration=3, min_cases_per_capita=1e-4):
         """
         Generate intervention scenarios based on detected spikes in baseline outputs.
 
@@ -579,6 +581,10 @@ class SyntheticDataGenerator:
             baseline_dir: Directory containing baseline run outputs and zarr
             spike_threshold: Percentile threshold for spike detection (default: 0.1)
             min_duration: Minimum days for spike period (default: 7)
+            spike_method: Spike detection method (default: "percentile")
+            growth_factor_threshold: Growth factor threshold for growth_rate (default: 1.5)
+            min_growth_duration: Minimum consecutive days of growth for growth_rate (default: 3)
+            min_cases_per_capita: Minimum cases per person for growth_rate (default: 1e-4)
 
         Raises:
             FileNotFoundError: If baseline zarr or configs don't exist
@@ -587,7 +593,9 @@ class SyntheticDataGenerator:
         from spike_detector import detect_spike_periods_from_zarr
 
         # Validate baseline directory exists
-        baseline_zarr = os.path.join(baseline_dir, "raw_synthetic_observations.zarr")
+        # The zarr file is in the parent directory of baseline_dir (output_base)
+        # because it contains both baselines AND interventions (interventions are appended)
+        baseline_zarr = os.path.join(os.path.dirname(baseline_dir), "raw_synthetic_observations.zarr")
         if not os.path.exists(baseline_dir):
             raise FileNotFoundError(
                 f"Baseline directory not found: {baseline_dir}\n"
@@ -597,7 +605,7 @@ class SyntheticDataGenerator:
             raise FileNotFoundError(
                 f"Baseline zarr not found: {baseline_zarr}\n"
                 f"Please process baselines first:\n"
-                f"  uv run python synthetic_generator.py --baseline-only --output-folder {baseline_dir}\n"
+                f"  uv run python synthetic_generator.py --baseline-only --output-folder {os.path.dirname(baseline_dir)}\n"
                 f"  uv run python process_synthetic_outputs.py --runs-dir {baseline_dir} --output {baseline_zarr}"
             )
 
@@ -605,15 +613,24 @@ class SyntheticDataGenerator:
         logger.info("PHASE 2: Spike-Based Intervention Generation")
         logger.info("=" * 60)
         logger.info(f"Baseline directory: {baseline_dir}")
+        logger.info(f"Spike method: {spike_method}")
         logger.info(f"Spike threshold: {spike_threshold} (percentile)")
         logger.info(f"Min spike duration: {min_duration} days")
+        if spike_method == "growth_rate":
+            logger.info(f"Growth factor threshold: {growth_factor_threshold}")
+            logger.info(f"Min growth duration: {min_growth_duration}")
+            logger.info(f"Min cases per capita: {min_cases_per_capita}")
 
         # Load baseline zarr and detect spikes per profile
         spikes = detect_spike_periods_from_zarr(
             baseline_zarr,
             threshold_pct=spike_threshold,
             min_duration=min_duration,
+            method=spike_method,
             baseline_filter=True,  # Only process Baseline scenarios
+            growth_factor_threshold=growth_factor_threshold,
+            min_growth_duration=min_growth_duration,
+            min_cases_per_capita=min_cases_per_capita,
         )
 
         logger.info(f"Detected spikes in {len(spikes)} baseline runs")
@@ -623,6 +640,8 @@ class SyntheticDataGenerator:
 
         # Generate intervention scenarios using detected spike windows
         for run_id, spike_windows in spikes.items():
+            # Strip whitespace from run_id (zarr may have trailing spaces)
+            run_id = run_id.strip()
             # Extract profile ID from run_ID_Baseline format
             # run_id format: "0_Baseline", "1_Baseline", etc.
             parts = run_id.split("_")
@@ -788,6 +807,31 @@ if __name__ == "__main__":
         default=7,
         help="Minimum days for spike period for --intervention-only (default: 7)",
     )
+    parser.add_argument(
+        "--spike-method",
+        type=str,
+        default="percentile",
+        choices=["percentile", "prominence", "growth_rate"],
+        help="Spike detection method for --intervention-only (default: percentile)",
+    )
+    parser.add_argument(
+        "--growth-factor-threshold",
+        type=float,
+        default=1.5,
+        help="Growth factor threshold for growth_rate method (default: 1.5 = 50%% growth)",
+    )
+    parser.add_argument(
+        "--min-growth-duration",
+        type=int,
+        default=3,
+        help="Minimum consecutive days of growth for growth_rate method (default: 3)",
+    )
+    parser.add_argument(
+        "--min-cases-per-capita",
+        type=float,
+        default=1e-4,
+        help="Minimum cases per person for growth_rate method (default: 1e-4 = 1 per 10K)",
+    )
 
     args = parser.parse_args()
 
@@ -832,6 +876,10 @@ if __name__ == "__main__":
             baseline_dir=baseline_dir,
             spike_threshold=args.spike_threshold,
             min_duration=args.min_spike_duration,
+            spike_method=args.spike_method,
+            growth_factor_threshold=args.growth_factor_threshold,
+            min_growth_duration=args.min_growth_duration,
+            min_cases_per_capita=args.min_cases_per_capita,
         )
 
         # Execute batch if not skipped
