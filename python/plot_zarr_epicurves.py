@@ -54,13 +54,21 @@ def get_combined_wastewater(run_data, spatial_dim):
     # Check if using raw format (biomarkers) or processed format (obs_wastewater)
     if "edar_biomarker_N1" in run_data:
         # Raw format: combine the three biomarker targets
-        n1 = run_data["edar_biomarker_N1"].sum(dim=spatial_dim).values
-        n2 = run_data["edar_biomarker_N2"].sum(dim=spatial_dim).values
-        ip4 = run_data["edar_biomarker_IP4"].sum(dim=spatial_dim).values
-        return n1 + n2 + ip4
+        n1 = run_data["edar_biomarker_N1"].sum(dim=spatial_dim).squeeze().values
+        n2 = run_data["edar_biomarker_N2"].sum(dim=spatial_dim).squeeze().values
+        ip4 = run_data["edar_biomarker_IP4"].sum(dim=spatial_dim).squeeze().values
+        result = n1 + n2 + ip4
+        # Handle case where squeeze leaves multiple dimensions (duplicate run_id entries)
+        if result.ndim > 1:
+            result = result.mean(axis=0)
+        return result
     elif "obs_wastewater" in run_data:
         # Processed format: use obs_wastewater directly
-        return run_data["obs_wastewater"].sum(dim=spatial_dim).values
+        result = run_data["obs_wastewater"].sum(dim=spatial_dim).squeeze().values
+        # Handle case where squeeze leaves multiple dimensions (duplicate run_id entries)
+        if result.ndim > 1:
+            result = result.mean(axis=0)
+        return result
     else:
         raise ValueError("No wastewater or biomarker variables found in run_data")
 
@@ -298,10 +306,20 @@ def plot_run_epicurves(ds, run_id, output_dir, aggregate_regions=True, var_map=N
     wastewater = get_combined_wastewater(run_data, ww_spatial_dim)
 
     if aggregate_regions:
-        infections = run_data[var_map["infections"]].sum(dim="region_id").values
-        hospitalizations = run_data[var_map["hospitalizations"]].sum(dim="region_id").values
-        deaths = run_data[var_map["deaths"]].sum(dim="region_id").values
-        cases = run_data[var_map["cases"]].sum(dim="region_id").values
+        # Sum over region_id, then handle any remaining dimensions (e.g., duplicate run_id entries)
+        infections = run_data[var_map["infections"]].sum(dim="region_id").squeeze().values
+        hospitalizations = run_data[var_map["hospitalizations"]].sum(dim="region_id").squeeze().values
+        deaths = run_data[var_map["deaths"]].sum(dim="region_id").squeeze().values
+        cases = run_data[var_map["cases"]].sum(dim="region_id").squeeze().values
+        # Handle case where squeeze leaves multiple dimensions (duplicate run_id entries)
+        if infections.ndim > 1:
+            infections = infections.mean(axis=0)
+        if hospitalizations.ndim > 1:
+            hospitalizations = hospitalizations.mean(axis=0)
+        if deaths.ndim > 1:
+            deaths = deaths.mean(axis=0)
+        if cases.ndim > 1:
+            cases = cases.mean(axis=0)
     else:
         infections = run_data[var_map["infections"]].values
         hospitalizations = run_data[var_map["hospitalizations"]].values
@@ -310,7 +328,13 @@ def plot_run_epicurves(ds, run_id, output_dir, aggregate_regions=True, var_map=N
 
     # Get scenario info
     scenario = str(run_data[var_map["scenario"]].values)
+    # Handle case where scenario is an array (duplicate run_id entries)
+    if len(scenario) > 50:  # If it's a string representation of an array
+        scenario = scenario.split("'")[1] if "'" in scenario else scenario
     strength = run_data[var_map["strength"]].values
+    # Handle case where strength is an array (duplicate run_id entries)
+    if strength.size > 1:
+        strength = strength[0]  # Take first value
 
     # Create figure with 2 subplots
     fig, (ax1, ax2) = plt.subplots(
@@ -448,7 +472,15 @@ def plot_faceted_grid(ds, run_ids, output_dir, scenarios=None, n_runs=None, var_
     # Group runs by scenario
     scenario_groups = {}
     for run_id in run_ids:
-        scenario = str(ds.sel(run_id=run_id)[var_map["scenario"]].values)
+        scenario_val = ds.sel(run_id=run_id)[var_map["scenario"]].values
+        # Handle case where scenario is an array (duplicate run_id entries)
+        if scenario_val.size > 1:
+            scenario = str(scenario_val[0])
+        else:
+            scenario = str(scenario_val)
+        # Clean up string if it's an array representation
+        if scenario.startswith("['") or scenario.startswith('[\''):
+            scenario = scenario.split("'")[1]
         if scenario not in scenario_groups:
             scenario_groups[scenario] = []
         scenario_groups[scenario].append(run_id)
@@ -493,10 +525,20 @@ def plot_faceted_grid(ds, run_ids, output_dir, scenarios=None, n_runs=None, var_
         ww_spatial_dim = get_wastewater_spatial_dim(ds)
 
         # Aggregate across regions and combine biomarkers
-        infections = run_data[var_map["infections"]].sum(dim="region_id").values
-        hospitalizations = run_data[var_map["hospitalizations"]].sum(dim="region_id").values
-        deaths = run_data[var_map["deaths"]].sum(dim="region_id").values
-        cases = run_data[var_map["cases"]].sum(dim="region_id").values
+        # Sum over region_id, then handle any remaining dimensions (e.g., duplicate run_id entries)
+        infections = run_data[var_map["infections"]].sum(dim="region_id").squeeze().values
+        hospitalizations = run_data[var_map["hospitalizations"]].sum(dim="region_id").squeeze().values
+        deaths = run_data[var_map["deaths"]].sum(dim="region_id").squeeze().values
+        cases = run_data[var_map["cases"]].sum(dim="region_id").squeeze().values
+        # Handle case where squeeze leaves multiple dimensions (duplicate run_id entries)
+        if infections.ndim > 1:
+            infections = infections.mean(axis=0)
+        if hospitalizations.ndim > 1:
+            hospitalizations = hospitalizations.mean(axis=0)
+        if deaths.ndim > 1:
+            deaths = deaths.mean(axis=0)
+        if cases.ndim > 1:
+            cases = cases.mean(axis=0)
         wastewater = get_combined_wastewater(run_data, ww_spatial_dim)
         mobility = get_mobility_reduction(ds, run_id, var_map)
 
@@ -558,6 +600,9 @@ def plot_faceted_grid(ds, run_ids, output_dir, scenarios=None, n_runs=None, var_
 
         # Title with run info
         strength = run_data[var_map["strength"]].values
+        # Handle case where strength is an array (duplicate run_id entries)
+        if strength.size > 1:
+            strength = strength[0]  # Take first value
         title = f"{scenario}"
         if not np.isnan(strength):
             title += f"\nStrength: {strength * 100:.0f}%"

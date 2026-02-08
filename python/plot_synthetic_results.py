@@ -132,7 +132,7 @@ def load_run_data(run_dir):
             global_strength = custom["direct_mobility_reduction"]
             min_kappa = 0.0  # κ₀ stays 0.0 for Local scenarios
             logger.info(f"Using custom mobility reduction: {global_strength}")
-        elif scenario_name == "Global_Timed" and len(kappas) > 1:
+        elif scenario_name.startswith("Global_Timed") and len(kappas) > 1:
             # For Global_Timed, strength is max kappa (intervention level)
             global_strength = max(kappas)
             logger.debug(
@@ -152,7 +152,7 @@ def load_run_data(run_dir):
         duration = 0
 
         if (
-            scenario_name == "Global_Timed"
+            scenario_name.startswith("Global_Timed")
             and kappa0_file
             and os.path.exists(kappa0_file)
         ):
@@ -442,7 +442,7 @@ def plot_intervention_bubble(results, output_dir):
         - Bubble color: Infection reduction (green=effective, red=ineffective)
     """
     # Filter Global_Timed and get baseline for relative reduction
-    global_timed = [r for r in results if r["Scenario"] == "Global_Timed"]
+    global_timed = [r for r in results if r["Scenario"].startswith("Global_Timed")]
     baselines = {r["Profile_ID"]: r for r in results if r["Scenario"] == "Baseline"}
 
     if not global_timed or not baselines:
@@ -594,8 +594,27 @@ def plot_intervention_bubble(results, output_dir):
 
 
 if __name__ == "__main__":
-    runs_dir = "../runs/synthetic_test"
-    output_dir = "../runs/synthetic_test"
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Plot synthetic simulation results")
+    parser.add_argument(
+        "--runs-dir",
+        default="../runs/synthetic_test",
+        help="Directory containing run subdirectories",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default="../runs/synthetic_test",
+        help="Directory to save plot outputs",
+    )
+
+    args = parser.parse_args()
+
+    runs_dir = args.runs_dir
+    output_dir = args.output_dir
+
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
 
     logger.info(f"Scanning runs in {runs_dir}...")
     run_folders = glob.glob(os.path.join(runs_dir, "run_*"))
