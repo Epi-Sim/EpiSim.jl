@@ -261,6 +261,21 @@ function run_engine_io(engine::AbstractEngine, config::AbstractDict, data_path::
     @info "- Initializing data structures"
 
     population = init_population_struct(engine, G, M, G_coords, pop_params_dict, network_df, metapop_df)
+
+    # Load external NetCDF mobility if configured (only for MMCACovid19VacEngine)
+    if engine == MMCACovid19VacEngine()
+        mobility_type = get(pop_params_dict, "mobility_variation_type", "none")
+        if mobility_type == "external_netcdf"
+            @info "- Loading external mobility from NetCDF"
+            # Merge config for load_external_mobility! (needs start_date, end_date from simulation section)
+            mobility_config = merge(Dict(pop_params_dict), Dict(
+                "start_date" => first_day,
+                "end_date" => last_day
+            ))
+            population = MMCACovid19Vac.load_external_mobility!(population, mobility_config; verbose=true)
+        end
+    end
+
     epi_params = init_epidemic_parameters_struct(engine, G, M, T, G_coords, epi_params_dict)
 
     vac_params_dict = get(config, "vaccination", nothing)

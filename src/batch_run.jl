@@ -52,6 +52,15 @@ function run_batch_simulation(config_path, data_folder, instance_folder)
         engine_name = config["simulation"]["engine"]
         engine = EpiSim.get_engine(engine_name)
 
+        # Check if already completed (skip if observables.nc exists)
+        # This allows incremental batch execution without re-running previous batches
+        output_file = joinpath(instance_folder, "output", "observables.nc")
+        if isfile(output_file)
+             # Verify it's not empty/corrupt? For now assume existence means success.
+             # println("Skipping already completed: $(basename(instance_folder))")
+             return true
+        end
+
         # Validate Config
         engine = EpiSim.validate_config(config)
 
