@@ -134,9 +134,9 @@ version = "1.9.1"
 
 [[deps.DiskArrays]]
 deps = ["ConstructionBase", "LRUCache", "Mmap", "OffsetArrays"]
-git-tree-sha1 = "e8c9406f3164633756a0db93334ef23102933eef"
+git-tree-sha1 = "e5d9ce1b751ddf9bcd9d36b51249dce8ea73cd55"
 uuid = "3c3547ce-8d99-4f5e-a174-61eb10b00ae3"
-version = "0.4.18"
+version = "0.4.19"
 
 [[deps.Distributed]]
 deps = ["Random", "Serialization", "Sockets"]
@@ -155,9 +155,9 @@ version = "0.1.10"
 
 [[deps.FileIO]]
 deps = ["Pkg", "Requires", "UUIDs"]
-git-tree-sha1 = "d60eb76f37d7e5a40cc2e7c36974d864b82dc802"
+git-tree-sha1 = "6522cfb3b8fe97bec632252263057996cbd3de20"
 uuid = "5789e2e9-d7fb-5bc7-8068-2c6fae9b9549"
-version = "1.17.1"
+version = "1.18.0"
 
     [deps.FileIO.extensions]
     HTTPExt = "HTTP"
@@ -216,9 +216,9 @@ version = "2.12.2+0"
 
 [[deps.IJulia]]
 deps = ["Base64", "Conda", "Dates", "InteractiveUtils", "Logging", "Markdown", "Pkg", "PrecompileTools", "Printf", "REPL", "Random", "SHA", "Sockets", "UUIDs", "ZMQ"]
-git-tree-sha1 = "13603b5774231264b3bb795ba1eb6a519f49fc21"
+git-tree-sha1 = "dff8af3ab4f632d959ef19726b85939328ba289c"
 uuid = "7073ff75-c697-5162-941a-fcdaad2a7d2a"
-version = "1.33.0"
+version = "1.34.1"
 
     [deps.IJulia.extensions]
     IJuliaPythonCallExt = "PythonCall"
@@ -344,9 +344,9 @@ uuid = "5ced341a-0733-55b8-9ab6-a4889d929147"
 version = "1.10.1+0"
 
 [[deps.MMCACovid19Vac]]
-deps = ["ArgParse", "CSV", "DataFrames", "DataStructures", "Dates", "DelimitedFiles", "HDF5", "HDF5_jll", "IJulia", "JSON", "LinearAlgebra", "Logging", "NPZ", "NetCDF", "PackageCompiler", "PkgTemplates", "Printf", "ProgressMeter", "Statistics", "Test"]
-git-tree-sha1 = "58a19a4f8cb2102b59d760a6af7aae4b4eb4377f"
-repo-rev = "main"
+deps = ["ArgParse", "CSV", "DataFrames", "DataStructures", "Dates", "DelimitedFiles", "HDF5", "IJulia", "JSON", "LinearAlgebra", "Logging", "NCDatasets", "NPZ", "NetCDF", "PackageCompiler", "PkgTemplates", "Printf", "ProgressMeter", "Random", "Statistics", "Test"]
+git-tree-sha1 = "e82829abd74448db5b036a6d357219d7b7d610df"
+repo-rev = "mobility-variation"
 repo-url = "https://github.com/Epi-Sim/MMCACovid19Vac.jl"
 uuid = "1f0b8349-d663-41e2-860e-e4a82e7cc3f6"
 version = "0.1.1"
@@ -421,9 +421,9 @@ version = "1.0.21"
 
 [[deps.NCDatasets]]
 deps = ["CFTime", "CommonDataModel", "DataStructures", "Dates", "DiskArrays", "NetCDF_jll", "NetworkOptions", "Printf"]
-git-tree-sha1 = "c82c73e2e0c57a0fe13d3414d7c5a6a821d24016"
+git-tree-sha1 = "0d3e499c8fd5b2549b4299eade61de601e5fe6e2"
 uuid = "85f8d34a-cbdd-5861-8df4-14fed0d494ab"
-version = "0.14.10"
+version = "0.14.11"
 
     [deps.NCDatasets.extensions]
     NCDatasetsMPIExt = "MPI"
@@ -477,9 +477,9 @@ version = "5.0.9+0"
 
 [[deps.OpenSSL_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl"]
-git-tree-sha1 = "f19301ae653233bc88b1810ae908194f07f8db9d"
+git-tree-sha1 = "c9cbeda6aceffc52d8a0017e71db27c7a7c0beaf"
 uuid = "458c3c95-2e84-50aa-8efc-19380b2a3a95"
-version = "3.5.4+0"
+version = "3.5.5+0"
 
 [[deps.OrderedCollections]]
 git-tree-sha1 = "05868e21324cede2207c6f0f466b4bfef6d5e7ee"
@@ -763,9 +763,9 @@ version = "1.5.7+1"
 
 [[deps.libaec_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl"]
-git-tree-sha1 = "1aa23f01927b2dac46db77a56b31088feee0a491"
+git-tree-sha1 = "13b760f97c6e753b47df30cb438d4dc3b50df282"
 uuid = "477f73a3-ac25-53e9-8cc3-50b2fa2566f0"
-version = "1.1.4+0"
+version = "1.1.5+0"
 
 [[deps.libblastrampoline_jll]]
 deps = ["Artifacts", "Libdl"]

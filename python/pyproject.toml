@@ -78,3 +78,28 @@ indent-style = "space"
 minversion = "7.0"
 testpaths = ["tests"]
 pythonpath = ["."]
+addopts = "--cov=episim_python --cov=synthetic_generator --cov=process_synthetic_outputs --cov=spike_detector --cov=run_synthetic_pipeline --cov-report=term-missing --cov-report=html"
+
+[tool.coverage.run]
+source = ["python"]
+omit = [
+    "*/tests/*",
+    "*/.venv/*",
+    "*/test_*.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
+fail_under = 0
+
+[dependency-groups]
+dev = [
+    "pytest-cov>=5.0.0",
+]

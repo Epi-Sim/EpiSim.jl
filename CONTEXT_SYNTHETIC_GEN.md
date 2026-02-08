@@ -99,21 +99,29 @@ Creates **raw-ish** observations that mimic real-world data sources, with config
 | `cases` | `(run_id, date, region_id)` | Raw case observations with configurable noise and missing data (NaN for missing) |
 | `hospitalizations` | `(run_id, date, region_id)` | Reported hospitalizations with underreporting and delay noise |
 | `deaths` | `(run_id, date, region_id)` | Reported deaths with underreporting and delay noise |
-| `mobility_base` | `(origin, target)` | Base mobility matrix (shared across all runs) |
-| `mobility_kappa0` | `(run_id, date)` | Mobility reduction factor per run and date (κ₀) |
+| `mobility_base` | `(origin, target)` | Base mobility matrix (shared across all runs) - factorized format |
+| `mobility_kappa0` | `(run_id, date)` | Mobility reduction factor per run and date (κ₀) - factorized format |
+| `mobility_time_varying` | `(run_id, origin, target, date)` | Full time-varying mobility matrix per run (optional, large format) |
 | `population` | `(run_id, region_id)` | Static population per region |
 | `edar_biomarker_N1` | `(run_id, date, edar_id)` | Raw N1 wastewater concentration (NaN for censored/missing) |
 | `edar_biomarker_N2` | `(run_id, date, edar_id)` | Raw N2 wastewater concentration (NaN for censored/missing) |
 | `edar_biomarker_IP4` | `(run_id, date, edar_id)` | Raw IP4 wastewater concentration (NaN for censored/missing) |
 | `edar_biomarker_*_censor_hints` | `(run_id, date, edar_id)` | Censoring hints: 0=observed, 1=censored, 2=missing (optional reference) |
 
-**Note:** Mobility is stored in **factorized format** to avoid OOM errors on large datasets:
+**Note:** Mobility is stored in two possible formats:
+
+**Factorized Format** (memory-efficient, recommended):
 - `mobility_base`: Static OD matrix (shared across all runs)
 - `mobility_kappa0`: Time-varying reduction factors per run
 - **Reconstruction:** `mobility[run, date] = mobility_base * (1 - mobility_kappa0[run, date])`
 - **Memory savings:** ~325GB → ~500MB for 100 runs × 100 days × 2850 regions (99.8% reduction)
 
-EpiForecaster's `mobility_processor.py` automatically detects and reconstructs the factorized format when loading synthetic data.
+**Time-Varying Format** (optional, direct access):
+- `mobility_time_varying`: Full `(run_id, origin, target, date)` array
+- **Use case:** When direct access to full mobility matrices is needed without reconstruction
+- **Memory cost:** ~19GB for 23 runs × 114 days × 945 regions (substantial but manageable)
+
+The `synthetic_mobility_type` metadata variable indicates which format is used for each run. EpiForecaster's `mobility_processor.py` automatically detects and handles both formats.
 
 #### Ground Truth (for evaluation, separate from preprocessed data)
 
@@ -130,6 +138,7 @@ EpiForecaster's `mobility_processor.py` automatically detects and reconstructs t
 | `synthetic_scenario_type` | `(run_id,)` | Scenario type (Baseline, Global_Timed, Local_Static) |
 | `synthetic_strength` | `(run_id,)` | Intervention strength (0.0 to 1.0) |
 | `synthetic_sparsity_level` | `(run_id,)` | Missing data rate used |
+| `synthetic_mobility_type` | `(run_id,)` | Mobility storage format ("factorized" or "time_varying") |
 
 #### Cases Reporting Noise Metadata
 
@@ -176,10 +185,13 @@ EpiForecaster's `mobility_processor.py` automatically detects and reconstructs t
     *   **Missing measurements**: 2% of measurements marked as missing (NaN)
     *   **Censor hints**: Optional flags for reference (EpiForecaster may recompute)
 
-3.  **Mobility Compression (Factorized Format)**:
-    *   Stored as factorized components: `mobility_base` + `mobility_kappa0`
-    *   Avoids OOM errors by reducing memory from ~325GB to ~500MB for 100 runs
-    *   Reconstructed on-the-fly by EpiForecaster's mobility processor
+3.  **Mobility Compression**:
+    *   **Factorized Format**: Stored as `mobility_base` + `mobility_kappa0` (memory-efficient)
+    *   **Time-Varying Format**: Full `mobility_time_varying` array (direct access, larger)
+    *   Factorized format reduces memory from ~325GB to ~500MB for 100 runs
+    *   Time-varying format uses ~19GB for 23 runs × 114 days × 945 regions
+    *   The `synthetic_mobility_type` metadata indicates which format each run uses
+    *   Both formats automatically detected by EpiForecaster's mobility processor
     *   Configurable compressor via `--compressor` (zstd, lz4, blosc, none)
 
 4.  **Variable Naming Convention**:
@@ -269,6 +281,8 @@ uv run python/run_synthetic_pipeline.py --two-phase --n-profiles 15 --spike-thre
 - `--spike-threshold`: Percentile threshold for spike detection (default: 0.1 = 10th percentile)
 - `--dataset`: Dataset to use (catalonia or mitma, default: catalonia)
 - `--edar-edges`: Path to EDAR-municipality edges file
+- `--mobility-sigma-min`: Minimum mobility sigma for origin/destination noise (default: 0.0)
+- `--mobility-sigma-max`: Maximum mobility sigma for origin/destination noise (default: 0.6)
 - `--skip-sim`: Skip simulation stage (use existing runs)
 - `--skip-process`: Skip processing stage (use existing zarr)
 - `--skip-plot`: Skip plotting stage
@@ -280,11 +294,11 @@ For more control over the pipeline, you can run each phase separately:
 
 ```bash
 # Phase 1: Generate baselines
-uv run python/synthetic_generator.py --n-profiles 15 --baseline-only --output-folder runs/two_phase/baselines
+uv run python/synthetic_generator.py --n-profiles 15 --baseline-only --output-folder runs/two_phase/baselines --mobility-sigma-max 0.6
 uv run python/process_synthetic_outputs.py --runs-dir runs/two_phase/baselines --baseline-only --output runs/two_phase/baselines/baseline.zarr
 
 # Phase 2: Generate spike-based interventions
-uv run python/synthetic_generator.py --intervention-only runs/two_phase/baselines --spike-threshold 0.1 --output-folder runs/two_phase/interventions
+uv run python/synthetic_generator.py --intervention-only runs/two_phase/baselines --spike-threshold 0.1 --output-folder runs/two_phase/interventions --mobility-sigma-max 0.6
 uv run python/process_synthetic_outputs.py --runs-dir runs/two_phase/interventions --append --output runs/two_phase/baselines/baseline.zarr
 ```
 
@@ -294,6 +308,35 @@ uv run python/process_synthetic_outputs.py --runs-dir runs/two_phase/interventio
 # Detect and display spikes in existing baseline zarr
 uv run python/python/spike_detector.py runs/two_phase/baselines/baseline.zarr --spike-threshold 0.1
 ```
+
+### Intervention Proportion Control
+
+Control the fraction of profiles that receive intervention sweeps:
+
+```bash
+# Default: All profiles get interventions (86% of runs are interventions)
+--n-profiles 15
+
+# Mostly baselines: Only 30% of profiles get interventions
+--n-profiles 15 --intervention-profile-fraction 0.3
+# Result: 15 baselines + (5 × 6) = 30 interventions = 45 total runs (67% baselines)
+
+# Very baseline-heavy: Only 20% get interventions
+--n-profiles 15 --intervention-profile-fraction 0.2
+# Result: 15 baselines + (3 × 6) = 18 interventions = 33 total runs (82% baselines)
+
+# Baseline only
+--n-profiles 15 --intervention-profile-fraction 0.0
+# Result: 15 baselines + 0 interventions = 15 total runs (100% baselines)
+```
+
+**Key Points:**
+- All profiles always generate a baseline scenario
+- Selected profiles get the full 6-strength intervention sweep
+- Profile selection uses a fixed seed for reproducibility
+- Works in both Phase 1 (standard mode) and Phase 2 (spike-based mode)
+- Default `--intervention-profile-fraction 1.0` preserves backward compatibility (all profiles get interventions)
+- Use `--intervention-seed` to control the random seed for profile selection (default: 42)
 
 ### Legacy: Standard Pipeline
 
