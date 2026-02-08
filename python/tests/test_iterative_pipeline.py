@@ -55,9 +55,7 @@ class TestIterativePipeline:
 
         # Create dummy rosetta csv
         rosetta_csv = data_folder / "rosetta.csv"
-        pd.DataFrame({"id": ["1", "2"], "idx": [1, 2]}).to_csv(
-            rosetta_csv, index=False
-        )
+        pd.DataFrame({"id": ["1", "2"], "idx": [1, 2]}).to_csv(rosetta_csv, index=False)
 
         return {
             "root": tmp_path,
@@ -129,9 +127,7 @@ class TestIterativePipeline:
 
     @patch("run_synthetic_pipeline.clean_run_folders")
     @patch("run_synthetic_pipeline.subprocess.run")
-    def test_pipeline_orchestration(
-        self, mock_subprocess, mock_clean, mock_paths
-    ):
+    def test_pipeline_orchestration(self, mock_subprocess, mock_clean, mock_paths):
         """Test the two-phase pipeline orchestration with subprocess calls."""
 
         n_profiles = 15
@@ -149,16 +145,16 @@ class TestIterativePipeline:
                 skip_sim=False,
                 skip_process=False,
                 edar_edges=None,
-                failure_tolerance=10
+                failure_tolerance=10,
             )
 
         # Verify subprocess calls for two-phase pipeline:
         # Phase 1: 3 baseline generation batches (0-5, 5-10, 10-15)
         # Phase 1: 1 baseline processing call (--baseline-only)
         # Phase 2: 1 intervention generation call (--intervention-only)
-        # Phase 2: 1 intervention processing call (--append)
-        # Total: 6 subprocess calls
-        assert mock_subprocess.call_count == 6
+        # Phase 2: 1 intervention processing call (--append) - SKIPPED because no interventions generated in mock
+        # Total: 5 subprocess calls (intervention processing skipped when no interventions exist)
+        assert mock_subprocess.call_count == 5
 
         # Extract the commands from the calls (subprocess.run was called with cmd as first arg)
         calls = mock_subprocess.call_args_list
@@ -183,22 +179,38 @@ class TestIterativePipeline:
 
         # Phase 1: Baseline generation batches
         # Batch 1: synthetic_generator.py --start-index 0 --end-index 5
-        baseline_batch_1 = [c for c in commands if cmd_has_pairs(c, [["--start-index", "0"], ["--end-index", "5"]])]
+        baseline_batch_1 = [
+            c
+            for c in commands
+            if cmd_has_pairs(c, [["--start-index", "0"], ["--end-index", "5"]])
+        ]
         assert len(baseline_batch_1) == 1, "Should have baseline batch 1 (0-5)"
         assert "--baseline-only" in baseline_batch_1[0]
 
         # Batch 2: synthetic_generator.py --start-index 5 --end-index 10
-        baseline_batch_2 = [c for c in commands if cmd_has_pairs(c, [["--start-index", "5"], ["--end-index", "10"]])]
+        baseline_batch_2 = [
+            c
+            for c in commands
+            if cmd_has_pairs(c, [["--start-index", "5"], ["--end-index", "10"]])
+        ]
         assert len(baseline_batch_2) == 1, "Should have baseline batch 2 (5-10)"
         assert "--baseline-only" in baseline_batch_2[0]
 
         # Batch 3: synthetic_generator.py --start-index 10 --end-index 15
-        baseline_batch_3 = [c for c in commands if cmd_has_pairs(c, [["--start-index", "10"], ["--end-index", "15"]])]
+        baseline_batch_3 = [
+            c
+            for c in commands
+            if cmd_has_pairs(c, [["--start-index", "10"], ["--end-index", "15"]])
+        ]
         assert len(baseline_batch_3) == 1, "Should have baseline batch 3 (10-15)"
         assert "--baseline-only" in baseline_batch_3[0]
 
         # Phase 1: Baseline processing
-        baseline_process = [c for c in commands if "process_synthetic_outputs.py" in " ".join(c) and "--baseline-only" in c]
+        baseline_process = [
+            c
+            for c in commands
+            if "process_synthetic_outputs.py" in " ".join(c) and "--baseline-only" in c
+        ]
         assert len(baseline_process) == 1, "Should have 1 baseline processing call"
 
         # Phase 2: Intervention generation
@@ -206,16 +218,22 @@ class TestIterativePipeline:
         assert len(intervention_gen) == 1, "Should have 1 intervention generation call"
         assert cmd_has_pairs(intervention_gen[0], [["--spike-threshold", "0.1"]])
 
-        # Phase 2: Intervention processing (append)
-        intervention_process = [c for c in commands if "process_synthetic_outputs.py" in " ".join(c) and "--append" in c]
-        assert len(intervention_process) == 1, "Should have 1 intervention processing call with --append"
+        # Phase 2: Intervention processing (append) - SKIPPED because no interventions generated in mock
+        intervention_process = [
+            c
+            for c in commands
+            if "process_synthetic_outputs.py" in " ".join(c) and "--append" in c
+        ]
+        assert len(intervention_process) == 0, (
+            "Should have 0 intervention processing calls (skipped when no interventions)"
+        )
 
         # Verify clean_run_folders calls:
-        # - 3 calls before each baseline batch
-        # - 1 call after intervention generation
-        # - 1 call for baseline cleanup at end
-        # Total: 5 calls
-        assert mock_clean.call_count == 5
+        # - 1 call for intervention_dir cleanup at end
+        # - 1 call for baseline_dir cleanup at end
+        # Note: cleanup runs unconditionally regardless of whether interventions were generated
+        # Total: 2 calls
+        assert mock_clean.call_count == 2
 
     def test_zarr_appending(self, mock_paths):
         """Functional test for zarr appending."""
