@@ -202,7 +202,7 @@
           "type": "number",
           "minimum": 0
         },
-        "rᵛ": {
+        "rᵥ": {
           "type": "array",
           "items": {
             "type": "number",
@@ -212,7 +212,7 @@
           "minItems": "{GROUP_SIZE}",
           "maxItems": "{GROUP_SIZE}"
         },
-        "kᵛ": {
+        "kᵥ": {
           "type": "array",
           "items": {
             "type": "number",
@@ -311,6 +311,38 @@
         "σ": {
           "type": "number",
           "minimum": 0
+        },
+        "mobility_variation_type": {
+          "type": "string",
+          "enum": ["none", "ipfp_simple", "external_netcdf"]
+        },
+        "mobility_sigma_O": {
+          "type": "number",
+          "minimum": 0
+        },
+        "mobility_sigma_D": {
+          "type": "number",
+          "minimum": 0
+        },
+        "mobility_rng_seed": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "mobility_external_file": {
+          "type": "string"
+        },
+        "mobility_external_variable": {
+          "type": "string"
+        },
+        "mobility_validate": {
+          "type": "boolean"
+        },
+        "mobility_fill_missing": {
+          "type": "boolean"
+        },
+        "mobility_time_alignment": {
+          "type": "string",
+          "enum": ["start", "end", "nearest"]
         }
       },
       "additionalProperties": false

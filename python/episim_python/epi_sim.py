@@ -22,8 +22,9 @@ import shutil
 import subprocess
 import sys
 import uuid
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
+import numpy as np
 import pandas as pd
 
 from .schema_validator import EpiSimSchemaValidator
@@ -426,6 +427,103 @@ class EpiSim:
 
         logger.debug(f"Using config at: {config_path}")
         return config_path
+
+    def set_mobility_series(
+        self,
+        R_series: np.ndarray,
+        edgelist: np.ndarray,
+        validate: bool = True,
+    ) -> str:
+        """
+        Set an externally generated mobility series for the simulation.
+
+        This saves the mobility series to an NPZ file and updates the configuration
+        to use external mobility. The mobility series will be used during simulation
+        instead of the built-in mobility variation.
+
+        Args:
+            R_series: Mobility series of shape (T, E) where T is timesteps, E is edges
+            edgelist: Sparse edgelist of shape (E, 2) with [origin, destination] pairs
+            validate: Whether to validate the mobility series (default: True)
+
+        Returns:
+            Path to the saved mobility series file (NPZ format)
+
+        Raises:
+            ValueError: If validation fails or the mobility series is invalid
+
+        Note:
+            The Julia engine must support external mobility loading for this to work.
+            Currently, this saves the mobility series but the Julia side needs to be
+            updated to actually use it. Set `mobility_variation_type = "external"` in
+            the config and provide the path via `mobility_external_path`.
+        """
+        # Validate the mobility series
+        if validate:
+            from .mobility import MobilityValidator
+
+            # Get T and M from config or infer
+            with open(self.config_path) as f:
+                config = json.load(f)
+
+            # Get T from simulation config
+            T = config.get("simulation", {}).get("days", 180)
+            # Get M from population params (need to load metapop or estimate)
+            M = int(np.max(edgelist) + 1)
+
+            validator = MobilityValidator()
+            is_valid, errors = validator.validate_series(
+                R_series, edgelist, M=M, T=T, verbose=True
+            )
+
+            if not is_valid:
+                raise ValueError(f"Mobility series validation failed: {errors}")
+
+        # Save to NPZ file
+        mobility_dir = os.path.join(self.model_state_folder, "mobility")
+        os.makedirs(mobility_dir, exist_ok=True)
+        mobility_path = os.path.join(mobility_dir, "mobility_series.npz")
+
+        np.savez_compressed(
+            mobility_path,
+            R_series=R_series,
+            edgelist=edgelist,
+            T=R_series.shape[0],
+            E=R_series.shape[1],
+            M=int(np.max(edgelist) + 1),
+        )
+
+        logger.info(f"Saved mobility series to: {mobility_path}")
+
+        # Update config to use external mobility
+        self._update_config_for_mobility(mobility_path)
+
+        return mobility_path
+
+    def _update_config_for_mobility(self, mobility_path: str):
+        """
+        Update the configuration to use external mobility.
+
+        Sets mobility_variation_type to "external" and adds the path.
+        """
+        with open(self.config_path) as f:
+            config = json.load(f)
+
+        # Ensure population_params exists
+        if "population_params" not in config:
+            config["population_params"] = {}
+
+        config["population_params"]["mobility_variation_type"] = "external"
+        # Store relative path from data folder if possible
+        config["population_params"]["mobility_external_path"] = mobility_path
+
+        # Save updated config
+        config_path = os.path.join(self.model_state_folder, "config_with_mobility.json")
+        with open(config_path, "w") as f:
+            json.dump(config, f, indent=2)
+
+        self.config_path = config_path
+        logger.info("Updated config to use external mobility")
 
 
 # MMCACovid19 class end

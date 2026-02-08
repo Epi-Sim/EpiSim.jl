@@ -13,6 +13,11 @@ from .episim_utils import (
     compute_observables,
     update_params,
 )
+from .mobility import (
+    MobilityGenerator,
+    MobilityValidator,
+    load_baseline_mobility,
+)
 from .schema_validator import (
     EpiSimSchemaValidator,
     SchemaValidator,
@@ -33,4 +38,7 @@ __all__ = [
     "update_params",
     "validate_episim_config",
     "validate_episim_config_safe",
+    "MobilityGenerator",
+    "MobilityValidator",
+    "load_baseline_mobility",
 ]
