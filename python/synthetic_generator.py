@@ -13,6 +13,8 @@ from scipy.stats import qmc
 sys.path.append(os.path.dirname(__file__))
 
 from episim_python.episim_utils import EpiSimConfig
+from episim_python.mobility import MobilityGenerator, load_baseline_mobility
+from failed_profiles_logger import FailedProfilesLogger, scan_and_log_existing_failures
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -32,34 +34,45 @@ class SyntheticDataGenerator:
         # Load base configuration
         self.base_config = EpiSimConfig.from_json(base_config_path)
 
+        # Initialize failure logger
+        self.failure_logger = FailedProfilesLogger(
+            log_file=os.path.join(output_folder, "failed_profiles.jsonl")
+        )
+
         # Get data file paths from config
-        metapop_filename = self.base_config.get_param("data.metapopulation_data_filename")
+        metapop_filename = self.base_config.get_param(
+            "data.metapopulation_data_filename"
+        )
         mobility_filename = self.base_config.get_param("data.mobility_matrix_filename")
 
         # Load Metapopulation Data for seeding (ensure ID is read as string)
         self.metapop_df = pd.read_csv(
-            os.path.join(data_folder, metapop_filename),
-            dtype={'id': str}
+            os.path.join(data_folder, metapop_filename), dtype={"id": str}
         )
 
         # Load Mobility Matrix
-        self.mobility_df = pd.read_csv(
-            os.path.join(data_folder, mobility_filename)
-        )
+        self.mobility_df = pd.read_csv(os.path.join(data_folder, mobility_filename))
+        self.mobility_sigma_min = 0.0
+        self.mobility_sigma_max = 0.6
 
         # Load rosetta data for correct index mapping
         rosetta_filename = metapop_filename.replace("metapopulation_data", "rosetta")
         try:
             rosetta_path = os.path.join(data_folder, rosetta_filename)
-            self.rosetta_df = pd.read_csv(rosetta_path, dtype={'id': str})
+            self.rosetta_df = pd.read_csv(rosetta_path, dtype={"id": str})
         except FileNotFoundError:
             # Fallback to default rosetta.csv
             self.rosetta_df = pd.read_csv(
-                os.path.join(data_folder, "rosetta.csv"),
-                dtype={'id': str}
+                os.path.join(data_folder, "rosetta.csv"), dtype={"id": str}
             )
 
-    def generate_parameter_grid(self, n_profiles=5, seed=42):
+    def generate_parameter_grid(
+        self,
+        n_profiles=5,
+        seed=42,
+        mobility_sigma_min=None,
+        mobility_sigma_max=None,
+    ):
         """
         Generate Latin Hypercube Samples for Epidemiological Profiles:
         0: R0_scale (scale_β) [0.5, 3.0]
@@ -72,15 +85,52 @@ class SyntheticDataGenerator:
         7: Alpha Scale (alpha_scale) [0.5, 1.5]
         8: Mu Scale (mu_scale) [0.5, 1.5] (unused, kept for backward compatibility)
         9: Seed Size [10, 500] (Log-uniform sampled)
+        10: Mobility Sigma O [mobility_sigma_min, mobility_sigma_max] - Origin outflow noise level
+        11: Mobility Sigma D [mobility_sigma_min, mobility_sigma_max] - Destination inflow noise level
 
         NOTE: We enforce T_inf <= T_inc to ensure μᵍ >= ηᵍ for model stability.
         """
-        sampler = qmc.LatinHypercube(d=10, seed=seed)
+        # Use rng parameter for scipy >= 1.10, fallback to seed for older versions
+        try:
+            sampler = qmc.LatinHypercube(d=12, seed=int(seed))
+        except TypeError:
+            sampler = qmc.LatinHypercube(d=12, rng=np.random.default_rng(int(seed)))
         sample = sampler.random(n=n_profiles)
 
+        if mobility_sigma_min is None:
+            mobility_sigma_min = self.mobility_sigma_min
+        if mobility_sigma_max is None:
+            mobility_sigma_max = self.mobility_sigma_max
+
         # Scale samples
-        l_bounds = [0.5, 2.0, 2.0, 0.0, 7.0, 0.1, 0.1, 0.5, 0.5, 10.0]
-        u_bounds = [3.0, 10.0, 10.0, 30.0, 60.0, 0.6, 1.0, 1.5, 1.5, 500.0]
+        l_bounds = [
+            0.5,
+            2.0,
+            2.0,
+            0.0,
+            7.0,
+            0.1,
+            0.1,
+            0.5,
+            0.5,
+            10.0,
+            mobility_sigma_min,
+            mobility_sigma_min,
+        ]
+        u_bounds = [
+            3.0,
+            10.0,
+            10.0,
+            30.0,
+            60.0,
+            0.6,
+            1.0,
+            1.5,
+            1.5,
+            500.0,
+            mobility_sigma_max,
+            mobility_sigma_max,
+        ]
 
         scaled = qmc.scale(sample, l_bounds, u_bounds)
 
@@ -99,6 +149,8 @@ class SyntheticDataGenerator:
                 alpha_scale,
                 mu_scale,
                 seed,
+                mobility_sigma_O,
+                mobility_sigma_D,
             ) = row
 
             # Enforce T_inf <= T_inc to ensure μᵍ >= ηᵍ for model stability
@@ -140,6 +192,8 @@ class SyntheticDataGenerator:
                     "alpha_scale": alpha_scale,
                     "mu_scale": mu_scale,
                     "seed_size": int(seed),
+                    "mobility_sigma_O": mobility_sigma_O,
+                    "mobility_sigma_D": mobility_sigma_D,
                 }
             )
 
@@ -148,6 +202,11 @@ class SyntheticDataGenerator:
     def validate_profile_parameters(self, profile):
         """
         Validate a profile for model stability constraints.
+
+        Additional validation rules based on MMCA model constraints:
+        - All rates (μᵍ, ηᵍ) must be in valid range [0.01, 1.0]
+        - Probabilities derived from rates must stay in [0, 1]
+        - R0 * scale must produce reasonable infection probabilities
 
         Returns:
             bool: True if profile is valid, False otherwise
@@ -165,12 +224,57 @@ class SyntheticDataGenerator:
             )
             return False
 
+        # Additional validation: Rates must be in reasonable range
+        # Rates > 1.0 can cause probabilities to exceed [0, 1]
+        if mu > 1.0:
+            logger.warning(
+                f"Profile {profile['profile_id']}: μ ({mu:.3f}) > 1.0, "
+                f"T_inf={profile['t_inf']:.1f} is too short. "
+                f"Skipping - recovery rate exceeds probability bounds."
+            )
+            return False
+
+        if eta > 1.0:
+            logger.warning(
+                f"Profile {profile['profile_id']}: η ({eta:.3f}) > 1.0, "
+                f"T_inc={profile['t_inc']:.1f} is too short. "
+                f"Skipping - progression rate exceeds probability bounds."
+            )
+            return False
+
+        # Check that rates aren't too small (numerical stability)
+        if mu < 0.01:
+            logger.warning(
+                f"Profile {profile['profile_id']}: μ ({mu:.4f}) < 0.01, "
+                f"T_inf={profile['t_inf']:.1f} is too long. "
+                f"Skipping - recovery rate too small for numerical stability."
+            )
+            return False
+
+        if eta < 0.01:
+            logger.warning(
+                f"Profile {profile['profile_id']}: η ({eta:.4f}) < 0.01, "
+                f"T_inc={profile['t_inc']:.1f} is too long. "
+                f"Skipping - progression rate too small for numerical stability."
+            )
+            return False
+
         # Check R0 > 1 for valid epidemic growth (warn only)
         if profile["r0_scale"] < 1.0:
             logger.warning(
                 f"Profile {profile['profile_id']}: R0_scale={profile['r0_scale']:.2f} < 1.0 "
                 f"may not produce epidemic growth."
             )
+
+        # Check alpha_scale doesn't produce probabilities > 1
+        # alpha_scale is applied to base_alpha values around 0.1, so max should be ~10x
+        alpha_scale = profile.get("alpha_scale", 1.0)
+        if alpha_scale > 1.5:
+            logger.warning(
+                f"Profile {profile['profile_id']}: alpha_scale={alpha_scale:.2f} > 1.5 "
+                f"exceeds LHS bounds and causes DomainError. Skipping."
+            )
+            return False
 
         return True
 
@@ -234,25 +338,113 @@ class SyntheticDataGenerator:
         return filename, path
 
     def prepare_mobility_file(
-        self, run_id, scenario, reduction_strength, affected_fraction, output_dir=None
+        self,
+        run_id,
+        scenario,
+        reduction_strength,
+        affected_fraction,
+        output_dir=None,
+        profile=None,
+        start_date=None,
+        end_date=None,
+        source_mobility_npz=None,
     ):
         """
         Prepare mobility matrix based on scenario.
         For Global scenarios, return original matrix (unscaled).
 
+        If mobility sigma parameters are provided in the profile, generates
+        time-varying mobility series using IPFP.
+
         Args:
             output_dir: If provided, write file to this directory. Otherwise use self.output_folder.
+            profile: Profile dict containing mobility_sigma_O and mobility_sigma_D
+            start_date: Simulation start date (for determining T)
+            end_date: Simulation end date (for determining T)
+            source_mobility_npz: Path to existing mobility_series.npz to reuse (for Twin scenarios)
         """
-        scaled_df = self.mobility_df.copy()
-
-        # Global scenarios use kappa0 for mobility reduction
-        # Mobility matrix remains unchanged
-
-        filename = "mobility_matrix.csv"
         output_path = output_dir or self.output_folder
-        path = os.path.join(output_path, filename)
-        scaled_df.to_csv(path, index=False)
-        return filename, path
+        mobility_dir = os.path.join(output_path, "mobility")
+        os.makedirs(mobility_dir, exist_ok=True)
+
+        # 1. Reuse existing mobility series (for Twin scenarios)
+        if source_mobility_npz and os.path.exists(source_mobility_npz):
+            logger.info(f"Reusing baseline mobility series from {source_mobility_npz}")
+            target_npz_path = os.path.join(mobility_dir, "mobility_series.npz")
+            shutil.copy2(source_mobility_npz, target_npz_path)
+
+            # Write the baseline CSV for compatibility (simulator needs it)
+            filename = "mobility_matrix.csv"
+            csv_path = os.path.join(output_path, filename)
+            self.mobility_df.to_csv(csv_path, index=False)
+
+            return filename, csv_path, target_npz_path
+
+        # 2. Generate new time-varying mobility
+        mobility_sigma_O = profile.get("mobility_sigma_O", 0.0) if profile else 0.0
+        mobility_sigma_D = profile.get("mobility_sigma_D", 0.0) if profile else 0.0
+
+        if mobility_sigma_O > 0 or mobility_sigma_D > 0:
+            # Generate time-varying mobility series
+            logger.info(
+                f"Generating time-varying mobility for {run_id}: "
+                f"sigma_O={mobility_sigma_O:.3f}, sigma_D={mobility_sigma_D:.3f}"
+            )
+
+            # Load baseline mobility
+            mobility_csv = self.base_config.get_param("data.mobility_matrix_filename")
+            metapop_csv = self.base_config.get_param(
+                "data.metapopulation_data_filename"
+            )
+            edgelist, R_baseline, M = load_baseline_mobility(
+                os.path.join(self.data_folder, mobility_csv),
+                os.path.join(self.data_folder, metapop_csv),
+            )
+
+            # Calculate T from dates
+            start = pd.to_datetime(str(start_date))
+            end = pd.to_datetime(str(end_date))
+            T = (end - start).days + 1
+
+            # Create mobility generator
+            generator = MobilityGenerator(
+                baseline_R=(edgelist, R_baseline),
+                sigma_O=mobility_sigma_O,
+                sigma_D=mobility_sigma_D,
+                rng_seed=42,
+            )
+
+            # Generate mobility series
+            R_series = generator.generate_series(T=T, rng_seed=hash(run_id))
+
+            # Save to NPZ file
+            mobility_path = os.path.join(mobility_dir, "mobility_series.npz")
+            np.savez_compressed(
+                mobility_path,
+                R_series=R_series,
+                edgelist=edgelist,
+                T=T,
+                E=len(R_baseline),
+                M=M,
+                sigma_O=mobility_sigma_O,
+                sigma_D=mobility_sigma_D,
+            )
+
+            # Still write the baseline CSV for compatibility
+            filename = "mobility_matrix.csv"
+            csv_path = os.path.join(output_path, filename)
+            self.mobility_df.to_csv(csv_path, index=False)
+
+            logger.info(f"Saved mobility series to {mobility_path}")
+            return filename, csv_path, mobility_path
+        else:
+            # Static mobility - just copy baseline
+            scaled_df = self.mobility_df.copy()
+
+            filename = "mobility_matrix.csv"
+            path = os.path.join(output_path, filename)
+            scaled_df.to_csv(path, index=False)
+            return filename, path, None
 
     def prepare_seed_file(self, run_id, seed_size=10.0):
         """Generate random seed file"""
@@ -262,10 +454,10 @@ class SyntheticDataGenerator:
         region_id = seed_region["id"]
 
         # Look up the correct 1-based index from rosetta
-        idx_row = self.rosetta_df[self.rosetta_df['id'] == region_id]
+        idx_row = self.rosetta_df[self.rosetta_df["id"] == region_id]
         if len(idx_row) == 0:
             raise ValueError(f"Region ID {region_id} not found in rosetta")
-        idx = idx_row['idx'].iloc[0]
+        idx = idx_row["idx"].iloc[0]
 
         # Create seed dataframe
         # We start with `seed_size` Exposed/Asymptomatic individuals in Middle age group (M)
@@ -285,7 +477,16 @@ class SyntheticDataGenerator:
         seed_df.to_csv(path, index=False)
         return filename, path
 
-    def run_single_scenario(self, pid, scen_name, strength, profile, seed_path):
+    def run_single_scenario(
+        self,
+        pid,
+        scen_name,
+        strength,
+        profile,
+        seed_path,
+        run_suffix="",
+        source_mobility_npz=None,
+    ):
         """Helper to prepare files for a single configuration."""
         r0_scale = profile["r0_scale"]
         t_inf = profile["t_inf"]
@@ -297,7 +498,7 @@ class SyntheticDataGenerator:
         # Construct Run ID
         # Format: {pid}_{Scenario}_s{strength_int} where strength_int is percent
         str_pct = int(round(strength * 100))
-        run_id = f"{pid}_{scen_name}_s{str_pct:02d}"
+        run_id = f"{pid}_{scen_name}{run_suffix}_s{str_pct:02d}"
         if scen_name == "Baseline":
             run_id = f"{pid}_Baseline"
 
@@ -315,12 +516,12 @@ class SyntheticDataGenerator:
         config_dict = copy.deepcopy(self.base_config.config)
         config = EpiSimConfig(config_dict)
 
-        # Get start/end dates
+        # Get start/end dates from config
         start_date = config.get_param("simulation.start_date")
-        end_date = "2020-06-01"
+        end_date = config.get_param("simulation.end_date")
 
         gamma = 1.0 / t_inf  # Recovery rate (μᵍ)
-        eta = 1.0 / t_inc    # E→I/A progression rate (ηᵍ)
+        eta = 1.0 / t_inc  # E→I/A progression rate (ηᵍ)
 
         # Calculate derived params
         base_beta_I = config.get_param("epidemic_params.βᴵ")
@@ -331,8 +532,17 @@ class SyntheticDataGenerator:
 
         # Prepare Mobility - Write to run directory
         # All scenarios use base mobility matrix (interventions via κ₀ only)
-        _, mob_path = self.prepare_mobility_file(
-            run_id, "Global", 0.0, 0.0, output_dir=model_state_folder
+        # If mobility sigma parameters are non-zero, generates time-varying mobility series
+        mob_filename, mob_path, mobility_npz_path = self.prepare_mobility_file(
+            run_id,
+            "Global",
+            0.0,
+            0.0,
+            output_dir=model_state_folder,
+            profile=profile,
+            start_date=start_date,
+            end_date=end_date,
+            source_mobility_npz=source_mobility_npz,
         )
 
         # NPI Params Setup - Always create CSV for ALL scenarios
@@ -357,7 +567,7 @@ class SyntheticDataGenerator:
             "epidemic_params.βᴬ": new_beta_A,
             "epidemic_params.αᵍ": new_alpha,
             "epidemic_params.μᵍ": [gamma] * 3,  # Recovery rate = 1/T_inf
-            "epidemic_params.ηᵍ": [eta] * 3,    # E→I/A progression rate = 1/T_inc
+            "epidemic_params.ηᵍ": [eta] * 3,  # E→I/A progression rate = 1/T_inc
             "data.mobility_matrix_filename": mob_path,
             "data.initial_condition_filename": seed_path,
             "NPI.are_there_npi": True,
@@ -375,11 +585,19 @@ class SyntheticDataGenerator:
 
         logger.info(f"Prepared config at {config_path}")
 
-        # Note: We do NOT remove seed_path here because batch run needs it later.
-        # We rely on final cleanup or manual cleanup.
+        # Return the mobility NPZ path so it can be reused by Twin scenarios
+        return mobility_npz_path
 
-    def run_profile_sweep(self, profile, baseline_only=False):
-        """Prepare files for Baseline (and optionally interventions) for a profile."""
+    def run_profile_sweep(
+        self, profile, baseline_only=False, intervention_profiles=None
+    ):
+        """Prepare files for Baseline (and optionally interventions) for a profile.
+
+        Args:
+            profile: Profile dict with epidemiological parameters
+            baseline_only: If True, skip intervention sweep entirely
+            intervention_profiles: Set of profile IDs selected for interventions, or None for all
+        """
         pid = profile["profile_id"]
 
         # VALIDATE before generating any configs
@@ -394,11 +612,20 @@ class SyntheticDataGenerator:
         seed_fname, seed_path = self.prepare_seed_file(pid, seed_size=seed_size)
 
         # 2. Prepare Baseline
-        self.run_single_scenario(pid, "Baseline", 0.0, profile, seed_path)
+        # Capture the generated mobility NPZ path to reuse for Twin scenarios
+        baseline_mobility_npz = self.run_single_scenario(
+            pid, "Baseline", 0.0, profile, seed_path
+        )
 
-        # Skip intervention sweep if baseline-only mode
+        # Skip intervention sweep if baseline-only mode or profile not selected
         if baseline_only:
-            logger.info(f"Baseline-only mode: skipping intervention sweep for Profile {pid}")
+            logger.info(
+                f"Baseline-only mode: skipping intervention sweep for Profile {pid}"
+            )
+            return
+
+        if intervention_profiles is not None and pid not in intervention_profiles:
+            logger.info(f"Profile {pid} not selected for interventions (baseline only)")
             return
 
         # 3. Sweep - Test valid range of intervention strengths (0.05 to 0.8)
@@ -410,7 +637,15 @@ class SyntheticDataGenerator:
 
         for scen in scenarios:
             for s in strengths:
-                self.run_single_scenario(pid, scen, s, profile, seed_path)
+                # Pass baseline_mobility_npz to reuse the same mobility noise realization
+                self.run_single_scenario(
+                    pid,
+                    scen,
+                    s,
+                    profile,
+                    seed_path,
+                    source_mobility_npz=baseline_mobility_npz,
+                )
 
         # Note: We keep seed_path for batch run.
 
@@ -449,11 +684,89 @@ class SyntheticDataGenerator:
         return {"succeeded": succeeded, "failed": failed}
 
     def _cleanup_run(self, run_id):
-        """Clean up a failed run directory."""
+        """Clean up a failed run directory after logging the failure."""
         run_folder = os.path.join(self.output_folder, f"run_{run_id}")
-        if os.path.exists(run_folder):
-            shutil.rmtree(run_folder)
-            logger.info(f"Cleaned up {run_folder}")
+        if not os.path.exists(run_folder):
+            return
+
+        # Log failure before cleanup
+        self._log_run_failure(run_id, run_folder)
+
+        shutil.rmtree(run_folder)
+        logger.info(f"Cleaned up {run_folder}")
+
+    def _log_run_failure(self, run_id, run_folder):
+        """Extract and log failure details from a failed run."""
+        # Check for ERROR.json
+        error_file = os.path.join(run_folder, "ERROR.json")
+        error_type = "Unknown"
+        error_message = ""
+        stacktrace = ""
+
+        if os.path.exists(error_file):
+            try:
+                with open(error_file, "r") as f:
+                    error_data = json.load(f)
+                error_type = error_data.get("error_type", "Unknown")
+                error_message = error_data.get("error_message", "")
+                stacktrace = error_data.get("stacktrace", "")
+            except (IOError, json.JSONDecodeError) as e:
+                logger.warning(f"Failed to read ERROR.json for {run_id}: {e}")
+
+        # Extract profile from config
+        config_file = os.path.join(run_folder, "config_auto_py.json")
+        profile = {}
+        if os.path.exists(config_file):
+            try:
+                with open(config_file, "r") as f:
+                    config = json.load(f)
+
+                # Extract relevant parameters
+                epi_params = config.get("epidemic_params", {})
+                profile["r0_scale"] = epi_params.get("scale_β", 1.0)
+
+                # Extract rates
+                mu_g = epi_params.get("μᵍ", [0.2])[0]
+                eta_g = epi_params.get("ηᵍ", [0.2])[0]
+                profile["t_inf"] = 1.0 / mu_g if mu_g > 0 else 5.0
+                profile["t_inc"] = 1.0 / eta_g if eta_g > 0 else 5.0
+
+                # Extract other params
+                profile["ratio_beta_a"] = (
+                    epi_params.get("βᴬ", 0.5) / epi_params.get("βᴵ", 0.5)
+                    if epi_params.get("βᴵ")
+                    else 0.5
+                )
+                profile["alpha_scale"] = (
+                    epi_params.get("αᵍ", [0.1])[0] / 0.1
+                    if epi_params.get("αᵍ")
+                    else 1.0
+                )
+                profile["seed_size"] = self._extract_seed_size_from_config(config)
+
+            except (IOError, json.JSONDecodeError) as e:
+                logger.warning(f"Failed to read config for {run_id}: {e}")
+
+        # Log the failure
+        self.failure_logger.log_failure(
+            run_id=run_id,
+            profile=profile,
+            error_type=error_type,
+            error_message=error_message,
+            config_path=config_file if os.path.exists(config_file) else None,
+            stacktrace=stacktrace,
+        )
+
+    def _extract_seed_size_from_config(self, config):
+        """Extract seed size from config."""
+        seed_filename = config.get("data", {}).get("initial_condition_filename", "")
+        if seed_filename and os.path.exists(seed_filename):
+            try:
+                seed_df = pd.read_csv(seed_filename)
+                return int(seed_df["M"].sum())
+            except Exception:
+                pass
+        return 10  # Default
 
     def _retry_failed_runs(self, failed_runs, seed_offset):
         """Retry failed runs with different random seeds."""
@@ -466,7 +779,9 @@ class SyntheticDataGenerator:
                 try:
                     profile_ids.add(int(parts[0]))
                 except ValueError:
-                    logger.warning(f"Could not extract profile ID from run_id: {run_id}")
+                    logger.warning(
+                        f"Could not extract profile ID from run_id: {run_id}"
+                    )
                     continue
 
         if not profile_ids:
@@ -474,12 +789,13 @@ class SyntheticDataGenerator:
             return
 
         # Re-generate profiles with new seed
-        logger.info(f"Re-generating profiles {profile_ids} with seed offset {seed_offset}")
+        logger.info(
+            f"Re-generating profiles {profile_ids} with seed offset {seed_offset}"
+        )
         # Use different seed for LHS generation
         new_seed = 42 + seed_offset * 1000
         new_profiles = self.generate_parameter_grid(
-            n_profiles=max(profile_ids) + 1,
-            seed=new_seed
+            n_profiles=max(profile_ids) + 1, seed=new_seed
         )
 
         # Re-run failed profiles
@@ -547,7 +863,9 @@ class SyntheticDataGenerator:
             successful = results["succeeded"]
             failed_runs = results["failed"]
 
-            logger.info(f"Results: {len(successful)} succeeded, {len(failed_runs)} failed")
+            logger.info(
+                f"Results: {len(successful)} succeeded, {len(failed_runs)} failed"
+            )
 
             if not failed_runs:
                 logger.info("All runs succeeded!")
@@ -555,7 +873,9 @@ class SyntheticDataGenerator:
 
             # Retry failed runs with new random seeds
             consecutive_failures = len(failed_runs)
-            logger.warning(f"{consecutive_failures} runs failed. Retrying with new seeds...")
+            logger.warning(
+                f"{consecutive_failures} runs failed. Retrying with new seeds..."
+            )
 
             # Clean up failed runs and retry
             for run_id in failed_runs:
@@ -565,11 +885,42 @@ class SyntheticDataGenerator:
             # Use attempt + 1 as seed offset
             self._retry_failed_runs(failed_runs, attempt + 1)
 
+        # Final scan for any remaining failures (should be empty if all retries succeeded)
+        self.failure_logger.load_failures()
+        if self.failure_logger._failures:
+            logger.info("=" * 60)
+            logger.info(
+                f"FAILURE SUMMARY: {len(self.failure_logger._failures)} failures logged"
+            )
+            logger.info(f"Failure log: {self.failure_logger.log_file}")
+            logger.info("Run with --analyze-failures to see detailed analysis")
+            logger.info("=" * 60)
+
         return False
 
-    def run_spike_based_interventions(self, baseline_dir, spike_threshold=0.1, min_duration=7,
-                                      spike_method="percentile", growth_factor_threshold=1.5,
-                                      min_growth_duration=3, min_cases_per_capita=1e-4):
+    def print_failure_analysis(self):
+        """Print analysis of logged failures."""
+        self.failure_logger.load_failures()
+        self.failure_logger.print_failure_summary()
+
+        suggestions = self.failure_logger.suggest_validation_rules()
+        if suggestions:
+            print("\nSUGGESTED VALIDATION RULES:")
+            for suggestion in suggestions:
+                print(f"  - {suggestion}")
+
+    def run_spike_based_interventions(
+        self,
+        baseline_dir,
+        spike_threshold=0.1,
+        min_duration=7,
+        spike_method="percentile",
+        growth_factor_threshold=1.5,
+        min_growth_duration=3,
+        min_cases_per_capita=1e-4,
+        max_intervention_duration=90,
+        intervention_profiles=None,
+    ):
         """
         Generate intervention scenarios based on detected spikes in baseline outputs.
 
@@ -585,6 +936,8 @@ class SyntheticDataGenerator:
             growth_factor_threshold: Growth factor threshold for growth_rate (default: 1.5)
             min_growth_duration: Minimum consecutive days of growth for growth_rate (default: 3)
             min_cases_per_capita: Minimum cases per person for growth_rate (default: 1e-4)
+            max_intervention_duration: Maximum intervention duration in days (default: 90)
+            intervention_profiles: Set of profile IDs selected for interventions, or None for all
 
         Raises:
             FileNotFoundError: If baseline zarr or configs don't exist
@@ -595,7 +948,9 @@ class SyntheticDataGenerator:
         # Validate baseline directory exists
         # The zarr file is in the parent directory of baseline_dir (output_base)
         # because it contains both baselines AND interventions (interventions are appended)
-        baseline_zarr = os.path.join(os.path.dirname(baseline_dir), "raw_synthetic_observations.zarr")
+        baseline_zarr = os.path.join(
+            os.path.dirname(baseline_dir), "raw_synthetic_observations.zarr"
+        )
         if not os.path.exists(baseline_dir):
             raise FileNotFoundError(
                 f"Baseline directory not found: {baseline_dir}\n"
@@ -616,6 +971,7 @@ class SyntheticDataGenerator:
         logger.info(f"Spike method: {spike_method}")
         logger.info(f"Spike threshold: {spike_threshold} (percentile)")
         logger.info(f"Min spike duration: {min_duration} days")
+        logger.info(f"Max intervention duration: {max_intervention_duration} days")
         if spike_method == "growth_rate":
             logger.info(f"Growth factor threshold: {growth_factor_threshold}")
             logger.info(f"Min growth duration: {min_growth_duration}")
@@ -655,6 +1011,16 @@ class SyntheticDataGenerator:
                 logger.warning(f"Could not extract profile ID from run_id: {run_id}")
                 continue
 
+            # Skip if profile not selected for interventions
+            if (
+                intervention_profiles is not None
+                and profile_id not in intervention_profiles
+            ):
+                logger.info(
+                    f"Profile {profile_id} not selected for spike-based interventions"
+                )
+                continue
+
             # Load original profile parameters from baseline config
             baseline_run_dir = os.path.join(baseline_dir, f"run_{run_id}")
             baseline_config_path = os.path.join(baseline_run_dir, "config_auto_py.json")
@@ -662,6 +1028,17 @@ class SyntheticDataGenerator:
             if not os.path.exists(baseline_config_path):
                 logger.warning(f"Baseline config not found: {baseline_config_path}")
                 continue
+
+            # Check for existing mobility series in Baseline
+            # If found, we will COPY it to the intervention runs to ensure "Twin" scenarios
+            # have the exact same mobility noise realization.
+            baseline_mobility_npz = os.path.join(
+                baseline_run_dir, "mobility", "mobility_series.npz"
+            )
+            source_npz = None
+            if os.path.exists(baseline_mobility_npz):
+                source_npz = baseline_mobility_npz
+                logger.info(f"Detected baseline mobility series: {source_npz}")
 
             with open(baseline_config_path, "r") as f:
                 baseline_config = json.load(f)
@@ -674,23 +1051,47 @@ class SyntheticDataGenerator:
             seed_size = profile.get("seed_size", 10.0)
             _, seed_path = self.prepare_seed_file(profile_id, seed_size=seed_size)
 
-            logger.info(f"--- Profile {profile_id}: Generating {len(spike_windows)} spike-based interventions ---")
+            logger.info(
+                f"--- Profile {profile_id}: Generating {len(spike_windows)} spike-based interventions ---"
+            )
 
             # For each spike window, generate intervention scenarios at different strengths
             strengths = np.linspace(0.05, 0.8, 6)
             for spike_idx, (spike_start, spike_end) in enumerate(spike_windows):
                 spike_duration = spike_end - spike_start
 
-                logger.info(f"  Spike {spike_idx + 1}: Day {spike_start} -> {spike_end} (duration={spike_duration}d)")
+                # Cap the intervention duration to max_intervention_duration
+                capped_duration = min(spike_duration, max_intervention_duration)
+                if spike_duration != capped_duration:
+                    logger.warning(
+                        f"  Spike {spike_idx + 1}: Duration capped from {spike_duration}d to {capped_duration}d"
+                    )
+
+                logger.info(
+                    f"  Spike {spike_idx + 1}: Day {spike_start} -> {spike_end} (duration={spike_duration}d, capped={capped_duration}d)"
+                )
+
+                # Add suffix if multiple spikes to avoid overwriting folders
+                suffix = ""
+                if len(spike_windows) > 1:
+                    suffix = f"_spike{spike_idx + 1}"
 
                 for strength in strengths:
                     # Create modified profile with spike-based timing
                     spike_profile = profile.copy()
                     spike_profile["event_start"] = spike_start
-                    spike_profile["event_duration"] = spike_duration
+                    spike_profile["event_duration"] = capped_duration
 
                     # Generate scenario
-                    self.run_single_scenario(profile_id, "Global_Timed", strength, spike_profile, seed_path)
+                    self.run_single_scenario(
+                        profile_id,
+                        "Global_Timed",
+                        strength,
+                        spike_profile,
+                        seed_path,
+                        run_suffix=suffix,
+                        source_mobility_npz=source_npz,
+                    )
                     scenarios_generated += 1
 
         logger.info(f"Generated {scenarios_generated} intervention scenarios")
@@ -715,8 +1116,14 @@ class SyntheticDataGenerator:
         t_inc = 1.0 / eta_g if eta_g > 0 else 5.0
 
         # Extract other parameters
-        ratio_beta_a = epidemic_params.get("βᴬ", beta_I * 0.5) / beta_I if beta_I > 0 else 0.5
-        alpha_scale = epidemic_params.get("αᵍ", [0.1])[0] / 0.1 if epidemic_params.get("αᵍ") else 1.0
+        ratio_beta_a = (
+            epidemic_params.get("βᴬ", beta_I * 0.5) / beta_I if beta_I > 0 else 0.5
+        )
+        alpha_scale = (
+            epidemic_params.get("αᵍ", [0.1])[0] / 0.1
+            if epidemic_params.get("αᵍ")
+            else 1.0
+        )
 
         # Load seed file to get seed_size
         seed_filename = config.get("data", {}).get("initial_condition_filename", "")
@@ -743,6 +1150,28 @@ class SyntheticDataGenerator:
             "mu_scale": 1.0,
             "seed_size": int(seed_size),
         }
+
+    def _sample_intervention_profiles(self, n_profiles, fraction, seed=42):
+        """Sample profile IDs to receive interventions.
+
+        Args:
+            n_profiles: Total number of profiles
+            fraction: Fraction of profiles to select (0.0 to 1.0)
+            seed: Random seed for reproducibility
+
+        Returns:
+            Set of selected profile IDs
+        """
+        if fraction >= 1.0:
+            return set(range(n_profiles))  # All profiles
+
+        if fraction <= 0.0:
+            return set()  # No interventions
+
+        rng = np.random.default_rng(seed)
+        n_selected = max(1, int(n_profiles * fraction))  # At least 1 if fraction > 0
+        selected = rng.choice(n_profiles, n_selected, replace=False)
+        return set(selected)
 
 
 if __name__ == "__main__":
@@ -832,6 +1261,49 @@ if __name__ == "__main__":
         default=1e-4,
         help="Minimum cases per person for growth_rate method (default: 1e-4 = 1 per 10K)",
     )
+    parser.add_argument(
+        "--max-intervention-duration",
+        type=int,
+        default=90,
+        help="Maximum intervention duration in days for spike-based interventions (default: 90)",
+    )
+    parser.add_argument(
+        "--analyze-failures",
+        action="store_true",
+        help="Analyze logged failures and exit (don't run simulations)",
+    )
+    parser.add_argument(
+        "--scan-failures",
+        type=str,
+        metavar="BATCH_FOLDER",
+        help="Scan batch folder for ERROR.json files and log them",
+    )
+    parser.add_argument(
+        "--intervention-profile-fraction",
+        type=float,
+        default=1.0,
+        help="Fraction of profiles that receive full intervention sweep (default: 1.0 = all). "
+        "All profiles always generate baselines. Selected profiles get 6 intervention strengths. "
+        "Uses fixed seed for reproducible profile selection.",
+    )
+    parser.add_argument(
+        "--intervention-seed",
+        type=int,
+        default=42,
+        help="Random seed for profile sampling (default: 42).",
+    )
+    parser.add_argument(
+        "--mobility-sigma-min",
+        type=float,
+        default=0.0,
+        help="Minimum mobility sigma for origin/destination noise (default: 0.0).",
+    )
+    parser.add_argument(
+        "--mobility-sigma-max",
+        type=float,
+        default=0.6,
+        help="Maximum mobility sigma for origin/destination noise (default: 0.6).",
+    )
 
     args = parser.parse_args()
 
@@ -861,6 +1333,23 @@ if __name__ == "__main__":
         os.makedirs(OUTPUT_FOLDER)
 
     generator = SyntheticDataGenerator(CONFIG_PATH, DATA_FOLDER, OUTPUT_FOLDER)
+    generator.mobility_sigma_min = args.mobility_sigma_min
+    generator.mobility_sigma_max = args.mobility_sigma_max
+
+    # Handle failure scanning mode (standalone utility)
+    if args.scan_failures:
+        batch_folder = args.scan_failures
+        logger.info(f"Scanning {batch_folder} for failures...")
+        count = scan_and_log_existing_failures(batch_folder, generator.failure_logger)
+        logger.info(f"Logged {count} failures")
+        generator.print_failure_analysis()
+        sys.exit(0)
+
+    # Handle failure analysis mode (standalone utility)
+    if args.analyze_failures:
+        logger.info(f"Analyzing failures from {OUTPUT_FOLDER}")
+        generator.print_failure_analysis()
+        sys.exit(0)
 
     # Handle intervention-only mode (Phase 2 of two-phase pipeline)
     if args.intervention_only:
@@ -871,6 +1360,25 @@ if __name__ == "__main__":
         logger.info("=" * 60)
         logger.info(f"Baseline directory: {baseline_dir}")
 
+        # Sample profiles for interventions (for consistency with Phase 1)
+        intervention_profiles = None
+        if args.intervention_profile_fraction < 1.0:
+            intervention_profiles = generator._sample_intervention_profiles(
+                args.n_profiles,
+                args.intervention_profile_fraction,
+                args.intervention_seed,
+            )
+            logger.info(
+                f"Selected {len(intervention_profiles)}/{args.n_profiles} profiles for interventions"
+            )
+
+        # Create marker only if interventions will actually be generated
+        # This prevents false positives when intervention_profile_fraction = 0
+        if intervention_profiles is None or len(intervention_profiles) > 0:
+            marker_path = os.path.join(OUTPUT_FOLDER, ".interventions_pending")
+            with open(marker_path, 'w') as f:
+                f.write("")
+
         # Generate spike-based intervention scenarios
         generator.run_spike_based_interventions(
             baseline_dir=baseline_dir,
@@ -880,6 +1388,8 @@ if __name__ == "__main__":
             growth_factor_threshold=args.growth_factor_threshold,
             min_growth_duration=args.min_growth_duration,
             min_cases_per_capita=args.min_cases_per_capita,
+            max_intervention_duration=args.max_intervention_duration,
+            intervention_profiles=intervention_profiles,
         )
 
         # Execute batch if not skipped
@@ -890,12 +1400,28 @@ if __name__ == "__main__":
         sys.exit(0)
 
     # Standard mode or baseline-only mode (Phase 1 of two-phase pipeline)
-    mode = "BASELINE-ONLY" if args.baseline_only else "STANDARD (Baseline + Interventions)"
+    mode = (
+        "BASELINE-ONLY" if args.baseline_only else "STANDARD (Baseline + Interventions)"
+    )
     logger.info(f"Mode: {mode}")
+
+    # Sample profiles for interventions
+    intervention_profiles = None
+    if args.intervention_profile_fraction < 1.0:
+        intervention_profiles = generator._sample_intervention_profiles(
+            args.n_profiles, args.intervention_profile_fraction, args.intervention_seed
+        )
+        logger.info(
+            f"Selected {len(intervention_profiles)}/{args.n_profiles} profiles for interventions"
+        )
 
     # Generate profiles for intervention timing analysis
     # We always generate the FULL set to maintain Latin Hypercube properties
-    profiles = generator.generate_parameter_grid(n_profiles=args.n_profiles)
+    profiles = generator.generate_parameter_grid(
+        n_profiles=args.n_profiles,
+        mobility_sigma_min=args.mobility_sigma_min,
+        mobility_sigma_max=args.mobility_sigma_max,
+    )
 
     # Determine subset to process
     start_idx = args.start_index
@@ -912,7 +1438,11 @@ if __name__ == "__main__":
     # Prepare files for selected profiles
     for i in range(start_idx, end_idx):
         profile = profiles[i]
-        generator.run_profile_sweep(profile, baseline_only=args.baseline_only)
+        generator.run_profile_sweep(
+            profile,
+            baseline_only=args.baseline_only,
+            intervention_profiles=intervention_profiles,
+        )
 
     # Execute batch if not skipped
     if not args.skip_run and start_idx < end_idx:
