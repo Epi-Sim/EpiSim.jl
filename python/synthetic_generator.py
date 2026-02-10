@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import sys
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import numpy as np
 import pandas as pd
@@ -20,6 +21,57 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger("SyntheticGenerator")
+
+
+def generate_profile_standalone(
+    profile: dict,
+    base_config_path: str,
+    data_folder: str,
+    output_folder: str,
+    baseline_only: bool = False,
+    intervention_profiles: set = None,
+    mobility_sigma_min: float = 0.0,
+    mobility_sigma_max: float = 0.6,
+) -> dict:
+    """
+    Standalone function to generate a single profile's configuration.
+    Can be executed in parallel via multiprocessing.
+
+    Returns:
+        dict with keys: success (bool), profile_id (int), error (str or None)
+    """
+    try:
+        # Create generator instance (loads data files)
+        generator = SyntheticDataGenerator(
+            base_config_path=base_config_path,
+            data_folder=data_folder,
+            output_folder=output_folder,
+        )
+        generator.mobility_sigma_min = mobility_sigma_min
+        generator.mobility_sigma_max = mobility_sigma_max
+
+        # Run sweep for this profile
+        generator.run_profile_sweep(
+            profile=profile,
+            baseline_only=baseline_only,
+            intervention_profiles=intervention_profiles
+            if intervention_profiles
+            else None,
+        )
+
+        return {
+            "success": True,
+            "profile_id": profile["profile_id"],
+            "error": None,
+        }
+
+    except Exception as e:
+        logger.error(f"Profile {profile['profile_id']} failed: {e}")
+        return {
+            "success": False,
+            "profile_id": profile["profile_id"],
+            "error": str(e),
+        }
 
 
 class SyntheticDataGenerator:
@@ -52,6 +104,27 @@ class SyntheticDataGenerator:
 
         # Load Mobility Matrix
         self.mobility_df = pd.read_csv(os.path.join(data_folder, mobility_filename))
+
+        # Normalize mobility matrix to be row-stochastic (routing probabilities)
+        # Identify origin column (assume first column)
+        origin_col = self.mobility_df.columns[0]
+        ratio_col = (
+            self.mobility_df.columns[2]
+            if len(self.mobility_df.columns) >= 3
+            else self.mobility_df.columns[-1]
+        )
+
+        # Calculate row sums
+        row_sums = self.mobility_df.groupby(origin_col)[ratio_col].transform("sum")
+
+        # Avoid division by zero
+        row_sums = row_sums.replace(0, 1.0)
+
+        # Normalize
+        self.mobility_df[ratio_col] = self.mobility_df[ratio_col] / row_sums
+
+        logger.info(f"Loaded and normalized mobility matrix from {mobility_filename}")
+
         self.mobility_sigma_min = 0.0
         self.mobility_sigma_max = 0.6
 
@@ -453,6 +526,17 @@ class SyntheticDataGenerator:
         seed_region = self.metapop_df.iloc[random_idx]
         region_id = seed_region["id"]
 
+        # Cap seed size to 10% of region population to prevent stability issues
+        # Use .get with default or check column existence
+        if "total" in seed_region:
+            total_pop = seed_region["total"]
+            # Warn if seed size is large (>50%), but allow it (normalization fixes stability)
+            if seed_size > 0.5 * total_pop:
+                logger.warning(
+                    f"Run {run_id}: Seed size {seed_size:.0f} is >50% of pop {total_pop:.0f} "
+                    f"in region {region_id}. This is physically valid but unusual."
+                )
+
         # Look up the correct 1-based index from rosetta
         idx_row = self.rosetta_df[self.rosetta_df["id"] == region_id]
         if len(idx_row) == 0:
@@ -647,7 +731,103 @@ class SyntheticDataGenerator:
                     source_mobility_npz=baseline_mobility_npz,
                 )
 
-        # Note: We keep seed_path for batch run.
+    def run_profile_sweep_parallel(
+        self,
+        profiles: list,
+        n_jobs: int = 1,
+        baseline_only: bool = False,
+        intervention_profiles: set | None = None,
+    ) -> list:
+        """
+        Process multiple profiles in parallel using multiprocessing.
+
+        Args:
+            profiles: List of profile dictionaries
+            n_jobs: Number of parallel workers (1 = sequential)
+            baseline_only: If True, skip intervention sweep
+            intervention_profiles: Set of profile IDs for interventions (optional, defaults to all)
+
+        Returns:
+            List of result dictionaries from each profile
+        """
+        if n_jobs == 1:
+            # Sequential fallback
+            results = []
+            for profile in profiles:
+                result = generate_profile_standalone(
+                    profile=profile,
+                    base_config_path=self.base_config_path,
+                    data_folder=self.data_folder,
+                    output_folder=self.output_folder,
+                    baseline_only=baseline_only,
+                    intervention_profiles=intervention_profiles,
+                    mobility_sigma_min=self.mobility_sigma_min,
+                    mobility_sigma_max=self.mobility_sigma_max,
+                )
+                results.append(result)
+            return results
+
+        # Parallel execution with ProcessPoolExecutor
+        logger.info(
+            f"Processing {len(profiles)} profiles with {n_jobs} parallel workers..."
+        )
+
+        results = []
+        failed_profiles = []
+
+        with ProcessPoolExecutor(max_workers=n_jobs) as executor:
+            # Submit all jobs
+            future_to_profile = {}
+            for profile in profiles:
+                future = executor.submit(
+                    generate_profile_standalone,
+                    profile=profile,
+                    base_config_path=self.base_config_path,
+                    data_folder=self.data_folder,
+                    output_folder=self.output_folder,
+                    baseline_only=baseline_only,
+                    intervention_profiles=intervention_profiles,
+                    mobility_sigma_min=self.mobility_sigma_min,
+                    mobility_sigma_max=self.mobility_sigma_max,
+                )
+                future_to_profile[future] = profile
+
+            # Wait for completion and collect results
+            for future in as_completed(future_to_profile):
+                profile = future_to_profile[future]
+                try:
+                    result = future.result()
+                    results.append(result)
+
+                    if not result["success"]:
+                        failed_profiles.append(profile["profile_id"])
+                        logger.error(
+                            f"Profile {profile['profile_id']} failed: {result['error']}"
+                        )
+
+                except Exception as e:
+                    logger.error(f"Profile {profile['profile_id']} job crashed: {e}")
+                    results.append(
+                        {
+                            "success": False,
+                            "profile_id": profile["profile_id"],
+                            "error": str(e),
+                        }
+                    )
+                    failed_profiles.append(profile["profile_id"])
+
+        # Log summary
+        n_total = len(profiles)
+        n_failed = len(failed_profiles)
+        n_success = n_total - n_failed
+
+        logger.info("=" * 60)
+        logger.info(f"Profile Generation Summary: {n_success}/{n_total} succeeded")
+        if n_failed > 0:
+            logger.warning(f"Failed profiles: {sorted(failed_profiles)}")
+        logger.info("=" * 60)
+
+        return results
 
     def check_run_success(self, run_id):
         """Check if a run completed successfully by looking for output files."""
@@ -705,12 +885,12 @@ class SyntheticDataGenerator:
 
         if os.path.exists(error_file):
             try:
-                with open(error_file, "r") as f:
+                with open(error_file) as f:
                     error_data = json.load(f)
                 error_type = error_data.get("error_type", "Unknown")
                 error_message = error_data.get("error_message", "")
                 stacktrace = error_data.get("stacktrace", "")
-            except (IOError, json.JSONDecodeError) as e:
+            except (OSError, json.JSONDecodeError) as e:
                 logger.warning(f"Failed to read ERROR.json for {run_id}: {e}")
 
         # Extract profile from config
@@ -718,7 +898,7 @@ class SyntheticDataGenerator:
         profile = {}
         if os.path.exists(config_file):
             try:
-                with open(config_file, "r") as f:
+                with open(config_file) as f:
                     config = json.load(f)
 
                 # Extract relevant parameters
@@ -744,7 +924,7 @@ class SyntheticDataGenerator:
                 )
                 profile["seed_size"] = self._extract_seed_size_from_config(config)
 
-            except (IOError, json.JSONDecodeError) as e:
+            except (OSError, json.JSONDecodeError) as e:
                 logger.warning(f"Failed to read config for {run_id}: {e}")
 
         # Log the failure
@@ -1040,7 +1220,7 @@ class SyntheticDataGenerator:
                 source_npz = baseline_mobility_npz
                 logger.info(f"Detected baseline mobility series: {source_npz}")
 
-            with open(baseline_config_path, "r") as f:
+            with open(baseline_config_path) as f:
                 baseline_config = json.load(f)
 
             # Generate profile dict from baseline config
@@ -1186,6 +1366,12 @@ if __name__ == "__main__":
         type=int,
         default=15,
         help="Total number of profiles to generate",
+    )
+    parser.add_argument(
+        "--n-jobs",
+        type=int,
+        default=1,
+        help="Number of parallel workers for profile generation (default: 1)",
     )
     parser.add_argument(
         "--start-index",
@@ -1376,7 +1562,7 @@ if __name__ == "__main__":
         # This prevents false positives when intervention_profile_fraction = 0
         if intervention_profiles is None or len(intervention_profiles) > 0:
             marker_path = os.path.join(OUTPUT_FOLDER, ".interventions_pending")
-            with open(marker_path, 'w') as f:
+            with open(marker_path, "w") as f:
                 f.write("")
 
         # Generate spike-based intervention scenarios
@@ -1435,14 +1621,39 @@ if __name__ == "__main__":
         f"Processing profiles {start_idx} to {end_idx} (Total: {len(profiles)})"
     )
 
+    # Determine n_jobs
+    n_jobs = args.n_jobs
+    if n_jobs == -1:
+        n_jobs = min(len(profiles) - start_idx, end_idx - start_idx, 45)
+
     # Prepare files for selected profiles
-    for i in range(start_idx, end_idx):
-        profile = profiles[i]
-        generator.run_profile_sweep(
-            profile,
+    selected_profiles = profiles[start_idx:end_idx]
+
+    if n_jobs > 1:
+        # Parallel execution
+        results = generator.run_profile_sweep_parallel(
+            profiles=selected_profiles,
+            n_jobs=n_jobs,
             baseline_only=args.baseline_only,
             intervention_profiles=intervention_profiles,
         )
+
+        # Check for failures
+        failed_count = sum(1 for r in results if not r["success"])
+        if failed_count > args.failure_tolerance:
+            logger.error(
+                f"Too many profile generation failures ({failed_count}), aborting"
+            )
+            sys.exit(1)
+    else:
+        # Sequential execution (original behavior)
+        for i in range(len(selected_profiles)):
+            profile = selected_profiles[i]
+            generator.run_profile_sweep(
+                profile,
+                baseline_only=args.baseline_only,
+                intervention_profiles=intervention_profiles,
+            )
 
     # Execute batch if not skipped
     if not args.skip_run and start_idx < end_idx:
