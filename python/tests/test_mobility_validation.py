@@ -128,7 +128,7 @@ def validate_mobility_netcdf(
 
     try:
         ds = xr.open_dataset(netcdf_path)
-    except Exception as e:
+    except (FileNotFoundError, PermissionError, OSError, ValueError) as e:
         errors.append(f"Failed to load NetCDF file: {e}")
         return False, errors
 

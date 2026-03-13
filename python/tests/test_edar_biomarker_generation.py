@@ -294,13 +294,11 @@ class TestEdarBiomarkerEndToEnd:
         # This would require running a mini pipeline
         # For now, document the expected behavior
         # Expected: zarr dataset with edar_id dimension for wastewater biomarkers
-        pass
 
     def test_biomarkers_aggregated_to_catchment_areas(self):
         """Biomarker values should reflect catchment area aggregation."""
         # Document: EDAR biomarker = sum(municipality_i * contribution_ratio_i)
         # This is verified through aggregate_infections_to_edar tests
-        pass
 
 
 if __name__ == "__main__":

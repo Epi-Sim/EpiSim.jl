@@ -8,7 +8,6 @@ import json
 import os
 import sys
 from pathlib import Path
-from unittest.mock import Mock, patch
 
 import numpy as np
 import pandas as pd
@@ -103,7 +102,7 @@ class TestGenerateParameterGrid:
             "ratio_beta_a",
             "alpha_scale",
             "mu_scale",
-            "seed_size",
+            "seed_fraction",
             "mobility_sigma_O",
             "mobility_sigma_D",
         ]
@@ -119,19 +118,21 @@ class TestGenerateParameterGrid:
         assert ids == [0, 1, 2, 3, 4]
 
     def test_r0_scale_in_valid_range(self, mock_generator):
-        """R0 scale should be in valid range [0.5, 3.0]."""
+        """R0 scale should be in valid range [1.0, 5.0] (covering pre-Omicron to Omicron)."""
         profiles = mock_generator.generate_parameter_grid(n_profiles=20)
 
         for profile in profiles:
-            assert 0.5 <= profile["r0_scale"] <= 3.0
+            assert 1.0 <= profile["r0_scale"] <= 5.0
 
     def test_t_inf_and_t_inc_in_valid_range(self, mock_generator):
-        """T_inf and T_inc should be in valid range [2.0, 10.0]."""
+        """T_inf <= T_inc enforced; both within [2, 8] range after swap."""
         profiles = mock_generator.generate_parameter_grid(n_profiles=20)
 
         for profile in profiles:
-            assert 2.0 <= profile["t_inf"] <= 10.0
-            assert 2.0 <= profile["t_inc"] <= 10.0
+            # After potential swap: T_inf <= T_inc enforced for model stability
+            # Individual values can be as low as 2.0 (T_inc lower bound)
+            assert 2.0 <= profile["t_inf"] <= 8.0
+            assert 2.0 <= profile["t_inc"] <= 8.0
 
     def test_t_inf_less_or_equal_t_inc(self, mock_generator):
         """T_inf should be <= T_inc for model stability."""
@@ -149,12 +150,12 @@ class TestGenerateParameterGrid:
         for profile in profiles:
             assert 7 <= profile["event_duration"] <= 60
 
-    def test_seed_size_in_valid_range(self, mock_generator):
-        """Seed size should be in valid range [10, 500]."""
+    def test_seed_fraction_in_valid_range(self, mock_generator):
+        """Seed fraction should be in valid range [0.001, 0.05]."""
         profiles = mock_generator.generate_parameter_grid(n_profiles=20)
 
         for profile in profiles:
-            assert 10 <= profile["seed_size"] <= 500
+            assert 0.001 <= profile["seed_fraction"] <= 0.05
 
     def test_reproducible_with_same_seed(self, mock_generator):
         """Same seed should produce same profiles."""
@@ -203,7 +204,9 @@ class TestValidateProfileParameters:
                 "metapopulation_data_filename": "metapop.csv",
                 "mobility_matrix_filename": "mobility.csv",
             },
-            "epidemic_params": {},
+            "epidemic_params": {
+                "αᵍ": [0.27, 0.64, 0.64],
+            },
             "population_params": {"G_labels": ["Y", "M", "O"]},
             "NPI": {},
         }
@@ -232,6 +235,7 @@ class TestValidateProfileParameters:
             "t_inc": 7.0,
             "r0_scale": 2.0,
             "alpha_scale": 1.0,
+            "ratio_beta_a": 0.5,
         }
         assert mock_generator.validate_profile_parameters(profile) is True
 
@@ -243,6 +247,7 @@ class TestValidateProfileParameters:
             "t_inc": 4.0,  # eta = 0.25
             "r0_scale": 2.0,
             "alpha_scale": 1.0,
+            "ratio_beta_a": 0.5,
         }
         assert mock_generator.validate_profile_parameters(profile) is False
 
@@ -254,6 +259,7 @@ class TestValidateProfileParameters:
             "t_inc": 1.0,
             "r0_scale": 2.0,
             "alpha_scale": 1.0,
+            "ratio_beta_a": 0.5,
         }
         assert mock_generator.validate_profile_parameters(profile) is False
 
@@ -265,6 +271,7 @@ class TestValidateProfileParameters:
             "t_inc": 0.5,  # eta = 2.0
             "r0_scale": 2.0,
             "alpha_scale": 1.0,
+            "ratio_beta_a": 0.5,
         }
         assert mock_generator.validate_profile_parameters(profile) is False
 
@@ -276,6 +283,7 @@ class TestValidateProfileParameters:
             "t_inc": 200.0,
             "r0_scale": 2.0,
             "alpha_scale": 1.0,
+            "ratio_beta_a": 0.5,
         }
         assert mock_generator.validate_profile_parameters(profile) is False
 
@@ -287,6 +295,7 @@ class TestValidateProfileParameters:
             "t_inc": 200.0,  # eta = 0.005
             "r0_scale": 2.0,
             "alpha_scale": 1.0,
+            "ratio_beta_a": 0.5,
         }
         assert mock_generator.validate_profile_parameters(profile) is False
 
@@ -302,13 +311,15 @@ class TestValidateProfileParameters:
         assert mock_generator.validate_profile_parameters(profile) is False
 
     def test_r0_less_than_one_warns_but_passes(self, mock_generator, caplog):
-        """Profile with R0 < 1 should warn but pass."""
+        """Profile with R0 < 1 should warn but pass (note: LHS range now [1.0, 5.0])."""
         profile = {
             "profile_id": 0,
             "t_inf": 5.0,
             "t_inc": 7.0,
-            "r0_scale": 0.5,
+            "r0_scale": 0.8,  # Below 1.0 but above old minimum
             "alpha_scale": 1.0,
+            "ratio_beta_a": 0.5,
+            "ratio_beta_a": 0.5,
         }
         result = mock_generator.validate_profile_parameters(profile)
         assert result is True
@@ -332,7 +343,9 @@ class TestPrepareKappa0File:
                 "metapopulation_data_filename": "metapop.csv",
                 "mobility_matrix_filename": "mobility.csv",
             },
-            "epidemic_params": {},
+            "epidemic_params": {
+                "αᵍ": [0.27, 0.64, 0.64],
+            },
             "population_params": {"G_labels": ["Y", "M", "O"]},
             "NPI": {},
         }
@@ -428,7 +441,9 @@ class TestPrepareSeedFile:
                 "metapopulation_data_filename": "metapop.csv",
                 "mobility_matrix_filename": "mobility.csv",
             },
-            "epidemic_params": {},
+            "epidemic_params": {
+                "αᵍ": [0.27, 0.64, 0.64],
+            },
             "population_params": {"G_labels": ["Y", "M", "O"]},
             "NPI": {},
         }
@@ -463,14 +478,18 @@ class TestPrepareSeedFile:
 
     def test_creates_seed_csv(self, mock_generator):
         """Should create seed CSV file."""
-        filename, filepath = mock_generator.prepare_seed_file("test_run", seed_size=50)
+        filename, filepath = mock_generator.prepare_seed_file(
+            "test_run", seed_fraction=0.01
+        )
 
         assert "seeds_test_run" in filename
         assert os.path.exists(filepath)
 
     def test_seed_file_has_correct_columns(self, mock_generator):
         """Seed file should have correct columns."""
-        filename, filepath = mock_generator.prepare_seed_file("test_run", seed_size=50)
+        filename, filepath = mock_generator.prepare_seed_file(
+            "test_run", seed_fraction=0.01
+        )
 
         df = pd.read_csv(filepath)
         expected_cols = ["name", "id", "idx", "Y", "M", "O"]
@@ -478,19 +497,37 @@ class TestPrepareSeedFile:
 
     def test_seed_placed_in_middle_age_group(self, mock_generator):
         """Seed should be placed in middle age group (M)."""
-        filename, filepath = mock_generator.prepare_seed_file("test_run", seed_size=50)
+        np.random.seed(0)  # Select region 001 (pop=1000)
+        filename, filepath = mock_generator.prepare_seed_file(
+            "test_run", seed_fraction=0.01
+        )
 
         df = pd.read_csv(filepath)
-        assert df["M"].iloc[0] == 50
+        # Region 001 (pop=1000) with 0.01 fraction = 10 infected
+        assert df["M"].iloc[0] == 10
         assert df["Y"].iloc[0] == 0
         assert df["O"].iloc[0] == 0
 
-    def test_seed_size_matches_input(self, mock_generator):
-        """Seed size in file should match input."""
-        filename, filepath = mock_generator.prepare_seed_file("test_run", seed_size=100)
+    def test_seed_fraction_calculated_correctly(self, mock_generator):
+        """Seed size should be calculated from fraction of population."""
+        np.random.seed(1)  # Select region 002 (pop=2000)
+        filename, filepath = mock_generator.prepare_seed_file(
+            "test_run", seed_fraction=0.05
+        )
 
         df = pd.read_csv(filepath)
-        assert df["M"].iloc[0] == 100
+        assert df["M"].iloc[0] == 100  # 0.05 * 2000 = 100
+
+    def test_seed_capped_at_10_percent(self, mock_generator):
+        """Seed should be capped at 10% of population even if fraction is higher."""
+        np.random.seed(42)  # Select region 003 (pop=3000)
+        # 0.20 fraction of 3000 pop would be 600, but capped at 300 (10%)
+        filename, filepath = mock_generator.prepare_seed_file(
+            "test_run", seed_fraction=0.20
+        )
+
+        df = pd.read_csv(filepath)
+        assert df["M"].iloc[0] == 300  # Capped at 10% of 3000
 
 
 class TestSampleInterventionProfiles:
@@ -565,7 +602,9 @@ class TestCheckRunSuccess:
                 "metapopulation_data_filename": "metapop.csv",
                 "mobility_matrix_filename": "mobility.csv",
             },
-            "epidemic_params": {},
+            "epidemic_params": {
+                "αᵍ": [0.27, 0.64, 0.64],
+            },
             "population_params": {"G_labels": ["Y", "M", "O"]},
             "NPI": {},
         }

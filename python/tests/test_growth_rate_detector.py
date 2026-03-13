@@ -5,15 +5,16 @@ Tests the growth_rate_detector module's ability to detect spikes using
 sustained exponential growth combined with population-relative thresholds.
 """
 
-import pytest
-import numpy as np
 import sys
 from pathlib import Path
+
+import numpy as np
+import pytest
 
 # Add python directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from growth_rate_detector import detect_spike_periods_growth_rate, calculate_growth_rate
+from growth_rate_detector import calculate_growth_rate, detect_spike_periods_growth_rate
 
 
 class TestExponentialGrowthDetection:

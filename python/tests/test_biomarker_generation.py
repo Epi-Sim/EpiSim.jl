@@ -16,14 +16,11 @@ import sys
 
 import numpy as np
 import pytest
-from scipy import stats
 
 # Add python directory to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from synthetic_observations import (
-    DEFAULT_REPORTED_CASES_CONFIG,
-    DEFAULT_WASTEWATER_CONFIG,
     _build_shedding_kernel,
     _compute_monitoring_start_mask,
     _normalize_infections,

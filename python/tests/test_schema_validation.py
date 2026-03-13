@@ -18,7 +18,15 @@ try:
     )
 
     SCHEMA_AVAILABLE = True
-except ImportError:
+except ImportError as e:
+    import warnings
+
+    warnings.warn(
+        f"Schema validation module not available: {e}. "
+        f"Schema validation tests will be skipped. "
+        f"Install with: pip install jsonschema",
+        ImportWarning,
+    )
     SCHEMA_AVAILABLE = False
 
 from episim_python import EpiSimConfig

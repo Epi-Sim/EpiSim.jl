@@ -5,8 +5,8 @@ Tests different approaches to identify bottlenecks.
 """
 
 import time
+
 import numpy as np
-import pandas as pd
 
 from episim_python.mobility import MobilityGenerator, load_baseline_mobility
 
@@ -31,15 +31,20 @@ def benchmark_ipfp_iterations(mobility_csv, metapop_csv, T=180, n_repeats=10):
                 baseline_R=(edgelist, R_baseline),
                 sigma_O=0.1,
                 sigma_D=0.1,
-                rng_seed=int(time.time())
+                rng_seed=int(time.time()),
             )
 
             # Monkey-patch the max_iter
             import episim_python.mobility as mob_module
+
             original_ipfp = mob_module.ipfp_sparse
 
-            def ipfp_with_iter(edgelist, B, O_target, D_target, max_iter=max_iter, tol=1e-6):
-                return original_ipfp(edgelist, B, O_target, D_target, max_iter=max_iter, tol=tol)
+            def ipfp_with_iter(
+                edgelist, B, O_target, D_target, max_iter=max_iter, tol=1e-6
+            ):
+                return original_ipfp(
+                    edgelist, B, O_target, D_target, max_iter=max_iter, tol=tol
+                )
 
             mob_module.ipfp_sparse = ipfp_with_iter
 
@@ -52,7 +57,9 @@ def benchmark_ipfp_iterations(mobility_csv, metapop_csv, T=180, n_repeats=10):
 
         avg_time = np.mean(times)
         std_time = np.std(times)
-        print(f"max_iter={max_iter:3d}: {avg_time:.3f}s ± {std_time:.3f}s per {T} timesteps")
+        print(
+            f"max_iter={max_iter:3d}: {avg_time:.3f}s ± {std_time:.3f}s per {T} timesteps"
+        )
 
 
 def benchmark_sigma_values(mobility_csv, metapop_csv, T=180):
@@ -81,14 +88,16 @@ def benchmark_sigma_values(mobility_csv, metapop_csv, T=180):
             baseline_R=(edgelist, R_baseline),
             sigma_O=sigma_O,
             sigma_D=sigma_D,
-            rng_seed=42
+            rng_seed=42,
         )
 
         start = time.perf_counter()
         R_series = generator.generate_series(T=T)
         elapsed = time.perf_counter() - start
 
-        print(f"{desc:20s} (O={sigma_O:.2f}, D={sigma_D:.2f}): {elapsed:.3f}s for {T} timesteps")
+        print(
+            f"{desc:20s} (O={sigma_O:.2f}, D={sigma_D:.2f}): {elapsed:.3f}s for {T} timesteps"
+        )
 
 
 def benchmark_single_timestep(mobility_csv, metapop_csv, n_repeats=100):
@@ -103,10 +112,7 @@ def benchmark_single_timestep(mobility_csv, metapop_csv, n_repeats=100):
     print(f"Mobility stats: M={M}, E={E}")
 
     generator = MobilityGenerator(
-        baseline_R=(edgelist, R_baseline),
-        sigma_O=0.1,
-        sigma_D=0.1,
-        rng_seed=42
+        baseline_R=(edgelist, R_baseline), sigma_O=0.1, sigma_D=0.1, rng_seed=42
     )
 
     # Warm up
@@ -147,10 +153,7 @@ def profile_components(mobility_csv, metapop_csv):
     print(f"Mobility stats: M={M}, E={E}")
 
     generator = MobilityGenerator(
-        baseline_R=(edgelist, R_baseline),
-        sigma_O=0.1,
-        sigma_D=0.1,
-        rng_seed=42
+        baseline_R=(edgelist, R_baseline), sigma_O=0.1, sigma_D=0.1, rng_seed=42
     )
 
     # Profile marginals computation
@@ -159,7 +162,7 @@ def profile_components(mobility_csv, metapop_csv):
         start = time.perf_counter()
         O, D = generator._compute_marginals(R_baseline)
         times.append(time.perf_counter() - start)
-    print(f"Compute marginals: {np.mean(times)*1000:.2f}ms")
+    print(f"Compute marginals: {np.mean(times) * 1000:.2f}ms")
 
     # Profile noisy marginals generation
     times = []
@@ -167,7 +170,7 @@ def profile_components(mobility_csv, metapop_csv):
         start = time.perf_counter()
         O_t, D_t = generator._generate_noisy_marginals(t=0)
         times.append(time.perf_counter() - start)
-    print(f"Generate noisy marginals: {np.mean(times)*1000:.2f}ms")
+    print(f"Generate noisy marginals: {np.mean(times) * 1000:.2f}ms")
 
     # Profile IPFP
     O_t, D_t = generator._generate_noisy_marginals(t=0)
@@ -176,7 +179,7 @@ def profile_components(mobility_csv, metapop_csv):
         start = time.perf_counter()
         R_new = generator._ipfp(R_baseline, O_t, D_t)
         times.append(time.perf_counter() - start)
-    print(f"IPFP (20 iterations): {np.mean(times)*1000:.2f}ms")
+    print(f"IPFP (20 iterations): {np.mean(times) * 1000:.2f}ms")
 
     # Profile full timestep
     times = []
@@ -184,7 +187,7 @@ def profile_components(mobility_csv, metapop_csv):
         start = time.perf_counter()
         R_t = generator.generate_R_t(t=0)
         times.append(time.perf_counter() - start)
-    print(f"Full timestep: {np.mean(times)*1000:.2f}ms")
+    print(f"Full timestep: {np.mean(times) * 1000:.2f}ms")
 
 
 def benchmark_scales():
@@ -212,7 +215,9 @@ def benchmark_scales():
         if len(edgelist) < E:
             # Add more edges if needed
             while len(edgelist) < E:
-                new_edges = np.random.randint(0, M, size=(E - len(edgelist), 2), dtype=np.int64)
+                new_edges = np.random.randint(
+                    0, M, size=(E - len(edgelist), 2), dtype=np.int64
+                )
                 mask = new_edges[:, 0] != new_edges[:, 1]
                 new_edges = new_edges[mask]
                 edgelist = np.vstack([edgelist, new_edges])
@@ -228,19 +233,19 @@ def benchmark_scales():
                     R_baseline[mask] /= row_sum
 
         generator = MobilityGenerator(
-            baseline_R=(edgelist, R_baseline),
-            sigma_O=0.1,
-            sigma_D=0.1,
-            rng_seed=42
+            baseline_R=(edgelist, R_baseline), sigma_O=0.1, sigma_D=0.1, rng_seed=42
         )
 
         start = time.perf_counter()
         try:
             R_series = generator.generate_series(T=T)
             elapsed = time.perf_counter() - start
-            print(f"{desc:25s}: {elapsed:.3f}s for {T} timesteps ({elapsed/T*1000:.2f}ms per timestep)")
-        except Exception as e:
+            print(
+                f"{desc:25s}: {elapsed:.3f}s for {T} timesteps ({elapsed / T * 1000:.2f}ms per timestep)"
+            )
+        except (ValueError, RuntimeError, MemoryError) as e:
             print(f"{desc:25s}: ERROR - {e}")
+            raise
 
 
 if __name__ == "__main__":

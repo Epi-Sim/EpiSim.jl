@@ -123,7 +123,7 @@ def test_dense_sparse_conversion():
     # Check some values
     assert R_dense[0, 0] == 0.9, f"R_dense[0,0] = {R_dense[0,0]}, expected 0.9"
     assert R_dense[0, 1] == 0.1, f"R_dense[0,1] = {R_dense[0,1]}, expected 0.1"
-    assert R_dense[1, 0] == 0.0, f"R_dense[1,0] should be 0"
+    assert R_dense[1, 0] == 0.0, "R_dense[1,0] should be 0"
 
     print("✓ Dense/sparse conversion working correctly")
 
@@ -131,8 +131,8 @@ def test_dense_sparse_conversion():
 def test_load_baseline_mobility():
     """Test loading baseline mobility from CSV."""
     # Create a temporary CSV file
-    import tempfile
     import os
+    import tempfile
 
     # Create sparse format CSV
     sparse_data = pd.DataFrame({

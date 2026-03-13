@@ -127,11 +127,17 @@ class TestIterativePipeline:
 
     @patch("run_synthetic_pipeline.clean_run_folders")
     @patch("run_synthetic_pipeline.subprocess.run")
-    def test_pipeline_orchestration(self, mock_subprocess, mock_clean, mock_paths):
+    @patch("run_synthetic_pipeline.check_baseline_success")
+    def test_pipeline_orchestration(
+        self, mock_check, mock_subprocess, mock_clean, mock_paths
+    ):
         """Test the two-phase pipeline orchestration with subprocess calls."""
 
         n_profiles = 15
         batch_size = 5
+
+        # Mock out the baseline success check, since we are mocking subprocess so BATCH_RESULTS.json is never written
+        mock_check.return_value = (n_profiles, 1.0, True, [])
 
         # We need to mock OUTPUT_FOLDER in the imported module to prevent real FS operations
         with patch(

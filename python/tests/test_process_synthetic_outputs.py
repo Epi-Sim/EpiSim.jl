@@ -4,11 +4,8 @@ This module tests the core output processing functionality used to convert
 simulation outputs into zarr format for downstream analysis.
 """
 
-import json
 import os
 import sys
-from pathlib import Path
-from unittest.mock import Mock, patch
 
 import numpy as np
 import pandas as pd
@@ -24,6 +21,7 @@ from process_synthetic_outputs import (
     build_date_range,
     detect_and_load_time_varying_mobility,
     generate_wastewater_with_censoring,
+    load_compartment_latents,
     load_edar_muni_mapping,
     load_kappa0_series,
     load_mobility_matrix,
@@ -483,6 +481,59 @@ class TestLoadMobilityMatrix:
 
         with pytest.raises(ValueError, match="Mobility matrix not found"):
             load_mobility_matrix(str(metapop_df))
+
+
+class TestLoadCompartmentLatents:
+    """Tests for latent compartment loading from simulator output."""
+
+    def test_loads_and_aggregates_latent_states(self, tmp_path):
+        """Should aggregate age-stratified compartments to region/date latents."""
+        compartments_path = tmp_path / "compartments_full.nc"
+        dims = ("G", "M", "T")
+        ds = xr.Dataset(
+            {
+                "S": (dims, np.array([[[10, 11], [20, 21]], [[1, 2], [3, 4]]])),
+                "E": (dims, np.array([[[2, 3], [4, 5]], [[1, 1], [1, 1]]])),
+                "A": (dims, np.array([[[5, 6], [7, 8]], [[1, 1], [2, 2]]])),
+                "I": (dims, np.array([[[9, 10], [11, 12]], [[3, 3], [4, 4]]])),
+                "PH": (dims, np.array([[[1, 1], [2, 2]], [[0, 1], [1, 0]]])),
+                "PD": (dims, np.array([[[0, 1], [1, 0]], [[1, 0], [0, 1]]])),
+                "HR": (dims, np.array([[[2, 2], [3, 3]], [[1, 0], [0, 1]]])),
+                "HD": (dims, np.array([[[1, 0], [0, 1]], [[0, 1], [1, 0]]])),
+                "R": (dims, np.array([[[4, 5], [6, 7]], [[2, 2], [3, 3]]])),
+                "D": (dims, np.array([[[1, 1], [1, 1]], [[0, 1], [1, 0]]])),
+                "CH": (dims, np.array([[[3, 3], [3, 3]], [[1, 1], [1, 1]]])),
+            }
+        )
+        ds.to_netcdf(compartments_path)
+
+        latents = load_compartment_latents(compartments_path)
+
+        assert set(latents) >= {
+            "latent_S_true",
+            "latent_E_true",
+            "latent_A_true",
+            "latent_I_true",
+            "latent_R_true",
+            "latent_D_true",
+            "latent_CH_true",
+            "latent_hospitalized_true",
+            "latent_active_true",
+        }
+        np.testing.assert_array_equal(
+            latents["latent_S_true"], np.array([[11, 13], [23, 25]])
+        )
+        np.testing.assert_array_equal(
+            latents["latent_hospitalized_true"], np.array([[4, 3], [4, 5]])
+        )
+        np.testing.assert_array_equal(
+            latents["latent_active_true"], np.array([[27, 30], [37, 40]])
+        )
+
+    def test_raises_if_compartment_file_missing(self, tmp_path):
+        """Should fail clearly when latent export is requested without compartments."""
+        with pytest.raises(FileNotFoundError, match="Missing compartments_full.nc"):
+            load_compartment_latents(tmp_path / "missing.nc")
 
 
 class TestGenerateWastewaterWithCensoring:

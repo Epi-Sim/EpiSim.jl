@@ -6,7 +6,6 @@ interventions in the two-phase synthetic data generation pipeline.
 
 import os
 import sys
-from unittest.mock import Mock, patch
 
 import numpy as np
 import pytest
@@ -28,11 +27,8 @@ class TestDetectSpikePeriods:
     def test_empty_array_returns_empty_list(self):
         """Empty infections array should return empty list."""
         infections = np.array([])
-        # Empty array causes IndexError in numpy percentile, skip this edge case
-        # or handle it in the function. For now, test with minimal array.
-        infections = np.array([1])
         result = detect_spike_periods(infections, min_duration=1)
-        assert isinstance(result, list)
+        assert result == []
 
     def test_constant_low_values_no_spikes(self):
         """Constant low values should not produce spikes."""
@@ -384,23 +380,35 @@ class TestEdgeCases:
         assert result == []
 
     def test_nan_values(self):
-        """NaN values should be handled."""
+        """NaN values should be handled without affecting spike detection."""
         infections = np.ones(100) * 10
         infections[50] = np.nan
-        infections[60:70] = 100
+        infections[60:70] = 100  # Should detect this spike
 
-        # Should handle NaN without crashing
         result = detect_spike_periods(infections, min_duration=5)
         assert isinstance(result, list)
+        assert len(result) >= 1, "Should detect spike despite NaN value"
+        # Verify spike covers the high-value period
+        if result:
+            start, end = result[0]
+            assert end >= 60, f"Spike should extend to at least day 60, got end={end}"
+
+    def test_all_nan_values(self):
+        """All NaN values should return empty list."""
+        infections = np.full(100, np.nan)
+        result = detect_spike_periods(infections, min_duration=5)
+        assert result == [], "All-NaN array should return empty list"
 
     def test_negative_values(self):
-        """Negative values should be handled."""
+        """Negative values should be handled and filtered by threshold."""
         infections = np.ones(100) * 10
-        infections[40:50] = -100
+        infections[40:50] = -100  # Negative values should be below threshold
 
         result = detect_spike_periods(infections, min_duration=5)
-        # Should handle negatives without crashing
         assert isinstance(result, list)
+        # Should not detect negative values as a spike
+        # (they're below threshold since threshold is based on positive values)
+        assert len(result) == 0, "Negative values should not trigger spike detection"
 
     def test_unknown_method_raises_error(self):
         """Unknown method should raise ValueError."""
