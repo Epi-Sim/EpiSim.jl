@@ -167,6 +167,19 @@ Wastewater uses **age-stratified shedding kernels**:
 | `synthetic_mobility_noise_sigma_D` | `(run_id,)` | Mobility noise sigma for destination marginals (0.0 if static) |
 | `synthetic_mobility_noise_factor` | `(run_id,)` | Combined mobility noise factor (max of σ_O and σ_D) |
 
+### Optional Latent Targets
+
+When the processor is run with `--include-latents`, the zarr also includes simulator-side latent targets:
+
+| Variable | Shape | Description |
+|----------|-------|-------------|
+| `latent_S_true`, `latent_E_true`, `latent_A_true`, `latent_I_true`, `latent_R_true`, `latent_D_true` | `(run_id, region_id, date)` | Aggregated latent compartments from the simulator |
+| `latent_CH_true` | `(run_id, region_id, date)` | Confined-population latent |
+| `latent_hospitalized_true` | `(run_id, region_id, date)` | `HR + HD` |
+| `latent_active_true` | `(run_id, region_id, date)` | `E + A + I + PH + PD + HR + HD` |
+
+These variables are intended for synthetic-only auxiliary supervision. They should not be treated as features available in a real-data deployment.
+
 **Scenario Types**:
 - **Baseline**: No intervention (strength = 0.0)
 - **Global_Timed**: Reduction of κ₀ only during event window
