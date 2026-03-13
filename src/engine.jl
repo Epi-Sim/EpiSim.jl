@@ -62,10 +62,38 @@ function read_input_files(::AbstractEngine, config::AbstractDict, data_path::Str
     # Daily Mobility reduction
     kappa0_filename = get(data_dict, "kappa0_filename", nothing)
     first_day = Date(simulation_dict["start_date"])
-    npi_params = init_NPI_parameters_struct(data_path, Dict(npi_params_dict), kappa0_filename, first_day)
+    
+    # kappa0 file is typically in instance_path (run folder), not data_path
+    # The filename in config might be a full relative path or just a basename
+    # Try multiple resolution strategies for backwards compatibility
+    if !isnothing(kappa0_filename)
+        if isfile(kappa0_filename)
+            # Path is valid as-is (absolute or relative to pwd)
+            kappa0_dir = dirname(kappa0_filename)
+            kappa0_filename = basename(kappa0_filename)
+        elseif isfile(joinpath(instance_path, basename(kappa0_filename)))
+            # File exists in instance_path using just the basename
+            kappa0_dir = instance_path
+            kappa0_filename = basename(kappa0_filename)
+        else
+            # Fall back to data_path for backwards compatibility
+            kappa0_dir = data_path
+        end
+    else
+        kappa0_dir = data_path
+    end
+    npi_params = init_NPI_parameters_struct(kappa0_dir, Dict(npi_params_dict), kappa0_filename, first_day)
 
     # Loading mobility network
-    mobility_matrix_filename = joinpath(data_path, data_dict["mobility_matrix_filename"])
+    # Apply same path resolution logic as kappa0 - files may be in instance_path
+    mobility_matrix_file = data_dict["mobility_matrix_filename"]
+    if isfile(mobility_matrix_file)
+        mobility_matrix_filename = mobility_matrix_file
+    elseif isfile(joinpath(instance_path, basename(mobility_matrix_file)))
+        mobility_matrix_filename = joinpath(instance_path, basename(mobility_matrix_file))
+    else
+        mobility_matrix_filename = joinpath(data_path, mobility_matrix_file)
+    end
     network_df  = CSV.read(mobility_matrix_filename, DataFrame)
 
     G_labels = map(String, pop_params_dict["G_labels"])
