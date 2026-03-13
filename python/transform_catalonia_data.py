@@ -19,12 +19,12 @@ Format matches models/mitma/ template.
 """
 
 import json
-import os
-import pandas as pd
-import numpy as np
-import zarr
-import netCDF4
 from pathlib import Path
+
+import netCDF4
+import numpy as np
+import pandas as pd
+import zarr
 
 
 def main():
@@ -227,7 +227,7 @@ def main():
 
     # Load base config template from models/mitma
     base_config_path = project_root / 'models' / 'mitma' / 'config_MMCACovid19.json'
-    with open(base_config_path, 'r') as f:
+    with open(base_config_path) as f:
         config = json.load(f)
 
     # Update data filenames
@@ -278,13 +278,13 @@ def main():
     print("\n" + "=" * 60)
     print("Transformation complete!")
     print("=" * 60)
-    print(f"\nSummary:")
+    print("\nSummary:")
     print(f"  Municipalities: {len(metapop_df)}")
     print(f"  Population: Y={summary['population_summary']['total_Y']:,}, "
           f"M={summary['population_summary']['total_M']:,}, "
           f"O={summary['population_summary']['total_O']:,}")
     print(f"  EDAR municipalities: {summary['n_edar_in_dataset']}/{summary['n_edar_municipalities']}")
-    print(f"\nOutput files:")
+    print("\nOutput files:")
     print(f"  - {metapop_output}")
     print(f"  - {rosetta_output}")
     print(f"  - {mobility_output}")

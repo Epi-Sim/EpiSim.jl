@@ -6,10 +6,11 @@ This script creates a mapping from EDAR municipality 5-digit codes to
 metapopulation region IDs, handling various ID format mismatches.
 """
 
-import pandas as pd
 import json
-from pathlib import Path
 from collections import defaultdict
+from pathlib import Path
+
+import pandas as pd
 
 
 def load_edar_municipalities(edar_nc_path: str) -> set:

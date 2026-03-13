@@ -6,8 +6,9 @@ This script creates an A0_initial_conditions_seeds_edar159.csv file
 compatible with the filtered 159-region dataset.
 """
 
-import pandas as pd
 from pathlib import Path
+
+import pandas as pd
 
 
 def generate_initial_conditions_edar159():
@@ -53,7 +54,7 @@ def generate_initial_conditions_edar159():
 
     print(f"Created initial conditions file with {len(result_df)} regions")
     print(f"Output: {output_path}")
-    print(f"\nSummary:")
+    print("\nSummary:")
     print(f"  Total Y infections: {result_df['Y'].sum():.2f}")
     print(f"  Total M infections: {result_df['M'].sum():.2f}")
     print(f"  Total O infections: {result_df['O'].sum():.2f}")
