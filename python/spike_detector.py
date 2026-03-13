@@ -6,7 +6,7 @@ simulation outputs, which can be used to time interventions realistically.
 """
 
 import logging
-from typing import List, Tuple, Dict, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import xarray as xr
@@ -55,13 +55,24 @@ def detect_spike_periods(
     """
     n_days = len(infections_array)
 
+    # Handle edge cases
+    if n_days == 0:
+        logger.warning("Empty infections array provided, returning no spikes")
+        return []
+
+    if np.all(np.isnan(infections_array)):
+        logger.warning("All values are NaN, returning no spikes")
+        return []
+
     if method == "percentile":
         # Calculate baseline threshold from early epidemic (days 0-30 or full array if shorter)
         baseline_window = min(30, n_days)
         baseline_infections = infections_array[:baseline_window]
         threshold = np.percentile(baseline_infections, threshold_pct * 100)
 
-        logger.info(f"Threshold-based detection: threshold={threshold:.1f} ({threshold_pct*100:.0f}th percentile)")
+        logger.info(
+            f"Threshold-based detection: threshold={threshold:.1f} ({threshold_pct * 100:.0f}th percentile)"
+        )
 
         # Find periods where infections exceed threshold
         above_threshold = infections_array > threshold
@@ -109,14 +120,20 @@ def detect_spike_periods(
             width=min_duration,
         )
 
-        logger.info(f"Peak-based detection: found {len(peaks)} peaks with prominence>{prominence_threshold:.1f}")
+        logger.info(
+            f"Peak-based detection: found {len(peaks)} peaks with prominence>{prominence_threshold:.1f}"
+        )
 
         # Convert peaks to windows (using width information)
         spike_periods = []
         for i, peak_pos in enumerate(peaks):
             # Use the width at half prominence as the spike window
             # width is defined as (left, right) indices
-            if "widths" in properties and "left_ips" in properties and "right_ips" in properties:
+            if (
+                "widths" in properties
+                and "left_ips" in properties
+                and "right_ips" in properties
+            ):
                 left = int(properties["left_ips"][i])
                 right = int(properties["right_ips"][i])
                 # Ensure minimum width
@@ -139,13 +156,15 @@ def detect_spike_periods(
 
         if population is None:
             raise ValueError(
-                f"population parameter is required for growth_rate method. "
-                f"Provide population size for per-capita threshold calculation."
+                "population parameter is required for growth_rate method. "
+                "Provide population size for per-capita threshold calculation."
             )
 
-        logger.info(f"Growth-rate detection: GF_threshold={growth_factor_threshold}, "
-                    f"min_growth_duration={min_growth_duration}, "
-                    f"min_cases_per_capita={min_cases_per_capita}")
+        logger.info(
+            f"Growth-rate detection: GF_threshold={growth_factor_threshold}, "
+            f"min_growth_duration={min_growth_duration}, "
+            f"min_cases_per_capita={min_cases_per_capita}"
+        )
 
         return detect_spike_periods_growth_rate(
             infections_array=infections_array,
@@ -233,7 +252,9 @@ def detect_spike_periods_from_zarr(
         for run_id_val in population_var.run_id.values:
             pop = float(population_var.sel(run_id=str(run_id_val)).sum().values)
             population_by_run[str(run_id_val)] = pop
-        logger.info(f"Extracted population for {len(population_by_run)} runs for growth_rate method")
+        logger.info(
+            f"Extracted population for {len(population_by_run)} runs for growth_rate method"
+        )
     else:
         population_by_run = {}
 
@@ -246,7 +267,8 @@ def detect_spike_periods_from_zarr(
             for stype in scenario_types.values
         ]
         run_ids_to_process = [
-            str(rid) for rid, is_baseline in zip(infections.run_id.values, baseline_mask)
+            str(rid)
+            for rid, is_baseline in zip(infections.run_id.values, baseline_mask)
             if is_baseline
         ]
     else:
@@ -287,7 +309,9 @@ def detect_spike_periods_from_zarr(
             spikes_by_run[run_id] = spike_windows
             logger.info(f"  {run_id}: detected {len(spike_windows)} spike periods")
         else:
-            logger.warning(f"  {run_id}: no spikes detected (threshold={threshold_pct}, min_duration={min_duration})")
+            logger.warning(
+                f"  {run_id}: no spikes detected (threshold={threshold_pct}, min_duration={min_duration})"
+            )
 
     ds.close()
 
@@ -312,7 +336,7 @@ def print_spike_summary(spikes_by_run: Dict[str, List[Tuple[int, int]]]):
         print(f"\n{run_id}:")
         for i, (start, end) in enumerate(windows):
             duration = end - start
-            print(f"  Spike {i+1}: Day {start} -> {end} (duration={duration}d)")
+            print(f"  Spike {i + 1}: Day {start} -> {end} (duration={duration}d)")
 
     print("\n" + "=" * 60)
 
@@ -323,10 +347,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Detect infection spikes in baseline simulation outputs"
     )
-    parser.add_argument(
-        "zarr_path",
-        help="Path to raw_synthetic_observations.zarr"
-    )
+    parser.add_argument("zarr_path", help="Path to raw_synthetic_observations.zarr")
     parser.add_argument(
         "--spike-threshold",
         type=float,

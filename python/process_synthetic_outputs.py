@@ -12,7 +12,10 @@ Key Design Principle:
 
 Output format:
     cases: (run_id, date, region_id) - Raw cases with NaN for missing (matches EpiForecaster input)
-    edar_biomarker_N1, edar_biomarker_N2, edar_biomarker_IP4: (run_id, date, edar_id) - Raw wastewater
+    edar_biomarker_N1, edar_biomarker_N2, edar_biomarker_IP4: (run_id, date, edar_id) - Wastewater in log1p space
+        Note: Raw wastewater values are log1p-transformed (log1p(concentration)) to enable efficient
+        float16 storage. Raw values can be 150k+ which exceeds float16 max (65504).
+        Example: log1p(150000) ≈ 11.9, log1p(375) ≈ 5.93 (LoD for N1)
     edar_biomarker_*_censor_hints: (run_id, date, edar_id) - Censoring hints (0=observed, 1=censored, 2=missing)
 
     # Mobility: Two storage formats depending on mobility type
@@ -32,6 +35,10 @@ Output format:
     infections_true: (run_id, date, region_id)
     hospitalizations_true: (run_id, date, region_id)
     deaths_true: (run_id, date, region_id)
+    latent_S_true, latent_E_true, latent_A_true, latent_I_true, latent_R_true, latent_D_true:
+        (run_id, region_id, date) - Optional latent simulator states for hybrid supervision
+    latent_CH_true, latent_hospitalized_true, latent_active_true:
+        (run_id, region_id, date) - Optional auxiliary latent targets
 
     # Synthetic metadata (for reference, not used by preprocessor)
     synthetic_scenario_type: (run_id,) - Scenario type (Baseline, Global_Timed, Local_Static)
@@ -46,7 +53,6 @@ import os
 import re
 import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from functools import partial
 from pathlib import Path
 from typing import Optional
 
@@ -56,10 +62,10 @@ import xarray as xr
 from scipy.special import expit
 
 from synthetic_observations import (
+    DEFAULT_DEATHS_REPORT_CONFIG,
+    DEFAULT_HOSP_REPORT_CONFIG,
     DEFAULT_REPORTED_CASES_CONFIG,
     DEFAULT_WASTEWATER_CONFIG,
-    DEFAULT_HOSP_REPORT_CONFIG,
-    DEFAULT_DEATHS_REPORT_CONFIG,
     generate_reported_cases,
     generate_reported_with_delay,
     generate_wastewater_stratified,
@@ -73,6 +79,61 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger("SyntheticOutputs")
+
+LATENT_ZARR_VARS = (
+    "latent_S_true",
+    "latent_E_true",
+    "latent_A_true",
+    "latent_I_true",
+    "latent_R_true",
+    "latent_D_true",
+    "latent_CH_true",
+    "latent_hospitalized_true",
+    "latent_active_true",
+)
+
+
+def safe_convert_dtype(arr: np.ndarray, dtype_str: str, var_name: str) -> np.ndarray:
+    """
+    Safely convert array to target dtype, validating no overflow for float16.
+
+    Args:
+        arr: Input array to convert
+        dtype_str: Target dtype string ("float16", "float32", "float64")
+        var_name: Variable name for error messages
+
+    Returns:
+        Converted array
+
+    Raises:
+        ValueError: If float16 overflow would occur
+    """
+    if dtype_str == "float16":
+        max_val = np.finfo(np.float16).max  # 65504
+        arr_max = np.nanmax(np.abs(arr))
+        if arr_max > max_val:
+            raise ValueError(
+                f"Cannot convert {var_name} to float16: "
+                f"max absolute value {arr_max} exceeds limit {max_val}"
+            )
+    return arr.astype(dtype_str)
+
+
+def transform_wastewater_log1p(arr: np.ndarray) -> np.ndarray:
+    """
+    Apply log1p transformation and convert to float16 for efficient storage.
+
+    This transformation compresses large wastewater concentration values (e.g., 150k)
+    into a range suitable for float16 (0-20). Log1p(150000) ≈ 11.9.
+
+    Args:
+        arr: Raw wastewater array with values in Copies/L (can be large, up to ~500k)
+
+    Returns:
+        Log1p-transformed array as float16, suitable for efficient storage
+    """
+    log_arr = np.log1p(arr)
+    return log_arr.astype(np.float16)
 
 
 def sanitize_run_id(run_dir_name: str, max_length: int = 50) -> str:
@@ -119,6 +180,7 @@ def load_run_artifacts(run_dir: Path):
     # Try new structure first (no UUID nesting)
     config_path = run_dir / "config_auto_py.json"
     output_path = run_dir / "output" / "observables.nc"
+    compartments_path = run_dir / "output" / "compartments_full.nc"
 
     # Fall back to old structure (UUID subdirectory)
     if not config_path.exists() or not output_path.exists():
@@ -127,6 +189,7 @@ def load_run_artifacts(run_dir: Path):
             uuid_dir = subdirs[0]
             config_path = uuid_dir / "config_auto_py.json"
             output_path = uuid_dir / "output" / "observables.nc"
+            compartments_path = uuid_dir / "output" / "compartments_full.nc"
 
     if not config_path.exists() or not output_path.exists():
         logger.warning("Missing config or observables in %s", run_dir)
@@ -135,7 +198,7 @@ def load_run_artifacts(run_dir: Path):
     with open(config_path, encoding="utf-8") as file_handle:
         config = json.load(file_handle)
 
-    return config, output_path
+    return config, output_path, compartments_path if compartments_path.exists() else None
 
 
 def load_infections_stratified(observables_path: Path):
@@ -173,39 +236,101 @@ def load_deaths(observables_path: Path):
     return deaths_array
 
 
+def load_compartment_latents(compartments_path: Path) -> dict[str, np.ndarray]:
+    """Load latent compartment trajectories aggregated to (region, date)."""
+    if compartments_path is None or not compartments_path.exists():
+        raise FileNotFoundError(
+            f"Missing compartments_full.nc required for latent export: {compartments_path}"
+        )
+
+    with xr.open_dataset(compartments_path) as ds:
+        required = {"S", "E", "A", "I", "PH", "PD", "HR", "HD", "R", "D", "CH"}
+        missing = sorted(required.difference(ds.data_vars))
+        if missing:
+            raise ValueError(
+                f"Missing latent compartment variables in {compartments_path}: {missing}"
+            )
+
+        def load_state(var_name: str) -> np.ndarray:
+            arr = ds[var_name]
+            if set(arr.dims) != {"G", "M", "T"}:
+                raise ValueError(
+                    f"Unexpected dims for {var_name} in {compartments_path}: {arr.dims}"
+                )
+            return arr.transpose("M", "T", "G").values
+
+        states = {name: load_state(name) for name in required}
+
+    hospitalized = states["HR"] + states["HD"]
+    active = (
+        states["E"]
+        + states["A"]
+        + states["I"]
+        + states["PH"]
+        + states["PD"]
+        + states["HR"]
+        + states["HD"]
+    )
+
+    latents = {
+        "latent_S_true": states["S"].sum(axis=2),
+        "latent_E_true": states["E"].sum(axis=2),
+        "latent_A_true": states["A"].sum(axis=2),
+        "latent_I_true": states["I"].sum(axis=2),
+        "latent_R_true": states["R"].sum(axis=2),
+        "latent_D_true": states["D"].sum(axis=2),
+        "latent_CH_true": states["CH"].sum(axis=2),
+        "latent_hospitalized_true": hospitalized.sum(axis=2),
+        "latent_active_true": active.sum(axis=2),
+    }
+    return {name: values.astype(np.float32) for name, values in latents.items()}
+
+
+# Global variable for worker processes to share large data objects
+# This avoids pickling and sending these objects for every task in the process pool
+_shared_worker_data = {}
+
+
+def init_worker(region_ids, population_vector, emap_data, gene_targets, reported_cfg, wastewater_cfg, args_dict):
+    """Initialize a worker process with shared data."""
+    global _shared_worker_data
+    _shared_worker_data["region_ids"] = region_ids
+    _shared_worker_data["population_vector"] = population_vector
+    _shared_worker_data["emap_data"] = emap_data
+    _shared_worker_data["gene_targets"] = gene_targets
+    _shared_worker_data["reported_cfg"] = reported_cfg
+    _shared_worker_data["wastewater_cfg"] = wastewater_cfg
+    _shared_worker_data["args_dict"] = args_dict
+
+
 def process_single_run(
     run_dir_path: str,
-    region_ids: list,
-    population_vector: np.ndarray,
-    emap_data: Optional[dict],
     sparsity: float,
-    reported_cfg: dict,
-    wastewater_cfg: dict,
-    gene_targets: dict,
-    args_dict: dict,
     seed: Optional[int] = None,
 ) -> Optional[dict]:
     """
     Process a single run directory and return processed data.
 
-    This function is designed to be used with multiprocessing.Pool.
-    All inputs must be picklable (no logger, no complex objects).
+    This function uses shared data from the global _shared_worker_data dict
+    to avoid IPC overhead.
 
     Args:
         run_dir_path: Path to run directory as string
-        region_ids: List of region IDs
-        population_vector: Population array
-        emap_data: EMAP dict with 'edar_ids', 'emap', or None
         sparsity: Sparsity level for this run
-        reported_cfg: Cases reporting config dict
-        wastewater_cfg: Wastewater config dict
-        gene_targets: Gene targets dict
-        args_dict: Arguments dict with hosp_report_rate, etc.
         seed: Random seed for reproducibility
 
     Returns:
         Dict with processed data or None if failed
     """
+    global _shared_worker_data
+    region_ids = _shared_worker_data["region_ids"]
+    population_vector = _shared_worker_data["population_vector"]
+    emap_data = _shared_worker_data["emap_data"]
+    gene_targets = _shared_worker_data["gene_targets"]
+    reported_cfg = _shared_worker_data["reported_cfg"]
+    wastewater_cfg = _shared_worker_data["wastewater_cfg"]
+    args_dict = _shared_worker_data["args_dict"]
+
     run_dir = Path(run_dir_path)
 
     # Load artifacts
@@ -213,13 +338,17 @@ def process_single_run(
     if artifacts is None:
         return None
 
-    config, observables_path = artifacts
+    config, observables_path, compartments_path = artifacts
 
     # Load data
     infections_stratified = load_infections_stratified(observables_path)
     infections_total = infections_stratified.sum(axis=2)
     hospitalizations = load_hospitalizations(observables_path)
     deaths = load_deaths(observables_path)
+    include_latents = args_dict.get("include_latents", False)
+    latents = (
+        load_compartment_latents(compartments_path) if include_latents else None
+    )
 
     # Validate
     if infections_total.shape[1] != len(region_ids):
@@ -238,16 +367,27 @@ def process_single_run(
     deaths_rng = np.random.default_rng(rng.integers(0, 2**32 - 1))
     ww_rng = np.random.default_rng(rng.integers(0, 2**32 - 1))
 
-    # Generate reported cases
+    # Generate reported cases (total and age-stratified)
     reported_cases, _ = generate_reported_cases(
         infections_total, config=reported_cfg, rng=case_rng
     )
-    cases_with_gaps, _ = apply_missing_data_patterns(
+    cases_with_gaps, cases_mask = apply_missing_data_patterns(
         reported_cases.T,
         missing_rate=sparsity,
         missing_gap_length=args_dict.get("missing_gap_length", 3),
         rng=case_rng,
     )
+
+    # Generate age-stratified reported cases
+    n_time, n_regions, n_age_groups = infections_stratified.shape
+    cases_age_stratified = np.zeros((n_time, n_regions, n_age_groups), dtype=int)
+    for g in range(n_age_groups):
+        reported_cases_g, _ = generate_reported_cases(
+            infections_stratified[:, :, g],
+            config=reported_cfg,
+            rng=np.random.default_rng(case_rng.integers(0, 2**32 - 1)),
+        )
+        cases_age_stratified[:, :, g] = reported_cases_g
 
     # Generate wastewater
     if emap_data is not None:
@@ -312,43 +452,47 @@ def process_single_run(
     kappa0_path = resolve_kappa0_path(config, run_dir)
     kappa0_series = load_kappa0_series(kappa0_path, dates)
 
-    mobility_dense = detect_and_load_time_varying_mobility(
-        run_dir, n_regions=len(region_ids), n_dates=len(dates)
-    )
-    sigma_O, sigma_D = load_mobility_noise_params(run_dir)
-
     # Determine mobility type
-    if mobility_dense is not None:
-        mobility_type = "time_varying"
-    else:
-        mobility_type = "static"
-        mobility_dense = None
+    mobility_npz_path = run_dir / "mobility" / "mobility_series.npz"
+    mobility_type = "time_varying" if mobility_npz_path.exists() else "static"
+    sigma_O, sigma_D = load_mobility_noise_params(run_dir)
 
     # Parse metadata
     scenario_type, strength = parse_run_metadata(run_dir.name)
     if np.isnan(strength):
         strength = float(np.nanmax(kappa0_series)) if len(kappa0_series) > 0 else 0.0
 
+    # Save generated matrices directly to disk to prevent massive IPC transfers
+    # back to the main process, which avoids OOM on high concurrency
+    npz_path = run_dir / "processed_obs.npz"
+    np.savez_compressed(
+        npz_path,
+        infections_true=infections_total.T.astype(int),
+        hospitalizations_true=hospitalizations.T.astype(int),
+        deaths_true=deaths.T.astype(int),
+        hospitalizations_raw=reported_hospitalizations.T.astype(int),
+        deaths_raw=reported_deaths.T.astype(int),
+        cases_raw=cases_with_gaps.astype(float),
+        cases_mask=cases_mask.astype(float),
+        cases_age=cases_age_stratified.astype(int),
+        wastewater_raw=ww_by_edar.astype(float),
+        wastewater_censor=censor_by_edar.astype(np.int8),
+        mobility_kappa0=kappa0_series.astype(float),
+        **({name: values for name, values in latents.items()} if latents else {}),
+    )
+
     return {
+        "run_dir_path": str(run_dir),
         "run_id": sanitize_run_id(run_dir.name),
         "scenario_type": scenario_type,
         "strength": strength,
         "sparsity": sparsity,
         "dates": dates,
-        "infections_true": infections_total.T.astype(int),
-        "hospitalizations_true": hospitalizations.T.astype(int),
-        "deaths_true": deaths.T.astype(int),
-        "hospitalizations_raw": reported_hospitalizations.T.astype(int),
-        "deaths_raw": reported_deaths.T.astype(int),
-        "cases_raw": cases_with_gaps.astype(float),
-        "wastewater_raw": ww_by_edar.astype(float),
-        "wastewater_censor": censor_by_edar.astype(np.int8),
-        "mobility_kappa0": kappa0_series.astype(float),
-        "mobility_dense": mobility_dense,
         "mobility_type": mobility_type,
         "mobility_sigma_O": sigma_O,
         "mobility_sigma_D": sigma_D,
         "mobility_noise": max(sigma_O, sigma_D),
+        "npz_path": str(npz_path),
     }
 
 
@@ -617,8 +761,8 @@ def detect_and_load_time_varying_mobility(
         edgelist = data["edgelist"]  # (E, 2) with [origin, destination]
 
         # Convert sparse (T, E) to dense (T, M, M)
-        T, E = R_series.shape
-        mobility_dense = np.zeros((T, n_regions, n_regions), dtype=np.float64)
+        T, _ = R_series.shape
+        mobility_dense = np.zeros((T, n_regions, n_regions), dtype=np.float16)
 
         for t in range(T):
             for edge_idx, (src, tgt) in enumerate(edgelist):
@@ -656,6 +800,113 @@ def load_mobility_noise_params(run_dir: Path) -> tuple[float, float]:
             f"Failed to load mobility noise params from {mobility_npz_path}: {e}"
         )
         return 0.0, 0.0
+
+
+def write_mobility_time_varying_to_zarr(
+    output_path: str,
+    ordered_results: list[dict],
+    run_start_index: int,
+    region_ids: list[str],
+    dates_ref: pd.DatetimeIndex,
+    base_mobility: np.ndarray,
+    mobility_kappa0_arr: np.ndarray,
+    chunk_size: int = 256,
+):
+    """
+    Stream-write mobility_time_varying to zarr to avoid OOM.
+
+    Writes dense mobility as (run_id, origin, target, date), but never materializes
+    the full 4D tensor in memory.
+    """
+    import zarr
+
+    n_runs_new = len(ordered_results)
+    n_regions = len(region_ids)
+    n_dates = len(dates_ref)
+    origin_chunk = min(chunk_size, n_regions)
+    target_chunk = min(chunk_size, n_regions)
+    date_chunk = min(chunk_size, n_dates)
+
+    zgroup = zarr.open_group(output_path, mode="a")
+    target_shape = (run_start_index + n_runs_new, n_regions, n_regions, n_dates)
+    chunks = (1, origin_chunk, target_chunk, date_chunk)
+
+    if "mobility_time_varying" in zgroup:
+        mobility_arr = zgroup["mobility_time_varying"]
+        expected_suffix = (n_regions, n_regions, n_dates)
+        if tuple(mobility_arr.shape[1:]) != expected_suffix:
+            raise ValueError(
+                "Existing mobility_time_varying has incompatible shape: "
+                f"{mobility_arr.shape}, expected (*, {expected_suffix[0]}, "
+                f"{expected_suffix[1]}, {expected_suffix[2]})"
+            )
+        if mobility_arr.shape[0] < target_shape[0]:
+            mobility_arr.resize(target_shape)
+    else:
+        mobility_arr = zgroup.create_dataset(
+            "mobility_time_varying",
+            shape=target_shape,
+            chunks=chunks,
+            dtype=np.float16,
+        )
+
+    logger.info(
+        "Streaming mobility_time_varying write to %s (new_runs=%s, shape=%s, chunks=%s)",
+        output_path,
+        n_runs_new,
+        target_shape,
+        chunks,
+    )
+
+    for local_run_idx, result in enumerate(ordered_results):
+        global_run_idx = run_start_index + local_run_idx
+        run_id = result["run_id"]
+        run_mob_type = result["mobility_type"]
+
+        if run_mob_type == "time_varying":
+            run_dir = Path(result["run_dir_path"])
+            mobility_npz_path = run_dir / "mobility" / "mobility_series.npz"
+            if not mobility_npz_path.exists():
+                raise ValueError(
+                    f"Run '{run_id}' is marked as time_varying but "
+                    f"{mobility_npz_path} is missing."
+                )
+
+            with np.load(mobility_npz_path) as npz_data:
+                R_series = npz_data["R_series"]  # (T, E)
+                edgelist = npz_data["edgelist"]  # (E, 2)
+
+            src = edgelist[:, 0].astype(np.int64)
+            tgt = edgelist[:, 1].astype(np.int64)
+            valid_edge_mask = (src < n_regions) & (tgt < n_regions)
+            src_valid = src[valid_edge_mask]
+            tgt_valid = tgt[valid_edge_mask]
+            t_available = min(R_series.shape[0], n_dates)
+
+            frame = np.zeros((n_regions, n_regions), dtype=np.float16)
+            for t in range(n_dates):
+                frame.fill(0.0)
+                if t < t_available:
+                    frame[src_valid, tgt_valid] = R_series[t, valid_edge_mask].astype(
+                        np.float16
+                    )
+                mobility_arr[global_run_idx, :, :, t] = frame
+        else:
+            frame = np.empty((n_regions, n_regions), dtype=np.float16)
+            for t in range(n_dates):
+                np.multiply(
+                    base_mobility,
+                    np.float16(1.0 - mobility_kappa0_arr[local_run_idx, t]),
+                    out=frame,
+                    casting="unsafe",
+                )
+                mobility_arr[global_run_idx, :, :, t] = frame
+
+        logger.info(
+            "Wrote mobility_time_varying for run %s (%s)",
+            run_id,
+            run_mob_type,
+        )
 
 
 def build_date_range(config: dict, time_len: int):
@@ -708,10 +959,9 @@ def load_edar_muni_mapping(metapop_df, edar_nc_path=None):
     for edar_idx in range(n_edar):
         for home_idx, home_id in enumerate(home_ids):
             contrib = contribution_matrix[edar_idx, home_idx]
-            if not np.isnan(contrib) and contrib > 0:
-                if home_id in region_id_to_idx:
-                    region_idx = region_id_to_idx[home_id]
-                    emap[edar_idx, region_idx] = contrib
+            if not np.isnan(contrib) and contrib > 0 and home_id in region_id_to_idx:
+                region_idx = region_id_to_idx[home_id]
+                emap[edar_idx, region_idx] = contrib
 
     # Normalize each EDAR row to sum to 1 (each EDAR receives contributions from multiple regions)
     row_sums = emap.sum(axis=1, keepdims=True)
@@ -997,6 +1247,11 @@ def main():
         default=1,
         help="Number of parallel jobs for processing runs (default: 1, use -1 for all CPUs)",
     )
+    parser.add_argument(
+        "--include-latents",
+        action="store_true",
+        help="Export latent simulator compartment targets from compartments_full.nc",
+    )
 
     args = parser.parse_args()
 
@@ -1005,10 +1260,7 @@ def main():
     if n_jobs == -1:
         n_jobs = os.cpu_count() or 1
     if n_jobs > 1:
-        logger.warning(
-            f"--n-jobs={n_jobs} specified but parallel processing not yet implemented. "
-            f"Processing will be sequential. This parameter is reserved for future use."
-        )
+        logger.info(f"Using {n_jobs} parallel workers for processing.")
 
     # Define Gene Targets with biological properties
     # Allow command-line override of noise parameters
@@ -1017,6 +1269,7 @@ def main():
             "sensitivity_scale": 500000.0,
             "noise_sigma": args.ww_noise_n1 if args.ww_noise_n1 is not None else 0.5,
             "limit_of_detection": 375.0,
+            "limit_of_detection_log1p": float(np.log1p(375.0)),  # ≈ 5.93
             "transport_loss": args.ww_transport_loss
             if args.ww_transport_loss is not None
             else 50.0,
@@ -1027,6 +1280,7 @@ def main():
             "sensitivity_scale": 400000.0,
             "noise_sigma": args.ww_noise_n2 if args.ww_noise_n2 is not None else 0.8,
             "limit_of_detection": 500.0,
+            "limit_of_detection_log1p": float(np.log1p(500.0)),  # ≈ 6.22
             "transport_loss": args.ww_transport_loss
             if args.ww_transport_loss is not None
             else 100.0,
@@ -1037,6 +1291,7 @@ def main():
             "sensitivity_scale": 250000.0,
             "noise_sigma": args.ww_noise_ip4 if args.ww_noise_ip4 is not None else 0.6,
             "limit_of_detection": 800.0,
+            "limit_of_detection_log1p": float(np.log1p(800.0)),  # ≈ 6.69
             "transport_loss": args.ww_transport_loss
             if args.ww_transport_loss is not None
             else 200.0,
@@ -1051,19 +1306,14 @@ def main():
 
     if not run_dirs:
         raise ValueError(f"No run_* folders found in {runs_dir}")
-
-    # Filter to baseline-only scenarios if requested
+    
+        # Filter to baseline-only scenarios if requested
     if args.baseline_only:
-        original_count = len(run_dirs)
         run_dirs = [
             d
             for d in run_dirs
             if d.name.endswith("_Baseline") or "_Baseline_" in d.name
         ]
-        filtered_count = original_count - len(run_dirs)
-        logger.info(
-            f"Baseline-only mode: filtered out {filtered_count} non-baseline runs"
-        )
         if not run_dirs:
             raise ValueError(f"No baseline runs found in {runs_dir}")
 
@@ -1071,18 +1321,9 @@ def main():
     n_runs_expected = len(run_dirs)
     if args.sparsity_mode == "uniform":
         sparsity_per_run = np.full(n_runs_expected, args.missing_rate)
-        logger.info(
-            f"Sparsity mode: uniform (all runs use missing_rate={args.missing_rate})"
-        )
     elif args.sparsity_mode == "tiers":
         sparsity_per_run = assign_sparsity_tiers(
             n_runs_expected, args.sparsity_tiers, seed=args.sparsity_seed
-        )
-        unique, counts = np.unique(sparsity_per_run, return_counts=True)
-        tier_summary = ", ".join([f"{u:.2f}:{c}" for u, c in zip(unique, counts)])
-        logger.info(
-            f"Sparsity mode: tiers with {len(args.sparsity_tiers)} levels - "
-            f"distribution: {tier_summary}"
         )
 
     metapop_df = pd.read_csv(args.metapop_csv, dtype={"id": str})
@@ -1090,7 +1331,7 @@ def main():
     region_ids = metapop_df["id"].tolist()
     population_vector = metapop_df["total"].values.astype(float)
 
-    # Load base mobility matrix (for outputting full OD matrices)
+    # Load base mobility matrix
     base_mobility = load_mobility_matrix(args.metapop_csv)
 
     # Load EDAR-municipality mapping (EMAP)
@@ -1104,788 +1345,301 @@ def main():
     emap = emap_data["emap"]
 
     # Pre-filter EDARs to only those with mapped population
-    # Compute EDAR population by aggregating region populations via EMAP
-    population_vector = metapop_df["total"].values
     population_edar = emap @ population_vector
     valid_edar_mask = population_edar > 0
-    n_valid_edars = np.sum(valid_edar_mask)
-
-    if n_valid_edars < len(population_edar):
-        n_filtered = len(population_edar) - n_valid_edars
-        logger.info(
-            f"Filtering {n_filtered} EDARs with zero population, "
-            f"keeping {n_valid_edars} valid EDARs"
-        )
-        # Filter emap and edar_ids
+    if np.sum(valid_edar_mask) < len(population_edar):
         emap = emap[valid_edar_mask, :]
         edar_ids = [edar_ids[i] for i in range(len(edar_ids)) if valid_edar_mask[i]]
-        # Update emap_data with filtered values
         emap_data["edar_ids"] = edar_ids
         emap_data["emap"] = emap
 
-    logger.info(f"Using EMAP-based wastewater generation: {len(edar_ids)} EDARs")
-
-    # Storage for all runs - stream write pattern to avoid OOM
-    # NOTE: mobility is stored in factorized form (mobility_base + mobility_kappa0)
-    # instead of full tensor to reduce memory from ~300GB to ~500MB for 100 runs
-    # When time-varying mobility exists (mobility_sigma_O/D > 0), we store dense OD matrices
-    infections_true_runs = []
-    hospitalizations_true_runs = []
-    deaths_true_runs = []
-    hospitalizations_raw_runs = []  # Reported hospitalizations (with noise)
-    deaths_raw_runs = []  # Reported deaths (with noise)
-    cases_raw_runs = []
-    wastewater_raw_runs = []
-    wastewater_censor_runs = []
-    mobility_kappa0_runs = []  # Store kappa0 series per run instead of full mobility tensor
-    mobility_runs = []  # Store dense mobility if time-varying, None if static
-    mobility_types = []  # Track "static" vs "time_varying" per run
-    mobility_sigma_O_runs = []  # Track per-run mobility noise sigma (origin)
-    mobility_sigma_D_runs = []  # Track per-run mobility noise sigma (destination)
-    mobility_noise_runs = []  # Track per-run combined mobility noise factor
-    scenario_types = []
-    strengths = []
-    run_ids = []
-    sparsity_levels = []  # Track per-run sparsity levels for metadata
-
-    dates_ref = None
-    rng = np.random.default_rng(args.seed)
-
-    reported_cfg = {
-        "min_rate": args.min_rate,
-        "max_rate": args.max_rate,
-        "inflection_day": args.inflection_day,
-        "slope": args.slope,
-    }
-    wastewater_cfg = {
-        "gamma_shape": args.gamma_shape,
-        "gamma_scale": args.gamma_scale,
-        "noise_sigma": args.noise_sigma,
-        "kernel_quantile": args.kernel_quantile,
-    }
-
-    # Prepare arguments for multiprocessing
-    args_dict = {
-        "missing_gap_length": args.missing_gap_length,
-        "monitoring_threshold": args.monitoring_threshold,
-        "monitoring_delay_mean": args.monitoring_delay_mean,
-        "monitoring_delay_std": args.monitoring_delay_std,
-        "hosp_report_rate": args.hosp_report_rate,
-        "hosp_delay_mean": args.hosp_delay_mean,
-        "hosp_delay_std": args.hosp_delay_std,
-        "deaths_report_rate": args.deaths_report_rate,
-        "deaths_delay_mean": args.deaths_delay_mean,
-        "deaths_delay_std": args.deaths_delay_std,
-    }
-
-    # Track run index for per-run sparsity assignment
-    run_idx = 0
-
-    # Process runs in parallel using multiprocessing
-    if n_jobs > 1:
-        logger.info(
-            f"Processing {len(run_dirs)} runs with {n_jobs} parallel workers..."
-        )
-
-        # Prepare work items
-        work_items = []
-        for run_idx, run_dir in enumerate(run_dirs):
-            # Pre-check if run has artifacts
-            artifacts = load_run_artifacts(run_dir)
-            if artifacts is None:
-                continue
-
-            run_sparsity = sparsity_per_run[run_idx]
-            seed = rng.integers(0, 2**32 - 1) if args.seed else None
-
-            work_items.append(
-                (
-                    str(run_dir),
-                    region_ids,
-                    population_vector,
-                    emap_data,
-                    run_sparsity,
-                    reported_cfg,
-                    wastewater_cfg,
-                    GENE_TARGETS,
-                    args_dict,
-                    seed,
-                )
-            )
-
-        # Process in parallel
-        results = []
-        with ProcessPoolExecutor(max_workers=n_jobs) as executor:
-            futures = [
-                executor.submit(process_single_run, *item) for item in work_items
-            ]
-            for future in as_completed(futures):
-                try:
-                    result = future.result()
-                    if result is not None:
-                        results.append(result)
-                        logger.info(f"Completed processing: {result['run_id']}")
-                except Exception as e:
-                    logger.error(f"Failed to process run: {e}")
-
-        # Sort results by run_id to maintain order
-        results.sort(key=lambda x: x["run_id"])
-
-        # Extract dates_ref from first result
-        if results:
-            dates_ref = results[0]["dates"]
-
-        # Collect results into lists
-        for result in results:
-            infections_true_runs.append(result["infections_true"])
-            hospitalizations_true_runs.append(result["hospitalizations_true"])
-            deaths_true_runs.append(result["deaths_true"])
-            hospitalizations_raw_runs.append(result["hospitalizations_raw"])
-            deaths_raw_runs.append(result["deaths_raw"])
-            cases_raw_runs.append(result["cases_raw"])
-            wastewater_raw_runs.append(result["wastewater_raw"])
-            wastewater_censor_runs.append(result["wastewater_censor"])
-            mobility_kappa0_runs.append(result["mobility_kappa0"])
-            mobility_runs.append(result["mobility_dense"])
-            mobility_types.append(result["mobility_type"])
-            mobility_sigma_O_runs.append(result["mobility_sigma_O"])
-            mobility_sigma_D_runs.append(result["mobility_sigma_D"])
-            mobility_noise_runs.append(result["mobility_noise"])
-            scenario_types.append(result["scenario_type"])
-            strengths.append(result["strength"])
-            run_ids.append(result["run_id"])
-            sparsity_levels.append(result["sparsity"])
-    else:
-        # Sequential processing (original code)
-        logger.info(f"Processing {len(run_dirs)} runs sequentially...")
-        for run_idx, run_dir in enumerate(run_dirs):
-            artifacts = load_run_artifacts(run_dir)
-            if artifacts is None:
-                continue
-
-            # Get sparsity level for this run
-            run_sparsity = sparsity_per_run[run_idx]
-
-            config, observables_path = artifacts
-            infections_stratified = load_infections_stratified(observables_path)
-            infections_total = infections_stratified.sum(axis=2)
-
-            hospitalizations = load_hospitalizations(observables_path)
-            deaths = load_deaths(observables_path)
-
-            if infections_total.shape[1] != len(region_ids):
-                raise ValueError(
-                    f"Region count mismatch for {run_dir}: "
-                    f"expected {len(region_ids)}, got {infections_total.shape[1]}"
-                )
-
-            dates = build_date_range(config, infections_total.shape[0])
-            if dates_ref is None:
-                dates_ref = dates
-            elif not dates.equals(dates_ref):
-                raise ValueError(f"Date range mismatch for {run_dir}")
-
-            case_rng = np.random.default_rng(rng.integers(0, 2**32 - 1))
-            hosp_rng = np.random.default_rng(rng.integers(0, 2**32 - 1))
-            deaths_rng = np.random.default_rng(rng.integers(0, 2**32 - 1))
-            ww_rng = np.random.default_rng(rng.integers(0, 2**32 - 1))
-
-            # Generate reported cases with missing data patterns
-            reported_cases, _ = generate_reported_cases(
-                infections_total, config=reported_cfg, rng=case_rng
-            )
-            cases_with_gaps, _ = apply_missing_data_patterns(
-                reported_cases.T,
-                missing_rate=run_sparsity,
-                missing_gap_length=args.missing_gap_length,
-                rng=case_rng,
-            )
-
-            # Generate wastewater with censoring on EDAR domain
-            if emap_data is not None:
-                infections_edar_strat, population_edar = aggregate_infections_to_edar(
-                    infections_stratified, emap_data["emap"], population_vector
-                )
-                from synthetic_observations import _compute_monitoring_start_mask
-
-                monitoring_mask = _compute_monitoring_start_mask(
-                    infections_edar_strat,
-                    threshold=args.monitoring_threshold,
-                    delay_days=args.monitoring_delay_mean,
-                    delay_std=args.monitoring_delay_std,
-                    rng=ww_rng,
-                )
-                ww_by_edar, censor_by_edar = generate_wastewater_with_censoring(
-                    infections_edar_strat,
-                    population_edar,
-                    GENE_TARGETS,
-                    wastewater_cfg,
-                    rng=ww_rng,
-                    monitoring_mask=monitoring_mask,
-                    missing_rate=run_sparsity,
-                )
-            else:
-                from synthetic_observations import _compute_monitoring_start_mask
-
-                monitoring_mask = _compute_monitoring_start_mask(
-                    infections_stratified,
-                    threshold=args.monitoring_threshold,
-                    delay_days=args.monitoring_delay_mean,
-                    delay_std=args.monitoring_delay_std,
-                    rng=ww_rng,
-                )
-                ww_by_edar, censor_by_edar = generate_wastewater_with_censoring(
-                    infections_stratified,
-                    population_vector,
-                    GENE_TARGETS,
-                    wastewater_cfg,
-                    rng=ww_rng,
-                    monitoring_mask=monitoring_mask,
-                    missing_rate=run_sparsity,
-                )
-
-            # Generate reported hospitalizations and deaths with reporting noise
-            reported_hospitalizations = generate_reported_with_delay(
-                hospitalizations,
-                report_rate=args.hosp_report_rate,
-                delay_mean=args.hosp_delay_mean,
-                delay_std=args.hosp_delay_std,
-                rng=hosp_rng,
-            )
-            reported_deaths = generate_reported_with_delay(
-                deaths,
-                report_rate=args.deaths_report_rate,
-                delay_mean=args.deaths_delay_mean,
-                delay_std=args.deaths_delay_std,
-                rng=deaths_rng,
-            )
-
-            # Load kappa0 series
-            kappa0_path = resolve_kappa0_path(config, run_dir)
-            kappa0_series = load_kappa0_series(kappa0_path, dates)
-
-            # Check for time-varying mobility
-            mobility_dense = detect_and_load_time_varying_mobility(
-                run_dir, n_regions=len(region_ids), n_dates=len(dates)
-            )
-            sigma_O, sigma_D = load_mobility_noise_params(run_dir)
-            mobility_sigma_O_runs.append(sigma_O)
-            mobility_sigma_D_runs.append(sigma_D)
-            mobility_noise_runs.append(max(sigma_O, sigma_D))
-
-            # Store mobility data
-            if mobility_dense is not None:
-                mobility_runs.append(mobility_dense)
-                mobility_types.append("time_varying")
-            else:
-                mobility_runs.append(None)
-                mobility_types.append("static")
-
-            # Store run data
-            infections_true_runs.append(infections_total.T.astype(int))
-            hospitalizations_true_runs.append(hospitalizations.T.astype(int))
-            deaths_true_runs.append(deaths.T.astype(int))
-            hospitalizations_raw_runs.append(reported_hospitalizations.T.astype(int))
-            deaths_raw_runs.append(reported_deaths.T.astype(int))
-            cases_raw_runs.append(cases_with_gaps.astype(float))
-            wastewater_raw_runs.append(ww_by_edar.astype(float))
-            wastewater_censor_runs.append(censor_by_edar.astype(np.int8))
-            mobility_kappa0_runs.append(kappa0_series.astype(float))
-
-            scenario_type, strength = parse_run_metadata(run_dir.name)
-            if np.isnan(strength):
-                strength = (
-                    float(np.nanmax(kappa0_series)) if len(kappa0_series) > 0 else 0.0
-                )
-            scenario_types.append(scenario_type)
-            strengths.append(strength)
-            run_ids.append(sanitize_run_id(run_dir.name))
-            sparsity_levels.append(run_sparsity)
-
-    if not infections_true_runs:
-        raise ValueError("No valid runs were processed")
-
-    if dates_ref is None:
-        raise ValueError("No valid dates found in run outputs")
-
-    # Stack runs: (Run, Region, Time) for most variables
-    # Note: mobility is NOT stacked here - stored factorized as mobility_base + mobility_kappa0
-    infections_true_arr = np.stack(infections_true_runs, axis=0)
-    hospitalizations_true_arr = np.stack(hospitalizations_true_runs, axis=0)
-    deaths_true_arr = np.stack(deaths_true_runs, axis=0)
-    hospitalizations_raw_arr = np.stack(hospitalizations_raw_runs, axis=0)
-    deaths_raw_arr = np.stack(deaths_raw_runs, axis=0)
-    cases_raw_arr = np.stack(cases_raw_runs, axis=0)
-    wastewater_raw_arr = np.stack(wastewater_raw_runs, axis=0)
-    wastewater_censor_arr = np.stack(wastewater_censor_runs, axis=0)
-    mobility_kappa0_arr = np.stack(mobility_kappa0_runs, axis=0)
-
-    # Determine wastewater spatial dimension
-    if emap_data is not None:
-        ww_spatial_dim = "edar_id"
-        logger.info(f"Using EDAR-based wastewater: {len(edar_ids)} EDARs")
-    else:
-        ww_spatial_dim = "region_id"
-        logger.info(f"Using region-based wastewater: {len(region_ids)} regions")
-
-    # Chunk size for efficient access and compression
-    chunk_size = args.chunk_size
-    region_chunk = min(chunk_size, len(region_ids))
-    n_dates = len(dates_ref)
-    date_chunk = min(chunk_size, n_dates)
-
-    # Build dataset matching EpiForecaster's expected input format
-    # Wastewater is split into separate variables per target (N1, N2, IP4)
-    data_vars = {}
-
-    # Ground truth (for evaluation, separate from preprocessed data)
-    data_vars["infections_true"] = (
-        ("run_id", "region_id", "date"),
-        infections_true_arr,
-        {},
-    )
-    data_vars["hospitalizations_true"] = (
-        ("run_id", "region_id", "date"),
-        hospitalizations_true_arr,
-        {},
-    )
-    data_vars["deaths_true"] = (
-        ("run_id", "region_id", "date"),
-        deaths_true_arr,
-        {},
-    )
-
-    # Raw observations (for EpiForecaster preprocessing pipeline)
-    # Variable names match EpiForecaster conventions
-
-    # Cases: matches EpiForecaster's expected "cases" variable
-    # Dimensions: (run_id, date, region_id) - note: date before region_id to match xarray convention
-    cases_arr_transposed = cases_raw_arr.transpose(0, 2, 1)  # (run_id, date, region_id)
-    data_vars["cases"] = (
-        ("run_id", "date", "region_id"),
-        cases_arr_transposed,
-        {},
-    )
-
-    # Hospitalizations: raw reported hospitalizations with noise
-    hosp_arr_transposed = hospitalizations_raw_arr.transpose(
-        0, 2, 1
-    )  # (run_id, date, region_id)
-    data_vars["hospitalizations"] = (
-        ("run_id", "date", "region_id"),
-        hosp_arr_transposed,
-        {},
-    )
-
-    # Deaths: raw reported deaths with noise
-    deaths_arr_transposed = deaths_raw_arr.transpose(
-        0, 2, 1
-    )  # (run_id, date, region_id)
-    data_vars["deaths"] = (
-        ("run_id", "date", "region_id"),
-        deaths_arr_transposed,
-        {},
-    )
-
-    # Check if target zarr has mobility_time_varying (for append mode)
-    # This ensures dimension consistency when appending runs with static mobility
-    # to a zarr that already has mobility_time_varying from baseline runs
-    target_has_mobility_tv = False
-    if args.append and args.output:
-        try:
-            if os.path.exists(args.output):
-                existing_ds = xr.open_zarr(args.output, chunks=None)
-                target_has_mobility_tv = (
-                    "mobility_time_varying" in existing_ds.data_vars
-                )
-                existing_ds.close()
-                if target_has_mobility_tv:
-                    logger.info(
-                        "Existing zarr has mobility_time_varying. "
-                        "Will create for new runs to maintain dimension consistency."
-                    )
-        except Exception as e:
-            logger.warning(
-                f"Could not check existing zarr for mobility_time_varying: {e}"
-            )
-
-    # Mobility: Always create factorized format (mobility_base + mobility_kappa0)
-    # for backward compatibility and append support
-    # Add mobility_time_varying when any run has time-varying mobility
-    # OR when appending to a zarr that already has mobility_time_varying
-    has_time_varying = (
-        any(t == "time_varying" for t in mobility_types) or target_has_mobility_tv
-    )
-
-    # Always create factorized format variables
-    data_vars["mobility_base"] = (
-        ("origin", "target"),
-        base_mobility,
-        {},
-    )
-    data_vars["mobility_kappa0"] = (
-        ("run_id", "date"),
-        mobility_kappa0_arr,
-        {},
-    )
-
-    # Optionally add dense format if any run has time-varying mobility
-    if has_time_varying:
-        # Convert all runs to dense format
-        mobility_all = []
-        for run_idx, (mobility_dense, mob_type) in enumerate(
-            zip(mobility_runs, mobility_types)
-        ):
-            if mobility_dense is not None:
-                # Already dense (T, M, M)
-                mobility_all.append(mobility_dense)
-            elif mob_type == "time_varying":
-                # ERROR: Marked as time_varying but file not found/loaded
-                run_id = run_ids[run_idx]
-                raise ValueError(
-                    f"Run '{run_id}' is marked as time_varying but mobility_series.npz could not be loaded. "
-                    f"This indicates a data integrity issue - refusing to silently fall back to static approximation."
-                )
-            else:
-                # Static: reconstruct from mobility_base + kappa0
-                T = len(dates_ref)
-                M = len(region_ids)
-                mobility_reconstructed = np.zeros((T, M, M))
-                for t in range(T):
-                    mobility_reconstructed[t] = base_mobility * (
-                        1 - mobility_kappa0_arr[len(mobility_all), t]
-                    )
-                mobility_all.append(mobility_reconstructed)
-
-        # Stack: (N, T, M, M) -> (N, M, M, T)
-        mobility_full_arr = np.stack(mobility_all, axis=0).transpose(0, 2, 3, 1)
-
-        data_vars["mobility_time_varying"] = (
-            ("run_id", "origin", "target", "date"),
-            mobility_full_arr,
-            {},
-        )
-
-    data_vars["synthetic_mobility_type"] = (
-        ("run_id",),
-        np.array(mobility_types, dtype=object),
-        {},
-    )
-
-    # Population: matches EpiForecaster's expected "population" variable
-    # Dimensions: (run_id, region_id)
-    data_vars["population"] = (
-        ("run_id", "region_id"),
-        np.tile(population_vector, (len(run_ids), 1)),
-        {},
-    )
-
-    # Wastewater: split into separate variables per target (matches EpiForecaster output format)
-    # Dimensions: (run_id, date, spatial_dim) where spatial_dim is edar_id or region_id
-    for target_idx, target_name in enumerate(TARGET_NAMES):
-        # Extract data for this target and remove the target dimension
-        # wastewater_raw_arr shape is (n_runs, n_time, n_spatial, n_targets)
-        # After indexing: (n_runs, n_time, n_spatial) = (run_id, date, spatial_dim)
-        ww_target = wastewater_raw_arr[:, :, :, target_idx]  # (run_id, date, spatial)
-
-        censor_target = wastewater_censor_arr[
-            :, :, :, target_idx
-        ]  # (run_id, date, spatial)
-
-        # Main biomarker variable (matches EpiForecaster naming)
-        data_vars[f"edar_biomarker_{target_name}"] = (
-            ("run_id", "date", ww_spatial_dim),
-            ww_target,
-            {},
-        )
-
-        # Censor hints (optional, for reference - EpiForecaster may recompute)
-        # 0=observed, 1=censored, 2=missing
-        data_vars[f"edar_biomarker_{target_name}_censor_hints"] = (
-            ("run_id", "date", ww_spatial_dim),
-            censor_target,
-            {},
-        )
-
-    # Per-EDAR LoD values (same for all runs, but stored per-run for consistency)
-    # These allow EDARProcessor to detect censored values: if value <= LoD → censored
-    n_edar = len(edar_ids) if emap_data is not None else len(region_ids)
-    for target_name in TARGET_NAMES:
-        lod_value = GENE_TARGETS[target_name]["limit_of_detection"]
-        data_vars[f"edar_biomarker_{target_name}_LoD"] = (
-            ("run_id", ww_spatial_dim),
-            np.full((len(run_ids), n_edar), lod_value),
-            {},
-        )
-
-    # Synthetic metadata (for reference, not used by preprocessor)
-    data_vars["synthetic_scenario_type"] = (
-        ("run_id",),
-        np.array(scenario_types, dtype=object),
-        {},
-    )
-    data_vars["synthetic_strength"] = (
-        ("run_id",),
-        np.array(strengths, dtype=float),
-        {},
-    )
-    data_vars["synthetic_sparsity_level"] = (
-        ("run_id",),
-        np.array(sparsity_levels, dtype=float),
-        {},
-    )
-    data_vars["synthetic_mobility_noise_sigma_O"] = (
-        ("run_id",),
-        np.array(mobility_sigma_O_runs, dtype=float),
-        {},
-    )
-    data_vars["synthetic_mobility_noise_sigma_D"] = (
-        ("run_id",),
-        np.array(mobility_sigma_D_runs, dtype=float),
-        {},
-    )
-    data_vars["synthetic_mobility_noise_factor"] = (
-        ("run_id",),
-        np.array(mobility_noise_runs, dtype=float),
-        {},
-    )
-
-    # Cases reporting noise metadata
-    data_vars["synthetic_cases_report_rate_min"] = (
-        ("run_id",),
-        np.full(len(run_ids), args.min_rate, dtype=float),
-        {},
-    )
-    data_vars["synthetic_cases_report_rate_max"] = (
-        ("run_id",),
-        np.full(len(run_ids), args.max_rate, dtype=float),
-        {},
-    )
-    data_vars["synthetic_cases_report_delay_mean"] = (
-        ("run_id",),
-        np.full(len(run_ids), 0, dtype=float),  # No delay currently modeled for cases
-        {},
-    )
-
-    # Hospitalizations reporting noise metadata
-    data_vars["synthetic_hosp_report_rate"] = (
-        ("run_id",),
-        np.full(len(run_ids), args.hosp_report_rate, dtype=float),
-        {},
-    )
-    data_vars["synthetic_hosp_report_delay_mean"] = (
-        ("run_id",),
-        np.full(len(run_ids), args.hosp_delay_mean, dtype=float),
-        {},
-    )
-    data_vars["synthetic_hosp_report_delay_std"] = (
-        ("run_id",),
-        np.full(len(run_ids), args.hosp_delay_std, dtype=float),
-        {},
-    )
-
-    # Deaths reporting noise metadata
-    data_vars["synthetic_deaths_report_rate"] = (
-        ("run_id",),
-        np.full(len(run_ids), args.deaths_report_rate, dtype=float),
-        {},
-    )
-    data_vars["synthetic_deaths_report_delay_mean"] = (
-        ("run_id",),
-        np.full(len(run_ids), args.deaths_delay_mean, dtype=float),
-        {},
-    )
-    data_vars["synthetic_deaths_report_delay_std"] = (
-        ("run_id",),
-        np.full(len(run_ids), args.deaths_delay_std, dtype=float),
-        {},
-    )
-
-    # Wastewater noise metadata
-    data_vars["synthetic_ww_noise_sigma_N1"] = (
-        ("run_id",),
-        np.full(len(run_ids), GENE_TARGETS["N1"]["noise_sigma"], dtype=float),
-        {},
-    )
-    data_vars["synthetic_ww_noise_sigma_N2"] = (
-        ("run_id",),
-        np.full(len(run_ids), GENE_TARGETS["N2"]["noise_sigma"], dtype=float),
-        {},
-    )
-    data_vars["synthetic_ww_noise_sigma_IP4"] = (
-        ("run_id",),
-        np.full(len(run_ids), GENE_TARGETS["IP4"]["noise_sigma"], dtype=float),
-        {},
-    )
-    data_vars["synthetic_ww_transport_loss"] = (
-        ("run_id",),
-        np.full(len(run_ids), GENE_TARGETS["N1"]["transport_loss"], dtype=float),
-        {},
-    )
-
-    # Coordinates
-    coords = {
-        "run_id": run_ids,
-        "region_id": region_ids,
-        "date": dates_ref,
-        "origin": region_ids,
-        "target": region_ids,
-    }
-
-    if emap_data is not None:
-        coords["edar_id"] = edar_ids
-
-    dataset = xr.Dataset(data_vars, coords=coords)
-
-    # Set chunk sizes for efficient storage and access
-    # Ground truth variables
-    for var_name in ["infections_true", "hospitalizations_true", "deaths_true"]:
-        dataset[var_name].encoding = {"chunksizes": (1, region_chunk, date_chunk)}
-
-    # Cases: (run_id, date, region_id)
-    dataset["cases"].encoding = {"chunksizes": (1, date_chunk, region_chunk)}
-
-    # Hospitalizations and Deaths: (run_id, date, region_id)
-    dataset["hospitalizations"].encoding = {"chunksizes": (1, date_chunk, region_chunk)}
-    dataset["deaths"].encoding = {"chunksizes": (1, date_chunk, region_chunk)}
-
-    # Mobility: Handle both factorized and dense formats
-    # Factorized format - always present
-    dataset["mobility_base"].encoding = {"chunksizes": (-1, -1)}
-    dataset["mobility_kappa0"].encoding = {"chunksizes": (1, date_chunk)}
-
-    # Dense format - optionally present
-    if has_time_varying:
-        # Dense format: (run_id, origin, target, date)
-        # Use efficient chunking: chunk by run_id, then spatial blocks, then time
-        mobility_origin_chunk = min(chunk_size, len(region_ids))
-        mobility_target_chunk = min(chunk_size, len(region_ids))
-        dataset["mobility_time_varying"].encoding = {
-            "chunksizes": (1, mobility_origin_chunk, mobility_target_chunk, date_chunk)
-        }
-
-    # Population: (run_id, region_id)
-    dataset["population"].encoding = {"chunksizes": (1, region_chunk)}
-
-    # Wastewater: (run_id, date, spatial_dim) - separate variables per target
-    if emap_data is not None:
-        edar_chunk = min(chunk_size, len(edar_ids))
-        ww_chunk = edar_chunk
-    else:
-        ww_chunk = region_chunk
-
-    for target_name in TARGET_NAMES:
-        dataset[f"edar_biomarker_{target_name}"].encoding = {
-            "chunksizes": (1, date_chunk, ww_chunk)
-        }
-        dataset[f"edar_biomarker_{target_name}_censor_hints"].encoding = {
-            "chunksizes": (1, date_chunk, ww_chunk)
-        }
-        # LoD variables: (run_id, spatial_dim) - no date dimension
-        dataset[f"edar_biomarker_{target_name}_LoD"].encoding = {
-            "chunksizes": (1, ww_chunk)
-        }
-
-    # Synthetic metadata: small, no chunking needed
-    dataset["synthetic_scenario_type"].encoding = {"chunksizes": (len(run_ids),)}
-    dataset["synthetic_strength"].encoding = {"chunksizes": (len(run_ids),)}
-    dataset["synthetic_sparsity_level"].encoding = {"chunksizes": (len(run_ids),)}
-    dataset["synthetic_mobility_type"].encoding = {"chunksizes": (len(run_ids),)}
-    dataset["synthetic_mobility_noise_sigma_O"].encoding = {
-        "chunksizes": (len(run_ids),)
-    }
-    dataset["synthetic_mobility_noise_sigma_D"].encoding = {
-        "chunksizes": (len(run_ids),)
-    }
-    dataset["synthetic_mobility_noise_factor"].encoding = {
-        "chunksizes": (len(run_ids),)
-    }
-
-    # Cases reporting noise metadata
-    dataset["synthetic_cases_report_rate_min"].encoding = {
-        "chunksizes": (len(run_ids),)
-    }
-    dataset["synthetic_cases_report_rate_max"].encoding = {
-        "chunksizes": (len(run_ids),)
-    }
-    dataset["synthetic_cases_report_delay_mean"].encoding = {
-        "chunksizes": (len(run_ids),)
-    }
-
-    # Hospitalizations reporting noise metadata
-    dataset["synthetic_hosp_report_rate"].encoding = {"chunksizes": (len(run_ids),)}
-    dataset["synthetic_hosp_report_delay_mean"].encoding = {
-        "chunksizes": (len(run_ids),)
-    }
-    dataset["synthetic_hosp_report_delay_std"].encoding = {
-        "chunksizes": (len(run_ids),)
-    }
-
-    # Deaths reporting noise metadata
-    dataset["synthetic_deaths_report_rate"].encoding = {"chunksizes": (len(run_ids),)}
-    dataset["synthetic_deaths_report_delay_mean"].encoding = {
-        "chunksizes": (len(run_ids),)
-    }
-    dataset["synthetic_deaths_report_delay_std"].encoding = {
-        "chunksizes": (len(run_ids),)
-    }
-
-    # Wastewater noise metadata
-    dataset["synthetic_ww_noise_sigma_N1"].encoding = {"chunksizes": (len(run_ids),)}
-    dataset["synthetic_ww_noise_sigma_N2"].encoding = {"chunksizes": (len(run_ids),)}
-    dataset["synthetic_ww_noise_sigma_IP4"].encoding = {"chunksizes": (len(run_ids),)}
-    dataset["synthetic_ww_transport_loss"].encoding = {"chunksizes": (len(run_ids),)}
-
+    # Pre-scan first run to get dimensions and dates
+    first_run_dir = run_dirs[0]
+    first_artifacts = load_run_artifacts(first_run_dir)
+    if first_artifacts is None:
+        raise ValueError(f"Could not load artifacts from first run: {first_run_dir}")
+    first_config, first_obs_path, _ = first_artifacts
+    with xr.open_dataset(first_obs_path) as ds_meta:
+        n_dates = ds_meta.sizes["T"]
+        n_age_groups = ds_meta.sizes["G"] if "G" in ds_meta.sizes else 1
+    dates_ref = build_date_range(first_config, n_dates)
+
+    # Check for time-varying mobility
     output_path = args.output
+    target_has_mobility_tv = False
+    if args.append and os.path.exists(output_path):
+        try:
+            with xr.open_zarr(output_path, chunks=None) as ds_existing:
+                target_has_mobility_tv = "mobility_time_varying" in ds_existing.data_vars
+        except Exception:
+            pass
 
-    # Determine write mode
-    if args.append:
+    has_time_varying = target_has_mobility_tv
+    mobility_types_pre = []
+    for rd in run_dirs:
+        is_tv = (rd / "mobility" / "mobility_series.npz").exists()
+        mobility_types_pre.append("time_varying" if is_tv else "static")
+        if is_tv:
+            has_time_varying = True
+
+    # Initialize Zarr skeleton if not appending
+    ww_spatial_dim = "edar_id" if emap_data else "region_id"
+    if not args.append:
         if os.path.exists(output_path):
-            # Explicit append to existing file
-            logger.info(
-                "Appending to observation zarr at %s (runs=%s)",
-                output_path,
-                len(run_ids),
-            )
-            dataset.to_zarr(output_path, mode="a", append_dim="run_id", zarr_format=2)
-        elif args.init:
-            # Create new file with --init flag
-            logger.info(
-                "Initializing new zarr store at %s (runs=%s)",
-                output_path,
-                len(run_ids),
-            )
-            dataset.to_zarr(output_path, mode="w", zarr_format=2)
-        else:
-            # --append without --init and file doesn't exist
-            logger.error("Cannot append to non-existent file: %s", output_path)
-            logger.error(
-                "Use --init to create a new zarr store, or omit --append to overwrite"
-            )
-            sys.exit(1)
-    else:
-        # Write mode (overwrite existing or create new)
-        if os.path.exists(output_path):
-            logger.info("Removing existing output at %s", output_path)
             import shutil
-
             if os.path.isdir(output_path):
                 shutil.rmtree(output_path)
             else:
                 os.remove(output_path)
+        
+        # Build coordinate space for skeleton
+        run_ids = [sanitize_run_id(d.name) for d in run_dirs]
+        coords = {
+            "run_id": run_ids,
+            "region_id": region_ids,
+            "date": dates_ref,
+            "origin": region_ids,
+            "target": region_ids,
+            "age_group": [str(i) for i in range(n_age_groups)]
+        }
+        if emap_data is not None:
+            coords["edar_id"] = edar_ids
+    
+            # Create lazy skeleton dataset
+        import dask.array as da
+        data_vars = {}
+        
+        def create_lazy(dims, dtype=np.float16):
+            shape = [len(coords[d]) for d in dims]
+            return (dims, da.zeros(shape, chunks=(1, *[len(coords[d]) for d in dims[1:]]), dtype=dtype))
 
-        logger.info(
-            "Writing raw observation zarr to %s (runs=%s, regions=%s, dates=%s, targets=%s)",
-            output_path,
-            len(run_ids),
-            len(region_ids),
-            len(dates_ref),
-            len(TARGET_NAMES),
+        data_vars["infections_true"] = create_lazy(("run_id", "region_id", "date"))
+        data_vars["hospitalizations_true"] = create_lazy(("run_id", "region_id", "date"))
+        data_vars["deaths_true"] = create_lazy(("run_id", "region_id", "date"))
+        if args.include_latents:
+            for latent_var in LATENT_ZARR_VARS:
+                data_vars[latent_var] = create_lazy(("run_id", "region_id", "date"))
+        data_vars["cases"] = create_lazy(("run_id", "date", "region_id"))
+        data_vars["cases_mask"] = create_lazy(("run_id", "date", "region_id"))
+        data_vars["cases_age"] = create_lazy(("run_id", "date", "region_id", "age_group"))
+        data_vars["hospitalizations"] = create_lazy(("run_id", "date", "region_id"))
+        data_vars["deaths"] = create_lazy(("run_id", "date", "region_id"))
+        
+        data_vars["mobility_base"] = (("origin", "target"), base_mobility.astype(np.float16))
+        data_vars["mobility_kappa0"] = create_lazy(("run_id", "date"))
+        if has_time_varying:
+            data_vars["mobility_time_varying"] = create_lazy(("run_id", "origin", "target", "date"))
+        
+        data_vars["synthetic_mobility_type"] = (("run_id",), da.from_array(np.array([""] * len(run_ids), dtype="U20"), chunks=1))
+        
+        population_tiled = np.tile(population_vector.astype(np.int32), (len(run_ids), 1))
+        data_vars["population"] = (("run_id", "region_id"), population_tiled)
+
+        for tname in TARGET_NAMES:
+            data_vars[f"edar_biomarker_{tname}"] = create_lazy(("run_id", "date", ww_spatial_dim))
+            data_vars[f"edar_biomarker_{tname}_censor_hints"] = create_lazy(("run_id", "date", ww_spatial_dim), dtype=np.int8)
+            lod_val = GENE_TARGETS[tname]["limit_of_detection_log1p"]
+            data_vars[f"edar_biomarker_{tname}_LoD"] = (("run_id", ww_spatial_dim), np.full((len(run_ids), len(coords[ww_spatial_dim])), lod_val, dtype=np.float16))
+
+        # Add metadata variables
+        for meta_var in ["synthetic_strength", "synthetic_sparsity_level", "synthetic_mobility_noise_sigma_O", 
+                        "synthetic_mobility_noise_sigma_D", "synthetic_mobility_noise_factor",
+                        "synthetic_cases_report_rate_min", "synthetic_cases_report_rate_max", "synthetic_cases_report_delay_mean",
+                        "synthetic_hosp_report_rate", "synthetic_hosp_report_delay_mean", "synthetic_hosp_report_delay_std",
+                        "synthetic_deaths_report_rate", "synthetic_deaths_report_delay_mean", "synthetic_deaths_report_delay_std",
+                        "synthetic_ww_noise_sigma_N1", "synthetic_ww_noise_sigma_N2", "synthetic_ww_noise_sigma_IP4", "synthetic_ww_transport_loss"]:
+            data_vars[meta_var] = create_lazy(("run_id",), dtype=float)
+        
+        data_vars["synthetic_scenario_type"] = (("run_id",), da.from_array(np.array([""] * len(run_ids), dtype="U20"), chunks=1))
+
+        ds_skeleton = xr.Dataset(data_vars, coords=coords)
+        
+        # Apply encodings
+        chunk_size = args.chunk_size
+        region_chunk = min(chunk_size, len(region_ids))
+        date_chunk = min(chunk_size, n_dates)
+        ww_chunk = min(chunk_size, len(coords[ww_spatial_dim]))
+        
+        truth_vars = ["infections_true", "hospitalizations_true", "deaths_true"]
+        if args.include_latents:
+            truth_vars.extend(LATENT_ZARR_VARS)
+        encoding = {v: {"chunksizes": (1, region_chunk, date_chunk)} for v in truth_vars}
+        encoding.update({v: {"chunksizes": (1, date_chunk, region_chunk)} for v in ["cases", "cases_mask", "hospitalizations", "deaths"]})
+        encoding["cases_age"] = {"chunksizes": (1, date_chunk, region_chunk, n_age_groups)}
+        encoding["mobility_kappa0"] = {"chunksizes": (1, date_chunk)}
+        if has_time_varying:
+            encoding["mobility_time_varying"] = {"chunksizes": (1, region_chunk, region_chunk, date_chunk)}
+        for tname in TARGET_NAMES:
+            encoding[f"edar_biomarker_{tname}"] = {"chunksizes": (1, date_chunk, ww_chunk)}
+            encoding[f"edar_biomarker_{tname}_censor_hints"] = {"chunksizes": (1, date_chunk, ww_chunk)}
+
+        for v in encoding:
+            if v in ds_skeleton.data_vars:
+                ds_skeleton[v].encoding = encoding[v]
+
+        logger.info(f"Initializing Zarr skeleton at {output_path}")
+        ds_skeleton.to_zarr(output_path, compute=False, zarr_format=2)
+
+    # Prepare work items for parallel processing
+    rng = np.random.default_rng(args.seed)
+    reported_cfg = {"min_rate": args.min_rate, "max_rate": args.max_rate, "inflection_day": args.inflection_day, "slope": args.slope}
+    wastewater_cfg = {"gamma_shape": args.gamma_shape, "gamma_scale": args.gamma_scale, "noise_sigma": args.noise_sigma, "kernel_quantile": args.kernel_quantile}
+    args_dict = {"missing_gap_length": args.missing_gap_length, "monitoring_threshold": args.monitoring_threshold, 
+                 "monitoring_delay_mean": args.monitoring_delay_mean, "monitoring_delay_std": args.monitoring_delay_std,
+                 "hosp_report_rate": args.hosp_report_rate, "hosp_delay_mean": args.hosp_delay_mean, "hosp_delay_std": args.hosp_delay_std,
+                 "deaths_report_rate": args.deaths_report_rate, "deaths_delay_mean": args.deaths_delay_mean, "deaths_delay_std": args.deaths_delay_std,
+                 "include_latents": args.include_latents}
+
+    if args.append and args.include_latents and os.path.exists(output_path):
+        with xr.open_zarr(output_path, chunks=None) as ds_existing:
+            missing_latents = [
+                var for var in LATENT_ZARR_VARS if var not in ds_existing.data_vars
+            ]
+        if missing_latents:
+            raise ValueError(
+                "Cannot append latent targets to an existing zarr without latent schema. "
+                f"Missing variables: {missing_latents}"
+            )
+
+    work_items = []
+    for run_idx, run_dir in enumerate(run_dirs):
+        if load_run_artifacts(run_dir) is None: continue
+        seed = rng.integers(0, 2**32 - 1) if args.seed else None
+        work_items.append((str(run_dir), sparsity_per_run[run_idx], seed))
+
+    if not work_items:
+        logger.warning(f"No valid run artifacts (config/observables) found in {args.runs_dir}")
+        return
+
+    run_id_to_idx = {sanitize_run_id(d.name): i for i, d in enumerate(run_dirs)}
+    
+    # Store kappa0 series for final mobility pass if time-varying is enabled
+    mobility_kappa0_map = {}
+
+    def stream_result_to_zarr(result):
+        run_id = result["run_id"]
+        run_idx = run_id_to_idx[run_id]
+        with np.load(result["npz_path"]) as data:
+            dv = {}
+            dv["infections_true"] = (("run_id", "region_id", "date"), data["infections_true"][None, :, :].astype(np.float16))
+            dv["hospitalizations_true"] = (("run_id", "region_id", "date"), data["hospitalizations_true"][None, :, :].astype(np.float16))
+            dv["deaths_true"] = (("run_id", "region_id", "date"), data["deaths_true"][None, :, :].astype(np.float16))
+            if args.include_latents:
+                for latent_var in LATENT_ZARR_VARS:
+                    dv[latent_var] = (
+                        ("run_id", "region_id", "date"),
+                        data[latent_var][None, :, :].astype(np.float16),
+                    )
+            dv["cases"] = (("run_id", "date", "region_id"), data["cases_raw"][None, :, :].transpose(0, 2, 1).astype(np.float16))
+            dv["cases_mask"] = (("run_id", "date", "region_id"), data["cases_mask"][None, :, :].transpose(0, 2, 1).astype(np.float16))
+            dv["cases_age"] = (("run_id", "date", "region_id", "age_group"), data["cases_age"][None, :].astype(np.float16))
+            dv["hospitalizations"] = (("run_id", "date", "region_id"), data["hospitalizations_raw"][None, :, :].transpose(0, 2, 1).astype(np.float16))
+            dv["deaths"] = (("run_id", "date", "region_id"), data["deaths_raw"][None, :, :].transpose(0, 2, 1).astype(np.float16))
+            dv["mobility_kappa0"] = (("run_id", "date"), data["mobility_kappa0"][None, :].astype(np.float16))
+            
+            # Save for second pass if mobility_time_varying is needed
+            if has_time_varying:
+                mobility_kappa0_map[run_id] = data["mobility_kappa0"]
+
+            dv["population"] = (("run_id", "region_id"), population_vector[None, :].astype(np.int32))
+            dv["synthetic_mobility_type"] = (("run_id",), np.array([result["mobility_type"]], dtype="U20"))
+            dv["synthetic_scenario_type"] = (("run_id",), np.array([result["scenario_type"]], dtype="U20"))
+            
+            for tname_idx, tname in enumerate(TARGET_NAMES):
+                dv[f"edar_biomarker_{tname}"] = (("run_id", "date", ww_spatial_dim), np.log1p(data["wastewater_raw"][None, :, :, tname_idx]).astype(np.float16))
+                dv[f"edar_biomarker_{tname}_censor_hints"] = (("run_id", "date", ww_spatial_dim), data["wastewater_censor"][None, :, :, tname_idx])
+            
+            dv["synthetic_strength"] = (("run_id",), np.array([result["strength"]], dtype=float))
+            dv["synthetic_sparsity_level"] = (("run_id",), np.array([result["sparsity"]], dtype=float))
+            dv["synthetic_mobility_noise_sigma_O"] = (("run_id",), np.array([result["mobility_sigma_O"]], dtype=float))
+            dv["synthetic_mobility_noise_sigma_D"] = (("run_id",), np.array([result["mobility_sigma_D"]], dtype=float))
+            dv["synthetic_mobility_noise_factor"] = (("run_id",), np.array([result["mobility_noise"]], dtype=float))
+            
+            dv["synthetic_cases_report_rate_min"] = (("run_id",), np.array([args.min_rate], dtype=float))
+            dv["synthetic_cases_report_rate_max"] = (("run_id",), np.array([args.max_rate], dtype=float))
+            dv["synthetic_cases_report_delay_mean"] = (("run_id",), np.array([0.0], dtype=float))
+            dv["synthetic_hosp_report_rate"] = (("run_id",), np.array([args.hosp_report_rate], dtype=float))
+            dv["synthetic_hosp_report_delay_mean"] = (("run_id",), np.array([args.hosp_delay_mean], dtype=float))
+            dv["synthetic_hosp_report_delay_std"] = (("run_id",), np.array([args.hosp_delay_std], dtype=float))
+            dv["synthetic_deaths_report_rate"] = (("run_id",), np.array([args.deaths_report_rate], dtype=float))
+            dv["synthetic_deaths_report_delay_mean"] = (("run_id",), np.array([args.deaths_delay_mean], dtype=float))
+            dv["synthetic_deaths_report_delay_std"] = (("run_id",), np.array([args.deaths_delay_std], dtype=float))
+            dv["synthetic_ww_noise_sigma_N1"] = (("run_id",), np.array([GENE_TARGETS["N1"]["noise_sigma"]], dtype=float))
+            dv["synthetic_ww_noise_sigma_N2"] = (("run_id",), np.array([GENE_TARGETS["N2"]["noise_sigma"]], dtype=float))
+            dv["synthetic_ww_noise_sigma_IP4"] = (("run_id",), np.array([GENE_TARGETS["IP4"]["noise_sigma"]], dtype=float))
+            dv["synthetic_ww_transport_loss"] = (("run_id",), np.array([GENE_TARGETS["N1"]["transport_loss"]], dtype=float))
+
+            ds_run = xr.Dataset(dv, coords={"run_id": [run_id], "date": dates_ref, "region_id": region_ids, "origin": region_ids, "target": region_ids, "age_group": [str(i) for i in range(n_age_groups)], ww_spatial_dim: edar_ids if emap_data else region_ids})
+            
+            if args.append:
+                ds_run.to_zarr(output_path, mode="a", append_dim="run_id")
+            else:
+                # When writing to a region, we must drop coords that don't have the 'run_id' dimension
+                # otherwise xarray will try to write them and fail because they don't fit the region.
+                vars_to_drop = [c for c in ds_run.coords if "run_id" not in ds_run.coords[c].dims]
+                ds_run.drop_vars(vars_to_drop).to_zarr(output_path, region={"run_id": slice(run_idx, run_idx+1)})
+            
+        if os.path.exists(result["npz_path"]): os.remove(result["npz_path"])
+
+    # Execute processing
+    processed_results = []
+    if n_jobs > 1:
+        logger.info(f"Processing {len(work_items)} runs with {n_jobs} workers...")
+        with ProcessPoolExecutor(max_workers=n_jobs, initializer=init_worker, 
+                                 initargs=(region_ids, population_vector, emap_data, GENE_TARGETS, 
+                                           reported_cfg, wastewater_cfg, args_dict)) as executor:
+            futures = [executor.submit(process_single_run, *item) for item in work_items]
+            for future in as_completed(futures):
+                try:
+                    res = future.result()
+                    if res:
+                        stream_result_to_zarr(res)
+                        processed_results.append(res)
+                        logger.info(f"Processed and streamed: {res['run_id']}")
+                except Exception as e:
+                    logger.error(f"Failed run: {e}")
+    else:
+        init_worker(region_ids, population_vector, emap_data, GENE_TARGETS, reported_cfg, wastewater_cfg, args_dict)
+        logger.info(f"Processing {len(work_items)} runs sequentially...")
+        for item in work_items:
+            res = process_single_run(*item)
+            if res:
+                stream_result_to_zarr(res)
+                processed_results.append(res)
+                logger.info(f"Processed and streamed: {res['run_id']}")
+
+    if not processed_results:
+        logger.warning("No runs were successfully processed.")
+        return
+
+    if has_time_varying:
+        # Final pass for large mobility arrays using efficient frame-by-frame streaming
+        processed_results.sort(key=lambda x: x["run_id"])
+        mobility_kappa0_arr = np.stack([mobility_kappa0_map[r["run_id"]] for r in processed_results], axis=0)
+        
+        # Determine start index for mobility write
+        run_start_idx = 0
+        if args.append:
+            try:
+                with xr.open_zarr(output_path) as ds_existing:
+                    run_start_idx = int(ds_existing.sizes["run_id"]) - len(processed_results)
+            except Exception:
+                pass
+
+        write_mobility_time_varying_to_zarr(
+            output_path=output_path,
+            ordered_results=processed_results,
+            run_start_index=run_start_idx,
+            region_ids=region_ids,
+            dates_ref=dates_ref,
+            base_mobility=base_mobility,
+            mobility_kappa0_arr=mobility_kappa0_arr,
+            chunk_size=args.chunk_size,
         )
-        dataset.to_zarr(output_path, mode="w", zarr_format=2)
 
-    logger.info("Done! Output written to %s", output_path)
+    logger.info(f"Done! Output written to {output_path}")
 
 
 if __name__ == "__main__":
     main()
+    

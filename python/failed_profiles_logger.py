@@ -11,7 +11,7 @@ import json
 import logging
 import os
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
@@ -66,7 +66,7 @@ class FailedProfilesLogger:
             with open(self.log_file, "a") as f:
                 f.write(json.dumps(failure_entry) + "\n")
             logger.info(f"Logged failure: {run_id} - {error_type}")
-        except IOError as e:
+        except OSError as e:
             logger.error(f"Failed to write to log file {self.log_file}: {e}")
 
         # Keep in memory for analysis
@@ -84,7 +84,7 @@ class FailedProfilesLogger:
             return failures
 
         try:
-            with open(self.log_file, "r") as f:
+            with open(self.log_file) as f:
                 for line in f:
                     line = line.strip()
                     if line:
@@ -92,7 +92,7 @@ class FailedProfilesLogger:
                             failures.append(json.loads(line))
                         except json.JSONDecodeError as e:
                             logger.warning(f"Failed to parse log entry: {e}")
-        except IOError as e:
+        except OSError as e:
             logger.error(f"Failed to read log file {self.log_file}: {e}")
 
         self._failures = failures
@@ -254,14 +254,14 @@ def scan_and_log_existing_failures(
             continue
 
         try:
-            with open(error_file, "r") as f:
+            with open(error_file) as f:
                 error_data = json.load(f)
 
             # Try to extract profile from config
             config_file = os.path.join(batch_folder, item, "config_auto_py.json")
             profile = {}
             if os.path.exists(config_file):
-                with open(config_file, "r") as f:
+                with open(config_file) as f:
                     config = json.load(f)
 
                 # Extract relevant parameters
@@ -284,7 +284,7 @@ def scan_and_log_existing_failures(
             )
             count += 1
 
-        except (IOError, json.JSONDecodeError) as e:
+        except (OSError, json.JSONDecodeError) as e:
             logger.warning(f"Failed to process {error_file}: {e}")
 
     logger.info(f"Logged {count} failures from {batch_folder}")

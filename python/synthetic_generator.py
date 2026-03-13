@@ -54,9 +54,7 @@ def generate_profile_standalone(
         generator.run_profile_sweep(
             profile=profile,
             baseline_only=baseline_only,
-            intervention_profiles=intervention_profiles
-            if intervention_profiles
-            else None,
+            intervention_profiles=intervention_profiles,
         )
 
         return {
@@ -128,15 +126,22 @@ class SyntheticDataGenerator:
         self.mobility_sigma_min = 0.0
         self.mobility_sigma_max = 0.6
 
+        # Configuration for intervention sweep (set during run_profile_sweep, used during retry)
+        self.baseline_only = False
+        self.intervention_profiles = None
+
         # Load rosetta data for correct index mapping
-        rosetta_filename = metapop_filename.replace("metapopulation_data", "rosetta")
-        try:
-            rosetta_path = os.path.join(data_folder, rosetta_filename)
-            self.rosetta_df = pd.read_csv(rosetta_path, dtype={"id": str})
-        except FileNotFoundError:
-            # Fallback to default rosetta.csv
-            self.rosetta_df = pd.read_csv(
-                os.path.join(data_folder, "rosetta.csv"), dtype={"id": str}
+        # Rosetta file is always in the model directory
+        rosetta_path = os.path.join(data_folder, "rosetta.csv")
+        if not os.path.exists(rosetta_path):
+            raise FileNotFoundError(f"Rosetta file not found at {rosetta_path}")
+
+        self.rosetta_df = pd.read_csv(rosetta_path, dtype={"id": str})
+
+        # Validate required columns
+        if "idx" not in self.rosetta_df.columns:
+            raise KeyError(
+                f"Rosetta file missing 'idx' column. Found: {list(self.rosetta_df.columns)}"
             )
 
     def generate_parameter_grid(
@@ -157,7 +162,7 @@ class SyntheticDataGenerator:
         6: Ratio Beta A (ratio_beta_a) [0.1, 1.0]
         7: Alpha Scale (alpha_scale) [0.5, 1.5]
         8: Mu Scale (mu_scale) [0.5, 1.5] (unused, kept for backward compatibility)
-        9: Seed Size [10, 500] (Log-uniform sampled)
+        9: Seed Fraction [0.001, 0.05] (Fraction of region population, capped at 10%)
         10: Mobility Sigma O [mobility_sigma_min, mobility_sigma_max] - Origin outflow noise level
         11: Mobility Sigma D [mobility_sigma_min, mobility_sigma_max] - Destination inflow noise level
 
@@ -176,31 +181,37 @@ class SyntheticDataGenerator:
             mobility_sigma_max = self.mobility_sigma_max
 
         # Scale samples
+        # Updated ranges based on COVID-19 literature review
+        # R0_scale: [1.0, 5.0] covers pre-Omicron to Omicron variants
+        # T_inf: [3.0, 8.0] days - infectious period (culture positivity)
+        # T_inc: [2.0, 6.0] days - Omicron-era incubation
+        # ratio_beta_a: [0.3, 0.7] - asymptomatics are 30-70% as infectious
+        # alpha_scale: [0.6, 1.1] prevents alpha > 0.7 which causes instability
         l_bounds = [
-            0.5,
-            2.0,
-            2.0,
-            0.0,
-            7.0,
-            0.1,
-            0.1,
-            0.5,
-            0.5,
-            10.0,
+            1.0,  # R0_scale: avoid R0<1 (extinction)
+            3.0,  # T_inf: minimum 3 days (realistic recovery)
+            2.0,  # T_inc: Omicron as low as 2 days
+            0.0,  # delay
+            7.0,  # duration
+            0.1,  # fraction
+            0.3,  # ratio_beta_a: minimum 0.3 (asymptomatics not silent)
+            0.6,  # alpha_scale: prevent too-low symptomatic fraction
+            0.5,  # mu_scale (unused)
+            0.001,  # seed_fraction (min 0.1% of population)
             mobility_sigma_min,
             mobility_sigma_min,
         ]
         u_bounds = [
-            3.0,
-            10.0,
-            10.0,
-            30.0,
-            60.0,
-            0.6,
-            1.0,
-            1.5,
-            1.5,
-            500.0,
+            5.0,  # R0_scale: up to ~R0=10 for Omicron
+            8.0,  # T_inf: rarely infectious >8 days
+            6.0,  # T_inc: cap at 6 days (Omicron era)
+            30.0,  # delay
+            60.0,  # duration
+            0.6,  # fraction
+            0.7,  # ratio_beta_a: maximum 0.7 (A < I)
+            1.1,  # alpha_scale: CRITICAL - caps alpha at ~0.70
+            1.5,  # mu_scale (unused)
+            0.05,  # seed_fraction (max 5% of population)
             mobility_sigma_max,
             mobility_sigma_max,
         ]
@@ -221,7 +232,7 @@ class SyntheticDataGenerator:
                 ratio_beta_a,
                 alpha_scale,
                 mu_scale,
-                seed,
+                seed_fraction,
                 mobility_sigma_O,
                 mobility_sigma_D,
             ) = row
@@ -233,14 +244,17 @@ class SyntheticDataGenerator:
 
             # Heuristic for Event Start
             # Time to detection ~ T_inf * ln(Threshold/Seed) / (R0 - 1)
-            # If R0 <= 1, growth is negative or flat. Set a default late start or based on delay.
+            # For fraction-based seeding, estimate seed as 1% of average region population
+            estimated_seed = 100  # Approximate for timing calculation
             if r0 > 1.05:
                 # Basic SIR growth approximation
                 # Doubling time Td = T_inf * ln(2) / (R0 - 1)
                 # Time to grow from Seed to Threshold
-                if seed < detection_threshold:
+                if estimated_seed < detection_threshold:
                     growth_rate = (r0 - 1.0) / t_inf
-                    time_to_detect = np.log(detection_threshold / seed) / growth_rate
+                    time_to_detect = (
+                        np.log(detection_threshold / estimated_seed) / growth_rate
+                    )
                 else:
                     time_to_detect = 0.0
             else:
@@ -264,7 +278,7 @@ class SyntheticDataGenerator:
                     "ratio_beta_a": ratio_beta_a,
                     "alpha_scale": alpha_scale,
                     "mu_scale": mu_scale,
-                    "seed_size": int(seed),
+                    "seed_fraction": seed_fraction,
                     "mobility_sigma_O": mobility_sigma_O,
                     "mobility_sigma_D": mobility_sigma_D,
                 }
@@ -346,6 +360,35 @@ class SyntheticDataGenerator:
             logger.warning(
                 f"Profile {profile['profile_id']}: alpha_scale={alpha_scale:.2f} > 1.5 "
                 f"exceeds LHS bounds and causes DomainError. Skipping."
+            )
+            return False
+
+        # NEW: Validate resulting αᵍ values to prevent numerical instability
+        # Literature-based: symptomatic fraction 0.65-0.80 overall
+        # We cap resulting αᵍ at 0.75 to leave room for other A→? transitions
+        base_alpha = self.base_config.get_param("epidemic_params.αᵍ")
+        max_alpha = max(base_alpha) * alpha_scale
+        if max_alpha > 0.75:
+            logger.warning(
+                f"Profile {profile['profile_id']}: max αᵍ={max_alpha:.2f} > 0.75 "
+                f"(base_α={max(base_alpha):.2f} × scale={alpha_scale:.2f}). "
+                f"Skipping - insufficient probability mass for A→other transitions."
+            )
+            return False
+
+        # NEW: Validate ratio_beta_a (asymptomatic infectiousness)
+        # Literature: asymptomatics are 30-70% as infectious as symptomatic
+        ratio_beta_a = profile.get("ratio_beta_a", 0.5)
+        if ratio_beta_a > 0.7:
+            logger.warning(
+                f"Profile {profile['profile_id']}: ratio_beta_a={ratio_beta_a:.2f} > 0.7 "
+                f"exceeds literature range (0.3-0.7). Skipping."
+            )
+            return False
+        if ratio_beta_a < 0.3:
+            logger.warning(
+                f"Profile {profile['profile_id']}: ratio_beta_a={ratio_beta_a:.2f} < 0.3 "
+                f"below literature range (0.3-0.7). Skipping."
             )
             return False
 
@@ -519,23 +562,45 @@ class SyntheticDataGenerator:
             scaled_df.to_csv(path, index=False)
             return filename, path, None
 
-    def prepare_seed_file(self, run_id, seed_size=10.0):
-        """Generate random seed file"""
+    def prepare_seed_file(self, run_id, seed_fraction=0.01):
+        """Generate random seed file with fraction-based seeding.
+
+        Args:
+            run_id: Run identifier for logging
+            seed_fraction: Fraction of region population to seed (0.001 to 0.05)
+                          Actual seed_size is capped at 10% of population maximum.
+
+        Returns:
+            tuple: (filename, path) to the generated seed CSV file
+        """
         # Pick a random region (row index)
         random_idx = np.random.randint(0, len(self.metapop_df))
         seed_region = self.metapop_df.iloc[random_idx]
         region_id = seed_region["id"]
 
-        # Cap seed size to 10% of region population to prevent stability issues
-        # Use .get with default or check column existence
-        if "total" in seed_region:
-            total_pop = seed_region["total"]
-            # Warn if seed size is large (>50%), but allow it (normalization fixes stability)
-            if seed_size > 0.5 * total_pop:
-                logger.warning(
-                    f"Run {run_id}: Seed size {seed_size:.0f} is >50% of pop {total_pop:.0f} "
-                    f"in region {region_id}. This is physically valid but unusual."
-                )
+        # Get region population
+        total_pop = seed_region.get("total", 1000)
+
+        # Calculate seed size from fraction
+        seed_size = int(seed_fraction * total_pop)
+
+        # Cap at 10% of population (safety limit)
+        max_seed = int(0.10 * total_pop)
+        if seed_size > max_seed:
+            logger.warning(
+                f"Run {run_id}: Seed fraction {seed_fraction:.4f} would give {seed_size} infected, "
+                f"capping at 10% = {max_seed} for region {region_id} (pop={total_pop})"
+            )
+            seed_size = max_seed
+
+        # Ensure at least 1 infected
+        seed_size = max(1, seed_size)
+
+        # Log seeding details
+        logger.info(
+            f"Run {run_id}: Seeding region {region_id} with {seed_size} infected "
+            f"({seed_fraction:.4f} × {total_pop} pop)"
+        )
 
         # Look up the correct 1-based index from rosetta
         idx_row = self.rosetta_df[self.rosetta_df["id"] == region_id]
@@ -612,7 +677,9 @@ class SyntheticDataGenerator:
         base_alpha = config.get_param("epidemic_params.αᵍ")
 
         new_beta_A = base_beta_I * ratio_beta_a
-        new_alpha = [min(1.0, x * alpha_scale) for x in base_alpha]
+        # Cap alpha at 0.70 to leave room for other A->? transitions
+        # Literature: symptomatic fraction ~0.65-0.80; rates above 0.75 cause instability
+        new_alpha = [min(0.70, x * alpha_scale) for x in base_alpha]
 
         # Prepare Mobility - Write to run directory
         # All scenarios use base mobility matrix (interventions via κ₀ only)
@@ -645,7 +712,7 @@ class SyntheticDataGenerator:
         # NOTE: μᵍ is the recovery rate (gamma), NOT γᵍ (hospitalization probability)
         updates = {
             "simulation.end_date": end_date,
-            "simulation.save_full_output": False,
+            "simulation.save_full_output": True,
             "simulation.save_observables": True,
             "epidemic_params.scale_β": r0_scale,
             "epidemic_params.βᴬ": new_beta_A,
@@ -682,6 +749,10 @@ class SyntheticDataGenerator:
             baseline_only: If True, skip intervention sweep entirely
             intervention_profiles: Set of profile IDs selected for interventions, or None for all
         """
+        # Store configuration for retry logic
+        self.baseline_only = baseline_only
+        self.intervention_profiles = intervention_profiles
+
         pid = profile["profile_id"]
 
         # VALIDATE before generating any configs
@@ -689,11 +760,13 @@ class SyntheticDataGenerator:
             logger.warning(f"Skipping Profile {pid} due to validation failure")
             return
 
-        seed_size = profile.get("seed_size", 10.0)
-        logger.info(f"--- Processing Profile {pid} (Seed={seed_size}) ---")
+        seed_fraction = profile.get("seed_fraction", 0.01)
+        logger.info(
+            f"--- Processing Profile {pid} (SeedFraction={seed_fraction:.4f}) ---"
+        )
 
         # 1. Generate Seed ONCE for this profile
-        seed_fname, seed_path = self.prepare_seed_file(pid, seed_size=seed_size)
+        seed_fname, seed_path = self.prepare_seed_file(pid, seed_fraction=seed_fraction)
 
         # 2. Prepare Baseline
         # Capture the generated mobility NPZ path to reuse for Twin scenarios
@@ -922,7 +995,9 @@ class SyntheticDataGenerator:
                     if epi_params.get("αᵍ")
                     else 1.0
                 )
-                profile["seed_size"] = self._extract_seed_size_from_config(config)
+                profile["seed_fraction"] = self._extract_seed_fraction_from_config(
+                    config
+                )
 
             except (OSError, json.JSONDecodeError) as e:
                 logger.warning(f"Failed to read config for {run_id}: {e}")
@@ -937,16 +1012,24 @@ class SyntheticDataGenerator:
             stacktrace=stacktrace,
         )
 
-    def _extract_seed_size_from_config(self, config):
-        """Extract seed size from config."""
+    def _extract_seed_fraction_from_config(self, config):
+        """Extract seed fraction from config."""
         seed_filename = config.get("data", {}).get("initial_condition_filename", "")
         if seed_filename and os.path.exists(seed_filename):
             try:
                 seed_df = pd.read_csv(seed_filename)
-                return int(seed_df["M"].sum())
+                seed_size = seed_df["M"].sum()
+                seed_region_id = seed_df["id"].iloc[0] if len(seed_df) > 0 else None
+                if seed_region_id:
+                    region_row = self.metapop_df[
+                        self.metapop_df["id"] == str(seed_region_id)
+                    ]
+                    if len(region_row) > 0:
+                        region_pop = region_row["total"].iloc[0]
+                        return seed_size / region_pop if region_pop > 0 else 0.01
             except Exception:
                 pass
-        return 10  # Default
+        return 0.01  # Default
 
     def _retry_failed_runs(self, failed_runs, seed_offset):
         """Retry failed runs with different random seeds."""
@@ -985,10 +1068,18 @@ class SyntheticDataGenerator:
             if not self.validate_profile_parameters(profile):
                 logger.warning(f"Profile {pid} failed validation, skipping retry")
                 continue
-            self.run_profile_sweep(profile)
+            self.run_profile_sweep(
+                profile,
+                baseline_only=self.baseline_only,
+                intervention_profiles=self.intervention_profiles,
+            )
 
-    def _run_batch_single(self):
-        """Execute a single batch run (invoke the Julia batch runner)."""
+    def _run_batch_single(self, n_jobs=1):
+        """Execute a single batch run (invoke the Julia batch runner).
+
+        Args:
+            n_jobs: Number of parallel workers for Julia Distributed (1 = sequential)
+        """
         logger.info("Starting Batch Execution...")
 
         julia_path = "julia"  # Assume in path
@@ -999,19 +1090,28 @@ class SyntheticDataGenerator:
 
         project_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
+        # Determine worker count - use n_jobs for distributed mode
+        # This creates N separate Julia processes, each with isolated HDF5 state
+        worker_count = n_jobs if n_jobs >= 1 else 1
+
         cmd = [
             julia_path,
             "--project=" + project_path,
             "-t",
-            "1",
+            "1",  # Master process single-threaded
             script_path,
             "--batch-folder",
             self.output_folder,
             "--data-folder",
             self.data_folder,
+            "--workers",
+            str(worker_count),
         ]
 
         logger.info(f"Running command: {' '.join(cmd)}")
+        logger.info(
+            f"Using {worker_count} distributed worker(s) (each single-threaded for HDF5 safety)"
+        )
 
         try:
             subprocess.run(cmd, check=True)
@@ -1021,54 +1121,141 @@ class SyntheticDataGenerator:
             logger.error(f"Batch execution failed: {e}")
             return False
 
-    def run_batch_with_retry(self, failure_tolerance=10):
-        """Run batch with retry logic for failed simulations."""
+    def run_batch_with_retry(
+        self, failure_tolerance=10, n_jobs=1, target_success_count=None, max_attempts=10
+    ):
+        """Run batch with retry logic for failed simulations.
+
+        Retries failed simulations with new random seeds until either:
+        - All simulations succeed
+        - Target success count is reached (if specified)
+        - Maximum retry attempts are exhausted
+
+        Args:
+            failure_tolerance: Number of consecutive failures before aborting
+            n_jobs: Number of parallel workers for Julia Distributed (1 = sequential)
+            target_success_count: Target number of successful runs (None = all must succeed)
+            max_attempts: Maximum number of retry attempts (default: 10)
+
+        Returns:
+            tuple: (success_count, success_rate, all_succeeded)
+                - success_count: Number of successful runs
+                - success_rate: Ratio of successful runs (0.0 to 1.0)
+                - all_succeeded: True if all runs succeeded, False otherwise
+        """
+        logger.info("=" * 60)
         logger.info("Starting Batch Execution with Retry Logic...")
+        logger.info(f"Using {n_jobs} Julia worker(s) (process-based for HDF5 safety)")
+        if target_success_count:
+            logger.info(f"Target: {target_success_count} successful runs")
+        logger.info(f"Maximum retry attempts: {max_attempts}")
+        logger.info("=" * 60)
 
-        consecutive_failures = 0
-        max_attempts = 3  # Max retries per run
+        total_attempts = 0
+        cumulative_successful = set()  # Track all successful runs across attempts
+        cumulative_failed = set()  # Track runs that failed all attempts
 
-        for attempt in range(max_attempts):
-            if consecutive_failures >= failure_tolerance:
-                logger.error(
-                    f"Exceeded failure tolerance ({failure_tolerance} consecutive failures). Aborting."
-                )
-                return False
+        while total_attempts < max_attempts:
+            total_attempts += 1
 
-            logger.info(f"Attempt {attempt + 1}/{max_attempts}")
-            self._run_batch_single()
+            logger.info("\n" + "=" * 60)
+            logger.info(f"ATTEMPT {total_attempts}/{max_attempts}")
+            logger.info("=" * 60)
+
+            # Run the batch
+            self._run_batch_single(n_jobs=n_jobs)
 
             # Check results
             results = self._collect_results()
             successful = results["succeeded"]
             failed_runs = results["failed"]
 
-            logger.info(
-                f"Results: {len(successful)} succeeded, {len(failed_runs)} failed"
-            )
+            # Update cumulative tracking
+            for run_id in successful:
+                cumulative_successful.add(run_id)
+                if run_id in cumulative_failed:
+                    cumulative_failed.remove(run_id)
 
-            if not failed_runs:
-                logger.info("All runs succeeded!")
-                return True
-
-            # Retry failed runs with new random seeds
-            consecutive_failures = len(failed_runs)
-            logger.warning(
-                f"{consecutive_failures} runs failed. Retrying with new seeds..."
-            )
-
-            # Clean up failed runs and retry
+            # Track newly failed runs
             for run_id in failed_runs:
-                self._cleanup_run(run_id)
+                if run_id not in cumulative_successful:
+                    cumulative_failed.add(run_id)
 
-            # Generate new profiles for retry (different random seed)
-            # Use attempt + 1 as seed offset
-            self._retry_failed_runs(failed_runs, attempt + 1)
+            n_total = len(cumulative_successful) + len(cumulative_failed)
+            success_rate = len(cumulative_successful) / n_total if n_total > 0 else 0.0
 
-        # Final scan for any remaining failures (should be empty if all retries succeeded)
+            logger.info(f"\nAttempt {total_attempts} Results:")
+            logger.info(
+                f"  This attempt - Succeeded: {len(successful)}, Failed: {len(failed_runs)}"
+            )
+            logger.info(
+                f"  Cumulative   - Succeeded: {len(cumulative_successful)}, Failed: {len(cumulative_failed)}"
+            )
+            logger.info(f"  Success rate: {success_rate:.1%}")
+
+            # Check if we've reached the target
+            if (
+                target_success_count
+                and len(cumulative_successful) >= target_success_count
+            ):
+                logger.info("\n" + "=" * 60)
+                logger.info(
+                    f"✓ TARGET REACHED: {len(cumulative_successful)}/{target_success_count} successful runs"
+                )
+                logger.info(f"  Success rate: {success_rate:.1%}")
+                logger.info("=" * 60)
+                return (
+                    len(cumulative_successful),
+                    success_rate,
+                    len(cumulative_failed) == 0,
+                )
+
+            # Check if all runs succeeded
+            if not cumulative_failed:
+                logger.info("\n" + "=" * 60)
+                logger.info("✓ ALL RUNS SUCCEEDED!")
+                logger.info(f"  Total successful: {len(cumulative_successful)}")
+                logger.info("=" * 60)
+                return len(cumulative_successful), 1.0, True
+
+            # Check failure tolerance (abort if too many consecutive failures)
+            if len(failed_runs) >= failure_tolerance:
+                logger.error(
+                    f"\n✗ Exceeded failure tolerance ({failure_tolerance} consecutive failures)"
+                )
+                logger.error("Aborting retry attempts.")
+                break
+
+            # Prepare for next attempt
+            if total_attempts < max_attempts:
+                logger.warning(
+                    f"\n{len(cumulative_failed)} runs still failing. Retrying with new seeds..."
+                )
+
+                # Clean up failed runs
+                for run_id in list(cumulative_failed):
+                    self._cleanup_run(run_id)
+
+                # Generate new profiles for retry
+                self._retry_failed_runs(list(cumulative_failed), total_attempts)
+
+        # Max attempts reached or aborted
+        logger.error("\n" + "=" * 60)
+        logger.error(f"✗ MAXIMUM ATTEMPTS ({max_attempts}) REACHED")
+        logger.error(f"  Successful: {len(cumulative_successful)}")
+        logger.error(f"  Failed: {len(cumulative_failed)}")
+        logger.error(f"  Success rate: {success_rate:.1%}")
+        if target_success_count:
+            logger.error(f"  Target: {target_success_count} successful runs")
+            logger.error(
+                f"  Shortfall: {target_success_count - len(cumulative_successful)}"
+            )
+        logger.error("=" * 60)
+
+        # Log failure summary
         self.failure_logger.load_failures()
         if self.failure_logger._failures:
-            logger.info("=" * 60)
+            logger.info("\n" + "=" * 60)
             logger.info(
                 f"FAILURE SUMMARY: {len(self.failure_logger._failures)} failures logged"
             )
@@ -1076,7 +1263,7 @@ class SyntheticDataGenerator:
             logger.info("Run with --analyze-failures to see detailed analysis")
             logger.info("=" * 60)
 
-        return False
+        return len(cumulative_successful), success_rate, False
 
     def print_failure_analysis(self):
         """Print analysis of logged failures."""
@@ -1228,8 +1415,10 @@ class SyntheticDataGenerator:
             profile = self._extract_profile_from_config(baseline_config, profile_id)
 
             # Regenerate seed for this profile (same random seed for reproducibility)
-            seed_size = profile.get("seed_size", 10.0)
-            _, seed_path = self.prepare_seed_file(profile_id, seed_size=seed_size)
+            seed_fraction = profile.get("seed_fraction", 0.01)
+            _, seed_path = self.prepare_seed_file(
+                profile_id, seed_fraction=seed_fraction
+            )
 
             logger.info(
                 f"--- Profile {profile_id}: Generating {len(spike_windows)} spike-based interventions ---"
@@ -1305,15 +1494,26 @@ class SyntheticDataGenerator:
             else 1.0
         )
 
-        # Load seed file to get seed_size
+        # Load seed file to get seed_fraction
         seed_filename = config.get("data", {}).get("initial_condition_filename", "")
-        seed_size = 10.0  # Default
+        seed_fraction = 0.01  # Default
 
         if seed_filename and os.path.exists(seed_filename):
             try:
                 seed_df = pd.read_csv(seed_filename)
                 # Seed size is sum of M (middle age group) column
                 seed_size = seed_df["M"].sum()
+                # Try to recover fraction from region population
+                seed_region_id = seed_df["id"].iloc[0] if len(seed_df) > 0 else None
+                if seed_region_id:
+                    region_row = self.metapop_df[
+                        self.metapop_df["id"] == str(seed_region_id)
+                    ]
+                    if len(region_row) > 0:
+                        region_pop = region_row["total"].iloc[0]
+                        seed_fraction = (
+                            seed_size / region_pop if region_pop > 0 else 0.01
+                        )
             except Exception:
                 pass
 
@@ -1328,7 +1528,7 @@ class SyntheticDataGenerator:
             "ratio_beta_a": ratio_beta_a,
             "alpha_scale": alpha_scale,
             "mu_scale": 1.0,
-            "seed_size": int(seed_size),
+            "seed_fraction": seed_fraction,
         }
 
     def _sample_intervention_profiles(self, n_profiles, fraction, seed=42):
@@ -1371,7 +1571,7 @@ if __name__ == "__main__":
         "--n-jobs",
         type=int,
         default=1,
-        help="Number of parallel workers for profile generation (default: 1)",
+        help="Number of parallel Python workers for profile generation (Julia always runs single-threaded to avoid NetCDF/HDF5 issues) (default: 1)",
     )
     parser.add_argument(
         "--start-index",
@@ -1398,6 +1598,11 @@ if __name__ == "__main__":
         type=int,
         default=10,
         help="Number of consecutive failures before aborting (default: 10)",
+    )
+    parser.add_argument(
+        "--no-retry",
+        action="store_true",
+        help="Run batch once without retry (for use with pipeline global retry)",
     )
     parser.add_argument(
         "--baseline-only",
@@ -1566,7 +1771,7 @@ if __name__ == "__main__":
                 f.write("")
 
         # Generate spike-based intervention scenarios
-        generator.run_spike_based_interventions(
+        scenarios_generated = generator.run_spike_based_interventions(
             baseline_dir=baseline_dir,
             spike_threshold=args.spike_threshold,
             min_duration=args.min_spike_duration,
@@ -1578,9 +1783,25 @@ if __name__ == "__main__":
             intervention_profiles=intervention_profiles,
         )
 
-        # Execute batch if not skipped
-        if not args.skip_run:
-            generator.run_batch_with_retry(failure_tolerance=args.failure_tolerance)
+        # Execute batch if not skipped and scenarios exist
+        if scenarios_generated > 0 and not args.skip_run:
+            success_count, success_rate, all_succeeded = generator.run_batch_with_retry(
+                failure_tolerance=args.failure_tolerance,
+                n_jobs=args.n_jobs,
+                target_success_count=scenarios_generated,
+                max_attempts=10,
+            )
+
+            if success_count < scenarios_generated:
+                logger.error(
+                    f"Intervention batch incomplete: {success_count}/{scenarios_generated} "
+                    f"scenarios succeeded ({success_rate:.1%})"
+                )
+                sys.exit(1)
+        elif scenarios_generated == 0:
+            logger.warning(
+                "No intervention scenarios generated - skipping batch execution"
+            )
 
         logger.info("Intervention-only generation complete!")
         sys.exit(0)
@@ -1629,6 +1850,11 @@ if __name__ == "__main__":
     # Prepare files for selected profiles
     selected_profiles = profiles[start_idx:end_idx]
 
+    # Store configuration on main generator instance for retry logic
+    # (retry runs on this instance, not the parallel subprocesses)
+    generator.baseline_only = args.baseline_only
+    generator.intervention_profiles = intervention_profiles
+
     if n_jobs > 1:
         # Parallel execution
         results = generator.run_profile_sweep_parallel(
@@ -1657,4 +1883,62 @@ if __name__ == "__main__":
 
     # Execute batch if not skipped
     if not args.skip_run and start_idx < end_idx:
-        generator.run_batch_with_retry(failure_tolerance=args.failure_tolerance)
+        # Calculate target: number of baselines we expect to generate
+        n_baseline_configs = end_idx - start_idx
+        target_count = n_baseline_configs
+
+        if args.no_retry:
+            # Simple execution: run once, no retry
+            logger.info(f"\n{'=' * 60}")
+            logger.info(
+                f"Executing batch for {n_baseline_configs} baseline configurations"
+            )
+            logger.info(
+                f"Mode: Single execution (no retry - pipeline handles global retry)"
+            )
+            logger.info(f"{'=' * 60}")
+
+            generator._run_batch_single(n_jobs=n_jobs)
+
+            # Just check results, don't retry
+            results = generator._collect_results()
+            success_count = len(results["succeeded"])
+            failed_count = len(results["failed"])
+            total = success_count + failed_count
+            success_rate = success_count / total if total > 0 else 0.0
+
+            logger.info(f"\nBatch Results:")
+            logger.info(f"  Succeeded: {success_count}")
+            logger.info(f"  Failed: {failed_count}")
+            logger.info(f"  Success rate: {success_rate:.1%}")
+
+            # Exit with error code if any failed (pipeline will handle retry)
+            if failed_count > 0:
+                logger.warning(
+                    f"{failed_count} runs failed - pipeline will retry globally"
+                )
+                sys.exit(1)
+        else:
+            # Full retry mode: retry until target reached
+            logger.info(f"\n{'=' * 60}")
+            logger.info(
+                f"Executing batch for {n_baseline_configs} baseline configurations"
+            )
+            logger.info(f"Target: {target_count} successful runs")
+            logger.info(f"{'=' * 60}")
+
+            success_count, success_rate, all_succeeded = generator.run_batch_with_retry(
+                failure_tolerance=args.failure_tolerance,
+                n_jobs=n_jobs,
+                target_success_count=target_count,
+                max_attempts=10,
+            )
+
+            if success_count < target_count:
+                logger.error(
+                    f"\n{'=' * 60}\n"
+                    f"Baseline batch incomplete: {success_count}/{target_count} "
+                    f"runs succeeded ({success_rate:.1%})\n"
+                    f"{'=' * 60}"
+                )
+                sys.exit(1)
