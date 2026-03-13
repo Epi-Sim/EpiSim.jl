@@ -130,6 +130,12 @@ The `synthetic_mobility_type` metadata variable indicates which format is used f
 | `infections_true` | `(run_id, region_id, date)` | Daily infections (sum over ages) |
 | `hospitalizations_true` | `(run_id, region_id, date)` | Daily hospitalizations |
 | `deaths_true` | `(run_id, region_id, date)` | Daily deaths |
+| `latent_S_true`, `latent_E_true`, `latent_A_true`, `latent_I_true`, `latent_R_true`, `latent_D_true` | `(run_id, region_id, date)` | Optional latent simulator states exported from `compartments_full.nc` for hybrid supervision |
+| `latent_CH_true` | `(run_id, region_id, date)` | Optional confined-population latent target |
+| `latent_hospitalized_true` | `(run_id, region_id, date)` | Optional latent hospital occupancy target (`HR + HD`) |
+| `latent_active_true` | `(run_id, region_id, date)` | Optional latent active-burden target (`E + A + I + PH + PD + HR + HD`) |
+
+Latent targets are synthetic-only. They are not available in real-data settings, but can be used as auxiliary training targets or regularizers for hybrid deep learning / mechanistic models. Enable them with `--include-latents` when running `python/process_synthetic_outputs.py` or `python/run_synthetic_pipeline.py`.
 
 #### Synthetic Metadata (for reference, not used by preprocessor)
 
@@ -408,6 +414,13 @@ For compatibility with existing workflows, the original single-phase pipeline is
     *   `--compressor`: Compressor for zarr (zstd, lz4, blosc, none)
     *   `--compressor-level`: Compression level (default: 3)
     *   `--append`: Append to existing zarr store for incremental generation
+
+    **Data Type Control**:
+    *   `--dtype`: Output dtype for floating-point arrays (`float16`, `float32`, `float64`, default: `float16`)
+        *   `float16`: 75% memory reduction, ~3.3 decimal precision, fails if values exceed ±65504
+        *   `float32`: 50% memory reduction, ~7 decimal precision
+        *   `float64`: Full precision (legacy behavior)
+        *   The default `float16` is safe for typical epidemic data (cases, hospitalizations, deaths all fit within range)
 
 4. **Generate Plots**:
 
