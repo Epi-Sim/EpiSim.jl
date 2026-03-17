@@ -125,13 +125,19 @@ function load_initial_condition(engine::AbstractEngine, init_condition_path::Str
     return initial_compartments_dict
 end
 
-function create_initial_compartments_dict(engine::MMCACovid19VacEngine, M_coords::Array{String}, G_coords::Array{String}, nᵢᵍ::Array{Float64,2}, conditions₀, patches_idxs)
+function create_initial_compartments_dict(engine::MMCACovid19VacEngine, M_coords::Array{String}, G_coords::Array{String}, 
+                                        nᵢᵍ::Array{Float64,2}, conditions₀, patches_idxs; scale_seeds = nothing)
     M = length(M_coords)
     G = length(G_coords)
     V = 3
     NDIMS = length((G, M, V))
 
     comp_coords = ["S", "E", "A", "I", "PH", "PD", "HR", "HD", "R", "D", "CH"]
+
+    if scale_seeds !== nothing
+        @info "- Scaling initial seeds by factor $(scale_seeds)"
+        conditions₀ .= conditions₀ .* scale_seeds
+    end
 
     @debug "- Creating initial compartment dict using arrays of size ($(G), $(M), $(V))"
     init_compartments_dict = Dict{String, Array{Float64, NDIMS}}(label => zeros(G, M, V) for label in comp_coords)
@@ -145,13 +151,19 @@ function create_initial_compartments_dict(engine::MMCACovid19VacEngine, M_coords
     return init_compartments_dict
 end
 
-function create_initial_compartments_dict(engine::MMCACovid19Engine, M_coords::Array{String}, G_coords::Array{String}, nᵢᵍ::Array{Float64,2}, conditions₀, patches_idxs)
+function create_initial_compartments_dict(engine::MMCACovid19Engine, M_coords::Array{String}, G_coords::Array{String}, 
+                                            nᵢᵍ::Array{Float64,2}, conditions₀, patches_idxs; scale_seeds = nothing)
     
     M = length(M_coords)
     G = length(G_coords)
     NDIMS = length((G, M))
     
     comp_coords = ["S", "E", "A", "I", "PH", "PD", "HR", "HD", "R", "D", "CH"]
+
+    if scale_seeds !== nothing
+        @info "- Scaling initial seeds by factor $(scale_seeds)"
+        conditions₀ .= conditions₀ .* scale_seeds
+    end
 
     @debug "- Creating initial compartment dict using arrays of size ($(G), $(M), $(V))"
     init_compartments_dict = Dict{String, Array{Float64, NDIMS}}(label => zeros(G, M) for label in comp_coords)
@@ -264,6 +276,16 @@ function run_engine_io(engine::AbstractEngine, config::Dict, data_path::String, 
     epi_params = init_epidemic_parameters_struct(engine, G, M, T, G_coords, epi_params_dict)
 
     vac_params_dict = get(config, "vaccination", nothing)
+    scale_seeds = get(simulation_dict, "scale_seeds", nothing)
+    
+    # Validate scale_seeds if present
+    if scale_seeds !== nothing
+        if scale_seeds <= 0
+            @error "scale_seeds must be greater than 0, got: $(scale_seeds)"
+            exit(1)
+        end
+    end
+    
     initial_compartments_dict = nothing
     if input_format == "netcdf"
         try
@@ -279,7 +301,7 @@ function run_engine_io(engine::AbstractEngine, config::Dict, data_path::String, 
         @info "- Reading initial conditions (CSV) from: $(init_condition_path)"
         try
             conditions₀, patches_idxs = read_initial_csv_seeds(init_condition_path, G_coords)
-            initial_compartments_dict =  create_initial_compartments_dict(engine, M_coords, G_coords, population.nᵢᵍ, conditions₀, patches_idxs)
+            initial_compartments_dict =  create_initial_compartments_dict(engine, M_coords, G_coords, population.nᵢᵍ, conditions₀, patches_idxs; scale_seeds = scale_seeds)
         catch e 
             error_type = typeof(e)
             @error " - Exception while reading CSV file with initial condition: $(e)"
