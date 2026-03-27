@@ -1,46 +1,61 @@
 #!/bin/bash
 
-# Exit immediately if a command exits with a non-zero status.
+# LOCAL test runner to build and run all tests inside the container.
+# In CI, we separate build and testing into different steps using the runners.
+
 set -e
 
-# --- Configuration ---
-IMAGE_NAME="meprecisa/episim"
-TEST_OUTPUT_DIR="test_output"
-CONFIG_FILE="models/mitma/config_MMCACovid19.json"
-DATA_DIR="models/mitma"
-EXPECTED_OUTPUT_FILE="${TEST_OUTPUT_DIR}/output/observables.nc"
+# Configuration
+IMAGE_NAME="${DOCKER_IMAGE_NAME:-episim-validation}"
+OUTPUT_DIR="${TEST_OUTPUT_DIR:-test_output}"
+CLEANUP_IMAGES="${CLEANUP_IMAGES:-true}"
 
-# --- Main Script ---
-echo "--- Starting Docker Image Verification ---"
+# Function to cleanup Docker images
+cleanup_docker() {
+    if [ "$CLEANUP_IMAGES" = "true" ]; then
+        echo "Cleaning up Docker images..."
+        docker rmi $IMAGE_NAME 2>/dev/null || echo "Image $IMAGE_NAME not found for cleanup"
+    fi
+}
 
-# 1. Build the Docker image
-# echo "Building Docker image '$IMAGE_NAME'..."
-# docker build -t ${IMAGE_NAME} .
+# Set up trap for cleanup on exit
+trap cleanup_docker EXIT
 
-# 2. Create a clean directory for test output
-echo "Creating clean test output directory: '${TEST_OUTPUT_DIR}'..."
-rm -rf "${TEST_OUTPUT_DIR}"
-mkdir -p "${TEST_OUTPUT_DIR}"
-
-# 3. Run the simulation inside the container
-echo "Running simulation via Docker..."
-docker run --rm \
-  -v "$(pwd)/models:/app/models" \
-  -v "$(pwd)/${TEST_OUTPUT_DIR}:/app/${TEST_OUTPUT_DIR}" \
-  "${IMAGE_NAME}" \
-  episim run -c "/app/${CONFIG_FILE}" -d "/app/${DATA_DIR}" -i "/app/${TEST_OUTPUT_DIR}"
-
-# 4. Verify that the output file was created
-echo "Verifying simulation output..."
-if [ -f "${EXPECTED_OUTPUT_FILE}" ]; then
-    echo "✅ SUCCESS: Expected output file '${EXPECTED_OUTPUT_FILE}' was created."
-else
-    echo "❌ FAILURE: Expected output file was not found at '${EXPECTED_OUTPUT_FILE}'."
+echo "Building Docker image: $IMAGE_NAME"
+if ! docker build -t $IMAGE_NAME .; then
+    echo "❌ Docker build failed"
     exit 1
 fi
 
-# 5. Clean up the test directory
-echo "Cleaning up test directory..."
-rm -rf "${TEST_OUTPUT_DIR}"
+echo "Creating temporary output directory: $OUTPUT_DIR"
+mkdir -p $OUTPUT_DIR
 
-echo "--- Verification Complete. The image works as expected. ---"
+echo "Running Julia tests..."
+# Mount the local models/mitma directory to /data in the container
+# Mount the local test_output directory to /output in the container
+if docker run --rm \
+    -v "$(pwd)/models/mitma:/data" \
+    -v "$(pwd)/$OUTPUT_DIR:/output" \
+    $IMAGE_NAME julia --project test/runtests.jl; then
+    echo "✅ Julia tests PASSED"
+else
+    echo "❌ Julia tests FAILED"
+    exit 1
+fi
+
+echo "Running Python test suite..."
+# Run the full pytest suite in the Docker container
+if docker run --rm \
+    -v "$(pwd):/workspace" \
+    -v "$(pwd)/models/mitma:/data" \
+    -w /workspace \
+    $IMAGE_NAME \
+    bash -c "cd python && uv run pytest tests/ -v"; then
+    echo "✅ Python test suite PASSED"
+else
+    echo "❌ Python test suite FAILED"
+    exit 1
+fi
+
+echo "🎉 ALL TESTS PASSED"
+
