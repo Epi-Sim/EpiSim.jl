@@ -53,11 +53,10 @@ These variables represent the "raw" data that would be available in a real-world
 | `cases` | `(run_id, date, region_id)` | Reported cases with ascertainment bias (logistic ramp) and missing data (NaN for missing) |
 | `hospitalizations` | `(run_id, date, region_id)` | Reported hospitalizations with underreporting (rate ~0.85) and reporting delay (mean ~3 days, std ~1) |
 | `deaths` | `(run_id, date, region_id)` | Reported deaths with underreporting (rate ~0.90) and reporting delay (mean ~7 days, std ~2) |
-| `edar_biomarker_N1` | `(run_id, date, edar_id)` | Raw N1 gene target concentration with log-normal noise (sigma ~0.5) and censoring (LoD = 375) |
-| `edar_biomarker_N2` | `(run_id, date, edar_id)` | Raw N2 gene target concentration with log-normal noise (sigma ~0.8) and censoring (LoD = 500) |
-| `edar_biomarker_IP4` | `(run_id, date, edar_id)` | Raw IP4 gene target concentration with log-normal noise (sigma ~0.6) and censoring (LoD = 800) |
-| `edar_biomarker_*_censor_hints` | `(run_id, date, edar_id)` | Censoring flags: 0=observed, 1=censored, 2=missing (optional reference) |
-| `edar_biomarker_*_LoD` | `(run_id, edar_id)` | Limit of Detection values per EDAR (constant across runs) |
+| `edar_biomarker_N1` | `(run_id, date, edar_id)` | N1 gene target concentration in `log1p` space with log-normal noise, censoring, and NaN for missing measurements |
+| `edar_biomarker_N2` | `(run_id, date, edar_id)` | N2 gene target concentration in `log1p` space with log-normal noise, censoring, and NaN for missing measurements |
+| `edar_biomarker_IP4` | `(run_id, date, edar_id)` | IP4 gene target concentration in `log1p` space with log-normal noise, censoring, and NaN for missing measurements |
+| `limit_of_detection` | `(run_id, date, edar_id)` | Shared wastewater LoD threshold for the sampling event, stored in the same `log1p` space as biomarkers |
 | `mobility_base` | `(origin, target)` | Base mobility matrix (shared across all runs) - factorized format |
 | `mobility_kappa0` | `(run_id, date)` | Mobility reduction factor per run and date (κ₀) - factorized format |
 | `mobility_time_varying` | `(run_id, origin, target, date)` | Full time-varying mobility matrix per run (optional, large format) |
@@ -154,7 +153,9 @@ Wastewater uses **age-stratified shedding kernels**:
 
 | Variable | Shape | Description |
 |----------|-------|-------------|
-| `synthetic_sparsity_level` | `(run_id,)` | Missing data rate used (default: 0.05) |
+| `synthetic_sparsity_level` | `(run_id,)` | Realized joint missing fraction across `cases`, `hospitalizations`, `deaths`, and the three wastewater biomarker arrays after all missingness is applied |
+
+This is an aggregate availability metric computed from the final emitted arrays. It is not a per-modality calibration target; modality-specific missingness is controlled by the processor CLI.
 
 ### Scenario Metadata (for Analysis)
 
@@ -163,8 +164,8 @@ Wastewater uses **age-stratified shedding kernels**:
 | `synthetic_scenario_type` | `(run_id,)` | Scenario type: "Baseline", "Global_Timed", or "Local_Static" |
 | `synthetic_strength` | `(run_id,)` | Intervention strength (0.0 to 1.0) |
 | `synthetic_mobility_type` | `(run_id,)` | Mobility storage format: "factorized" or "time_varying" |
-| `synthetic_mobility_noise_sigma_O` | `(run_id,)` | Mobility noise sigma for origin marginals (0.0 if static) |
-| `synthetic_mobility_noise_sigma_D` | `(run_id,)` | Mobility noise sigma for destination marginals (0.0 if static) |
+| `synthetic_mobility_noise_sigma_O` | `(run_id,)` | Mobility noise sigma for origin marginals (0.0 if factorized) |
+| `synthetic_mobility_noise_sigma_D` | `(run_id,)` | Mobility noise sigma for destination marginals (0.0 if factorized) |
 | `synthetic_mobility_noise_factor` | `(run_id,)` | Combined mobility noise factor (max of σ_O and σ_D) |
 
 ### Optional Latent Targets
@@ -173,10 +174,10 @@ When the processor is run with `--include-latents`, the zarr also includes simul
 
 | Variable | Shape | Description |
 |----------|-------|-------------|
-| `latent_S_true`, `latent_E_true`, `latent_A_true`, `latent_I_true`, `latent_R_true`, `latent_D_true` | `(run_id, region_id, date)` | Aggregated latent compartments from the simulator |
-| `latent_CH_true` | `(run_id, region_id, date)` | Confined-population latent |
-| `latent_hospitalized_true` | `(run_id, region_id, date)` | `HR + HD` |
-| `latent_active_true` | `(run_id, region_id, date)` | `E + A + I + PH + PD + HR + HD` |
+| `latent_S_true`, `latent_E_true`, `latent_A_true`, `latent_I_true`, `latent_R_true`, `latent_D_true` | `(run_id, date, region_id)` | Aggregated latent compartments from the simulator |
+| `latent_CH_true` | `(run_id, date, region_id)` | Confined-population latent |
+| `latent_hospitalized_true` | `(run_id, date, region_id)` | `HR + HD` |
+| `latent_active_true` | `(run_id, date, region_id)` | `E + A + I + PH + PD + HR + HD` |
 
 These variables are intended for synthetic-only auxiliary supervision. They should not be treated as features available in a real-data deployment.
 
@@ -234,28 +235,22 @@ mobility_type = ds["synthetic_mobility_type"].isel(run_id=0).values
 ### NaN Conventions
 
 - **Missing data**: Represented as `NaN` (matches real-world format)
-- **Censored wastewater**: Values at LoD are set to LoD value (not NaN)
-- **Censoring hints**: Use `*_censor_hints` variables to identify censored vs. missing
+- **Censored wastewater**: Values at LoD are set to the exported `limit_of_detection` value (not NaN)
+- **Wastewater LoD**: `limit_of_detection` is the authoritative censoring reference and is stored in `log1p` space
 
 ```python
-# Separate missing from censored
+# Missing measurements are NaN; censored measurements equal the LoD threshold
 is_missing = np.isnan(ds["edar_biomarker_N1"].isel(run_id=0))
-is_censored = ds["edar_biomarker_N1_censor_hints"].isel(run_id=0) == 1
+is_censored = ds["edar_biomarker_N1"].isel(run_id=0) == ds["limit_of_detection"].isel(run_id=0)
 ```
 
 ### Wastewater Censoring
 
-Censoring uses a **probabilistic LoD** curve:
+Censoring uses one LoD threshold per `(run_id, date, edar_id)` sampling event. The same threshold is applied to N1, N2, and IP4 for that event.
 
-```python
-# Detection probability follows sigmoid curve
-detection_prob = sigmoid(k * (concentration - LoD))
-# where k is the lod_slope (default: 1.5)
-```
-
-- **Values below LoD**: Set to LoD (not zero) with censor_hints = 1
-- **Missing measurements**: Set to NaN with censor_hints = 2
-- **Above LoD**: Observed value with censor_hints = 0
+- **Values below LoD**: Set to LoD (not zero, not NaN)
+- **Missing measurements**: Set to NaN after censoring
+- **Above LoD**: Observed value
 
 ### Age Stratification
 
@@ -369,20 +364,19 @@ for scenario in ["Baseline", "Global_Timed", "Local_Static"]:
 ### Accessing Wastewater with Censoring
 
 ```python
-# Load N1 biomarker with censoring info
+# Load N1 biomarker with LoD info
 n1_conc = ds["edar_biomarker_N1"]  # (run_id, date, edar_id)
-n1_censor = ds["edar_biomarker_N1_censor_hints"]  # (run_id, date, edar_id)
-n1_lod = ds["edar_biomarker_N1_LoD"]  # (run_id, edar_id)
+n1_lod = ds["limit_of_detection"]  # (run_id, date, edar_id), log1p space
 
 # For a specific run
 run_idx = 0
 n1_run = n1_conc.isel(run_id=run_idx)
-censor_run = n1_censor.isel(run_id=run_idx)
+lod_run = n1_lod.isel(run_id=run_idx)
 
-# Separate observed, censored, and missing
-observed_mask = censor_run == 0
-censored_mask = censor_run == 1
-missing_mask = censor_run == 2
+# Separate observed, censored, and missing in log1p space
+missing_mask = np.isnan(n1_run)
+censored_mask = n1_run == lod_run
+observed_mask = (~missing_mask) & (~censored_mask)
 
 print(f"Observed: {observed_mask.sum().values}")
 print(f"Censored: {censored_mask.sum().values}")

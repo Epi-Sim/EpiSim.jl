@@ -103,10 +103,10 @@ Creates **raw-ish** observations that mimic real-world data sources, with config
 | `mobility_kappa0` | `(run_id, date)` | Mobility reduction factor per run and date (κ₀) - factorized format |
 | `mobility_time_varying` | `(run_id, origin, target, date)` | Full time-varying mobility matrix per run (optional, large format) |
 | `population` | `(run_id, region_id)` | Static population per region |
-| `edar_biomarker_N1` | `(run_id, date, edar_id)` | Raw N1 wastewater concentration (NaN for censored/missing) |
-| `edar_biomarker_N2` | `(run_id, date, edar_id)` | Raw N2 wastewater concentration (NaN for censored/missing) |
-| `edar_biomarker_IP4` | `(run_id, date, edar_id)` | Raw IP4 wastewater concentration (NaN for censored/missing) |
-| `edar_biomarker_*_censor_hints` | `(run_id, date, edar_id)` | Censoring hints: 0=observed, 1=censored, 2=missing (optional reference) |
+| `edar_biomarker_N1` | `(run_id, date, edar_id)` | N1 wastewater concentration in `log1p` space; censored values are set to LoD and missing measurements are NaN |
+| `edar_biomarker_N2` | `(run_id, date, edar_id)` | N2 wastewater concentration in `log1p` space; censored values are set to LoD and missing measurements are NaN |
+| `edar_biomarker_IP4` | `(run_id, date, edar_id)` | IP4 wastewater concentration in `log1p` space; censored values are set to LoD and missing measurements are NaN |
+| `limit_of_detection` | `(run_id, date, edar_id)` | Shared wastewater LoD threshold in `log1p` space for the sampling event |
 
 **Note:** Mobility is stored in two possible formats:
 
@@ -130,10 +130,10 @@ The `synthetic_mobility_type` metadata variable indicates which format is used f
 | `infections_true` | `(run_id, region_id, date)` | Daily infections (sum over ages) |
 | `hospitalizations_true` | `(run_id, region_id, date)` | Daily hospitalizations |
 | `deaths_true` | `(run_id, region_id, date)` | Daily deaths |
-| `latent_S_true`, `latent_E_true`, `latent_A_true`, `latent_I_true`, `latent_R_true`, `latent_D_true` | `(run_id, region_id, date)` | Optional latent simulator states exported from `compartments_full.nc` for hybrid supervision |
-| `latent_CH_true` | `(run_id, region_id, date)` | Optional confined-population latent target |
-| `latent_hospitalized_true` | `(run_id, region_id, date)` | Optional latent hospital occupancy target (`HR + HD`) |
-| `latent_active_true` | `(run_id, region_id, date)` | Optional latent active-burden target (`E + A + I + PH + PD + HR + HD`) |
+| `latent_S_true`, `latent_E_true`, `latent_A_true`, `latent_I_true`, `latent_R_true`, `latent_D_true` | `(run_id, date, region_id)` | Optional latent simulator states exported from `compartments_full.nc` for hybrid supervision |
+| `latent_CH_true` | `(run_id, date, region_id)` | Optional confined-population latent target |
+| `latent_hospitalized_true` | `(run_id, date, region_id)` | Optional latent hospital occupancy target (`HR + HD`) |
+| `latent_active_true` | `(run_id, date, region_id)` | Optional latent active-burden target (`E + A + I + PH + PD + HR + HD`) |
 
 Latent targets are synthetic-only. They are not available in real-data settings, but can be used as auxiliary training targets or regularizers for hybrid deep learning / mechanistic models. Enable them with `--include-latents` when running `python/process_synthetic_outputs.py` or `python/run_synthetic_pipeline.py`.
 
@@ -143,8 +143,10 @@ Latent targets are synthetic-only. They are not available in real-data settings,
 | --- | --- | --- |
 | `synthetic_scenario_type` | `(run_id,)` | Scenario type (Baseline, Global_Timed, Local_Static) |
 | `synthetic_strength` | `(run_id,)` | Intervention strength (0.0 to 1.0) |
-| `synthetic_sparsity_level` | `(run_id,)` | Missing data rate used |
+| `synthetic_sparsity_level` | `(run_id,)` | Realized joint missing fraction across raw observation variables after missingness is applied |
 | `synthetic_mobility_type` | `(run_id,)` | Mobility storage format ("factorized" or "time_varying") |
+
+`synthetic_sparsity_level` is computed from the final emitted arrays: `1 - finite_observation_count / total_observation_count` over `cases`, `hospitalizations`, `deaths`, `edar_biomarker_N1`, `edar_biomarker_N2`, and `edar_biomarker_IP4`. It is an aggregate realized availability metric, not a per-modality calibration target.
 
 #### Cases Reporting Noise Metadata
 
@@ -184,12 +186,12 @@ Latent targets are synthetic-only. They are not available in real-data settings,
 1.  **Configurable Missing Data Patterns**:
     *   **Random sparse missing**: Scattered individual missing values (NaN)
     *   **Gap-based missing**: Consecutive day gaps (e.g., system outages)
-    *   Configurable via `--missing-rate` and `--missing-gap-length`
+    *   Configurable per modality via `--cases-missing-rate`, `--hosp-missing-rate`, `--deaths-missing-rate`, `--ww-missing-rate` and the matching `--*-missing-gap-length` flags
 
 2.  **Wastewater Censoring**:
-    *   **Probabilistic LoD**: Uses logistic probability curve for detection near limit
-    *   **Missing measurements**: 2% of measurements marked as missing (NaN)
-    *   **Censor hints**: Optional flags for reference (EpiForecaster may recompute)
+    *   **Single LoD surface**: One `limit_of_detection` threshold per `(run_id, date, edar_id)` sampling event
+    *   **Censored values**: Values below LoD are stored at the LoD threshold, not as NaN
+    *   **Missing measurements**: Explicit missing wastewater measurements are stored as NaN
 
 3.  **Mobility Compression**:
     *   **Factorized Format**: Stored as `mobility_base` + `mobility_kappa0` (memory-efficient)
@@ -204,7 +206,7 @@ Latent targets are synthetic-only. They are not available in real-data settings,
     *   Matches EpiForecaster's expected input format
     *   `cases`, `mobility`, `population` use same names as real data
     *   `edar_biomarker_*` matches EpiForecaster's processed output format
-    *   `*_censor_hints` suffix indicates optional reference data
+    *   `limit_of_detection` is the authoritative wastewater censoring reference
 
 #### Wastewater Physics Model
 
@@ -379,15 +381,23 @@ For compatibility with existing workflows, the original single-phase pipeline is
         --metapop-csv ../models/mitma/metapopulation_data.csv \
         --edar-edges ../edar_muni_edges.nc \
         --output ../runs/synthetic_test/raw_synthetic_observations.zarr \
-        --missing-rate 0.05 \
-        --missing-gap-length 3 \
+        --cases-missing-rate 0.72 \
+        --hosp-missing-rate 0.89 \
+        --deaths-missing-rate 0.58 \
+        --ww-missing-rate 0.95 \
         --compressor zstd \
         --compressor-level 3
     ```
 
-    **Noise Parameters** (for curriculum progression):
-    *   `--missing-rate`: Fraction of data to make missing (default: 0.05)
-    *   `--missing-gap-length`: Average length of missing data gaps (default: 3 days)
+    **Missingness Parameters**:
+    *   `--cases-missing-rate`: Fraction of case observations to make missing (default: 0.72)
+    *   `--cases-missing-gap-length`: Typical case missing-data gap length (default: 3 days)
+    *   `--hosp-missing-rate`: Fraction of hospitalization observations to make missing (default: 0.89)
+    *   `--hosp-missing-gap-length`: Typical hospitalization missing-data gap length (default: 3 days)
+    *   `--deaths-missing-rate`: Fraction of death observations to make missing (default: 0.58)
+    *   `--deaths-missing-gap-length`: Typical death missing-data gap length (default: 3 days)
+    *   `--ww-missing-rate`: Fraction of wastewater sampling events to make missing (default: 0.95)
+    *   `--ww-missing-gap-length`: Typical wastewater missing-data gap length (default: 7 days)
 
     **Cases Reporting Noise**:
     *   `--min-rate`: Minimum cases ascertainment rate (default: 0.05)
