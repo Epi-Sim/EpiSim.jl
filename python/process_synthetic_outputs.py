@@ -16,34 +16,34 @@ Output format:
         Note: Raw wastewater values are log1p-transformed (log1p(concentration)) to enable efficient
         float16 storage. Raw values can be 150k+ which exceeds float16 max (65504).
         Example: log1p(150000) ≈ 11.9, log1p(375) ≈ 5.93 (LoD for N1)
-    edar_biomarker_*_censor_hints: (run_id, date, edar_id) - Censoring hints (0=observed, 1=censored, 2=missing)
+    limit_of_detection_N1, limit_of_detection_N2, limit_of_detection_IP4: (run_id, date, edar_id) - Per-target wastewater LoD threshold in log1p space
 
     # Mobility: Two storage formats depending on mobility type
-    # When all runs are static (default, memory-efficient):
+    # When all runs are factorized (default, memory-efficient):
     mobility_base: (origin, target) - Base mobility matrix (shared across all runs)
     mobility_kappa0: (run_id, date) - Mobility reduction factor per run and date
         Reconstructed as: mobility[run, date] = mobility_base * (1 - mobility_kappa0[run, date])
-    synthetic_mobility_type: (run_id,) - All "static"
+    synthetic_mobility_type: (run_id,) - All "factorized"
 
     # When any run has time-varying mobility (mobility_sigma_O/D > 0):
     mobility_time_varying: (run_id, origin, target, date) - Dense OD matrices for each timestep
-    synthetic_mobility_type: (run_id,) - "static" or "time_varying" per run
+    synthetic_mobility_type: (run_id,) - "factorized" or "time_varying" per run
 
     population: (run_id, region_id) - Static population (matches EpiForecaster input)
 
     # Ground truth for evaluation (not passed to preprocessor)
-    infections_true: (run_id, date, region_id)
-    hospitalizations_true: (run_id, date, region_id)
-    deaths_true: (run_id, date, region_id)
+    infections_true: (run_id, region_id, date)
+    hospitalizations_true: (run_id, region_id, date)
+    deaths_true: (run_id, region_id, date)
     latent_S_true, latent_E_true, latent_A_true, latent_I_true, latent_R_true, latent_D_true:
-        (run_id, region_id, date) - Optional latent simulator states for hybrid supervision
+        (run_id, date, region_id) - Optional latent simulator states for hybrid supervision
     latent_CH_true, latent_hospitalized_true, latent_active_true:
-        (run_id, region_id, date) - Optional auxiliary latent targets
+        (run_id, date, region_id) - Optional auxiliary latent targets
 
     # Synthetic metadata (for reference, not used by preprocessor)
     synthetic_scenario_type: (run_id,) - Scenario type (Baseline, Global_Timed, Local_Static)
     synthetic_strength: (run_id,) - Intervention strength
-    synthetic_sparsity_level: (run_id,) - Missing data rate used
+    synthetic_sparsity_level: (run_id,) - Realized joint missing fraction across raw observation variables
 """
 
 import argparse
@@ -51,7 +51,7 @@ import json
 import logging
 import os
 import re
-import sys
+import subprocess
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional
@@ -59,7 +59,6 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 import xarray as xr
-from scipy.special import expit
 
 from synthetic_observations import (
     DEFAULT_DEATHS_REPORT_CONFIG,
@@ -85,12 +84,23 @@ LATENT_ZARR_VARS = (
     "latent_E_true",
     "latent_A_true",
     "latent_I_true",
+    "latent_PH_true",
+    "latent_PD_true",
+    "latent_HR_true",
+    "latent_HD_true",
     "latent_R_true",
     "latent_D_true",
     "latent_CH_true",
     "latent_hospitalized_true",
     "latent_active_true",
 )
+
+DEFAULT_CASES_MISSING_RATE = 0.72
+DEFAULT_HOSP_MISSING_RATE = 0.89
+DEFAULT_DEATHS_MISSING_RATE = 0.58
+DEFAULT_WW_MISSING_RATE = 0.95
+DEFAULT_CLINICAL_MISSING_GAP_LENGTH = 3
+DEFAULT_WW_MISSING_GAP_LENGTH = 7
 
 
 def safe_convert_dtype(arr: np.ndarray, dtype_str: str, var_name: str) -> np.ndarray:
@@ -134,6 +144,19 @@ def transform_wastewater_log1p(arr: np.ndarray) -> np.ndarray:
     """
     log_arr = np.log1p(arr)
     return log_arr.astype(np.float16)
+
+
+def compute_realized_joint_sparsity(observation_arrays: list[np.ndarray]) -> float:
+    """Compute missing fraction over final emitted raw observation arrays."""
+    finite_count = 0
+    total_count = 0
+    for arr in observation_arrays:
+        values = np.asarray(arr)
+        finite_count += int(np.count_nonzero(np.isfinite(values)))
+        total_count += int(values.size)
+    if total_count == 0:
+        return np.nan
+    return 1.0 - finite_count / total_count
 
 
 def sanitize_run_id(run_dir_name: str, max_length: int = 50) -> str:
@@ -277,6 +300,10 @@ def load_compartment_latents(compartments_path: Path) -> dict[str, np.ndarray]:
         "latent_E_true": states["E"].sum(axis=2),
         "latent_A_true": states["A"].sum(axis=2),
         "latent_I_true": states["I"].sum(axis=2),
+        "latent_PH_true": states["PH"].sum(axis=2),
+        "latent_PD_true": states["PD"].sum(axis=2),
+        "latent_HR_true": states["HR"].sum(axis=2),
+        "latent_HD_true": states["HD"].sum(axis=2),
         "latent_R_true": states["R"].sum(axis=2),
         "latent_D_true": states["D"].sum(axis=2),
         "latent_CH_true": states["CH"].sum(axis=2),
@@ -305,7 +332,6 @@ def init_worker(region_ids, population_vector, emap_data, gene_targets, reported
 
 def process_single_run(
     run_dir_path: str,
-    sparsity: float,
     seed: Optional[int] = None,
 ) -> Optional[dict]:
     """
@@ -316,7 +342,6 @@ def process_single_run(
 
     Args:
         run_dir_path: Path to run directory as string
-        sparsity: Sparsity level for this run
         seed: Random seed for reproducibility
 
     Returns:
@@ -345,7 +370,7 @@ def process_single_run(
     infections_total = infections_stratified.sum(axis=2)
     hospitalizations = load_hospitalizations(observables_path)
     deaths = load_deaths(observables_path)
-    include_latents = args_dict.get("include_latents", False)
+    include_latents = args_dict.get("include_latents", True)
     latents = (
         load_compartment_latents(compartments_path) if include_latents else None
     )
@@ -371,23 +396,14 @@ def process_single_run(
     reported_cases, _ = generate_reported_cases(
         infections_total, config=reported_cfg, rng=case_rng
     )
-    cases_with_gaps, cases_mask = apply_missing_data_patterns(
-        reported_cases.T,
-        missing_rate=sparsity,
-        missing_gap_length=args_dict.get("missing_gap_length", 3),
+    cases_with_gaps, _ = apply_missing_data_patterns(
+        reported_cases,
+        missing_rate=args_dict.get("cases_missing_rate", DEFAULT_CASES_MISSING_RATE),
+        missing_gap_length=args_dict.get(
+            "cases_missing_gap_length", DEFAULT_CLINICAL_MISSING_GAP_LENGTH
+        ),
         rng=case_rng,
     )
-
-    # Generate age-stratified reported cases
-    n_time, n_regions, n_age_groups = infections_stratified.shape
-    cases_age_stratified = np.zeros((n_time, n_regions, n_age_groups), dtype=int)
-    for g in range(n_age_groups):
-        reported_cases_g, _ = generate_reported_cases(
-            infections_stratified[:, :, g],
-            config=reported_cfg,
-            rng=np.random.default_rng(case_rng.integers(0, 2**32 - 1)),
-        )
-        cases_age_stratified[:, :, g] = reported_cases_g
 
     # Generate wastewater
     if emap_data is not None:
@@ -403,14 +419,17 @@ def process_single_run(
             delay_std=args_dict.get("monitoring_delay_std", 0),
             rng=ww_rng,
         )
-        ww_by_edar, censor_by_edar = generate_wastewater_with_censoring(
+        ww_by_edar, lod_by_edar = generate_wastewater_with_censoring(
             infections_edar_strat,
             population_edar,
             gene_targets,
             wastewater_cfg,
             rng=ww_rng,
             monitoring_mask=monitoring_mask,
-            missing_rate=sparsity,
+            missing_rate=args_dict.get("ww_missing_rate", DEFAULT_WW_MISSING_RATE),
+            missing_gap_length=args_dict.get(
+                "ww_missing_gap_length", DEFAULT_WW_MISSING_GAP_LENGTH
+            ),
         )
     else:
         from synthetic_observations import _compute_monitoring_start_mask
@@ -422,14 +441,17 @@ def process_single_run(
             delay_std=args_dict.get("monitoring_delay_std", 0),
             rng=ww_rng,
         )
-        ww_by_edar, censor_by_edar = generate_wastewater_with_censoring(
+        ww_by_edar, lod_by_edar = generate_wastewater_with_censoring(
             infections_stratified,
             population_vector,
             gene_targets,
             wastewater_cfg,
             rng=ww_rng,
             monitoring_mask=monitoring_mask,
-            missing_rate=sparsity,
+            missing_rate=args_dict.get("ww_missing_rate", DEFAULT_WW_MISSING_RATE),
+            missing_gap_length=args_dict.get(
+                "ww_missing_gap_length", DEFAULT_WW_MISSING_GAP_LENGTH
+            ),
         )
 
     # Generate reported hospitalizations and deaths
@@ -440,11 +462,27 @@ def process_single_run(
         delay_std=args_dict.get("hosp_delay_std", 1),
         rng=hosp_rng,
     )
+    reported_hospitalizations, _ = apply_missing_data_patterns(
+        reported_hospitalizations,
+        missing_rate=args_dict.get("hosp_missing_rate", DEFAULT_HOSP_MISSING_RATE),
+        missing_gap_length=args_dict.get(
+            "hosp_missing_gap_length", DEFAULT_CLINICAL_MISSING_GAP_LENGTH
+        ),
+        rng=hosp_rng,
+    )
     reported_deaths = generate_reported_with_delay(
         deaths,
         report_rate=args_dict.get("deaths_report_rate", 0.90),
         delay_mean=args_dict.get("deaths_delay_mean", 7),
         delay_std=args_dict.get("deaths_delay_std", 2),
+        rng=deaths_rng,
+    )
+    reported_deaths, _ = apply_missing_data_patterns(
+        reported_deaths,
+        missing_rate=args_dict.get("deaths_missing_rate", DEFAULT_DEATHS_MISSING_RATE),
+        missing_gap_length=args_dict.get(
+            "deaths_missing_gap_length", DEFAULT_CLINICAL_MISSING_GAP_LENGTH
+        ),
         rng=deaths_rng,
     )
 
@@ -454,7 +492,7 @@ def process_single_run(
 
     # Determine mobility type
     mobility_npz_path = run_dir / "mobility" / "mobility_series.npz"
-    mobility_type = "time_varying" if mobility_npz_path.exists() else "static"
+    mobility_type = "time_varying" if mobility_npz_path.exists() else "factorized"
     sigma_O, sigma_D = load_mobility_noise_params(run_dir)
 
     # Parse metadata
@@ -470,15 +508,13 @@ def process_single_run(
         infections_true=infections_total.T.astype(int),
         hospitalizations_true=hospitalizations.T.astype(int),
         deaths_true=deaths.T.astype(int),
-        hospitalizations_raw=reported_hospitalizations.T.astype(int),
-        deaths_raw=reported_deaths.T.astype(int),
+        hospitalizations_raw=reported_hospitalizations.astype(float),
+        deaths_raw=reported_deaths.astype(float),
         cases_raw=cases_with_gaps.astype(float),
-        cases_mask=cases_mask.astype(float),
-        cases_age=cases_age_stratified.astype(int),
         wastewater_raw=ww_by_edar.astype(float),
-        wastewater_censor=censor_by_edar.astype(np.int8),
+        limit_of_detection=lod_by_edar.astype(float),
         mobility_kappa0=kappa0_series.astype(float),
-        **({name: values for name, values in latents.items()} if latents else {}),
+        **(dict(latents) if latents else {}),
     )
 
     return {
@@ -486,7 +522,6 @@ def process_single_run(
         "run_id": sanitize_run_id(run_dir.name),
         "scenario_type": scenario_type,
         "strength": strength,
-        "sparsity": sparsity,
         "dates": dates,
         "mobility_type": mobility_type,
         "mobility_sigma_O": sigma_O,
@@ -551,16 +586,16 @@ def apply_missing_data_patterns(
     rng: Optional[np.random.Generator] = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    Apply realistic missing data patterns to observations.
+    Apply realistic missing data patterns to date-major observations.
 
     Simulates:
     1. Random missing values (sparse, distributed)
     2. Gap-based missing data (consecutive days, e.g., system outages)
 
     Args:
-        data: Input data array (time, regions) or (time,)
+        data: Input data array (date, region) or (date,)
         missing_rate: Fraction of data to make missing
-        missing_gap_length: Average length of missing gaps
+        missing_gap_length: Typical length of temporal missing gaps
         rng: Random number generator
 
     Returns:
@@ -568,40 +603,78 @@ def apply_missing_data_patterns(
         mask: 1.0 where observed, 0.0 where missing
     """
     rng = rng or np.random.default_rng()
+    if not 0.0 <= missing_rate <= 1.0:
+        raise ValueError(f"missing_rate must be in [0, 1], got {missing_rate}")
+    if missing_gap_length < 1:
+        raise ValueError(
+            f"missing_gap_length must be a positive integer, got {missing_gap_length}"
+        )
 
     data_with_gaps = data.copy().astype(float)
-    mask = np.ones_like(data_with_gaps, dtype=float)
 
     if data.ndim == 1:
         data_with_gaps = data_with_gaps[:, None]
-        mask = mask[:, None]
         squeeze_output = True
-    else:
+    elif data.ndim == 2:
         squeeze_output = False
+    else:
+        raise ValueError(
+            f"apply_missing_data_patterns expects a 1D or 2D date-major array, got shape {data.shape}"
+        )
+
+    mask = np.isfinite(data_with_gaps).astype(float)
+
+    if missing_rate == 0.0:
+        if squeeze_output:
+            return data_with_gaps[:, 0], mask[:, 0]
+        return data_with_gaps, mask
 
     n_time, n_regions = data_with_gaps.shape
+    finite_positions = np.argwhere(np.isfinite(data_with_gaps))
+    n_finite = len(finite_positions)
+    if n_finite == 0:
+        if squeeze_output:
+            return data_with_gaps[:, 0], mask[:, 0]
+        return data_with_gaps, mask
 
-    # Pattern 1: Random sparse missing values
-    n_random_missing = int(n_time * n_regions * missing_rate * 0.5)
-    if n_random_missing > 0:
-        random_indices = rng.choice(n_time * n_regions, n_random_missing, replace=False)
-        random_t, random_r = np.unravel_index(random_indices, (n_time, n_regions))
-        data_with_gaps[random_t, random_r] = np.nan
-        mask[random_t, random_r] = 0.0
+    target_missing = min(n_finite, round(n_finite * missing_rate))
+    if target_missing == 0:
+        if squeeze_output:
+            return data_with_gaps[:, 0], mask[:, 0]
+        return data_with_gaps, mask
 
-    # Pattern 2: Gap-based missing (e.g., weekend gaps, system outages)
-    n_gaps = int(n_time * missing_rate * 0.5 / missing_gap_length) + 1
-    for _ in range(n_gaps):
-        gap_start = rng.integers(0, max(1, n_time - missing_gap_length))
-        gap_length = rng.integers(1, missing_gap_length * 2 + 1)
+    missing_added = 0
+    gap_target = round(target_missing * 0.75)
+    attempts = 0
+    max_attempts = max(20, target_missing * 20)
+
+    # Temporal gaps are region-specific consecutive dates in the date-major array.
+    while missing_added < gap_target and attempts < max_attempts:
+        attempts += 1
+        region = int(rng.integers(0, n_regions))
+        gap_start = int(rng.integers(0, n_time))
+        gap_length = int(rng.integers(1, missing_gap_length * 2 + 1))
         gap_end = min(n_time, gap_start + gap_length)
+        gap_slice = data_with_gaps[gap_start:gap_end, region]
+        newly_missing = np.isfinite(gap_slice)
+        if not np.any(newly_missing):
+            continue
+        missing_added += int(np.count_nonzero(newly_missing))
+        data_with_gaps[gap_start:gap_end, region] = np.nan
 
-        # Apply gap to a random subset of regions
-        n_regions_affected = rng.integers(1, max(2, n_regions // 10))
-        regions_affected = rng.choice(n_regions, n_regions_affected, replace=False)
+    remaining = target_missing - int(np.count_nonzero(~np.isfinite(data_with_gaps) & (mask == 1.0)))
+    if remaining > 0:
+        remaining_positions = np.argwhere(np.isfinite(data_with_gaps))
+        if len(remaining_positions) > 0:
+            chosen = rng.choice(
+                len(remaining_positions),
+                size=min(remaining, len(remaining_positions)),
+                replace=False,
+            )
+            chosen_positions = remaining_positions[chosen]
+            data_with_gaps[chosen_positions[:, 0], chosen_positions[:, 1]] = np.nan
 
-        data_with_gaps[gap_start:gap_end, regions_affected] = np.nan
-        mask[gap_start:gap_end, regions_affected] = 0.0
+    mask = np.isfinite(data_with_gaps).astype(float)
 
     if squeeze_output:
         return data_with_gaps[:, 0], mask[:, 0]
@@ -616,9 +689,10 @@ def generate_wastewater_with_censoring(
     rng: Optional[np.random.Generator] = None,
     monitoring_mask: Optional[np.ndarray] = None,
     missing_rate: float = 0.02,
+    missing_gap_length: int = DEFAULT_WW_MISSING_GAP_LENGTH,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    Generate wastewater observations with censoring flags.
+    Generate wastewater observations with per-target LoD censoring.
 
     Args:
         infections_stratified: (Time, Region, AgeGroups) array of infections
@@ -627,28 +701,24 @@ def generate_wastewater_with_censoring(
         wastewater_cfg: Dict of wastewater generation parameters
         rng: Random number generator
         monitoring_mask: (Time, Region) bool array for delayed monitoring
-        missing_rate: Fraction of wastewater data to make missing (default: 0.02)
+        missing_rate: Fraction of wastewater sampling events to make missing
+        missing_gap_length: Typical length of temporal missing gaps
 
     Returns:
         wastewater: (Time, Region, Target) array of observations
-        censor_flags: (Time, Region, Target) array of flags
-            0 = observed (above LoD)
-            1 = censored (below LoD, but measurement exists)
-            2 = missing (no measurement)
-            3 = not yet monitoring (pre-threshold)
+        limit_of_detection: (Time, Region, Target) per-target LoD values
     """
     rng = rng or np.random.default_rng()
     n_time, n_regions = infections_stratified.shape[0], infections_stratified.shape[1]
     n_targets = len(gene_targets)
 
     wastewater = np.zeros((n_time, n_regions, n_targets), dtype=float)
-    censor_flags = np.zeros((n_time, n_regions, n_targets), dtype=np.int8)
+    limit_of_detection = np.zeros((n_time, n_regions, n_targets), dtype=float)
 
     for i, (_, target_config) in enumerate(gene_targets.items()):
+        target_lod = float(target_config.get("limit_of_detection", 0.0))
         cfg = {**wastewater_cfg, **target_config}
 
-        # Generate raw wastewater signal (without LoD applied)
-        # Temporarily disable LoD to get the raw signal
         cfg_no_lod = cfg.copy()
         cfg_no_lod["limit_of_detection"] = 0.0
         cfg_no_lod["lod_probabilistic"] = False
@@ -661,39 +731,22 @@ def generate_wastewater_with_censoring(
             monitoring_mask=monitoring_mask,
         )
 
-        lod = cfg["limit_of_detection"]
-
-        # Apply censoring
-        if cfg["lod_probabilistic"] and lod > 0.0:
-            k = cfg.get("lod_slope", 2.0)
-            # Use numerically stable sigmoid (expit) to avoid overflow
-            # detection_prob = 1 / (1 + exp(-k * (ww_signal - lod)))
-            # = sigmoid(k * (ww_signal - lod))
-            detection_prob = expit(k * (ww_signal - lod))
-            is_detected = rng.random(size=ww_signal.shape) < detection_prob
-            censor_flags[:, :, i] = np.where(is_detected, 0, 1)
-            ww_signal[~is_detected] = lod  # Set censored values to LoD (not NaN)
-        elif lod > 0.0:
-            censor_flags[:, :, i] = np.where(ww_signal >= lod, 0, 1)
-            ww_signal[ww_signal < lod] = lod  # Set censored values to LoD (not NaN)
-        else:
-            censor_flags[:, :, i] = 0  # All observed
-
-        # Add some missing data (use parameterizable rate)
-        missing_mask = rng.random(ww_signal.shape) < missing_rate
-        ww_signal[missing_mask] = np.nan
-        censor_flags[missing_mask] = 2  # Missing flag
-
-        # Apply monitoring mask to censor flags (value 3 = not yet monitoring)
-        if monitoring_mask is not None:
-            # monitoring_mask shape: (Time, Region)
-            # censor_flags[:, :, i] shape: (Time, Region)
-            # Set pre-threshold values to 3
-            censor_flags[:, :, i][~monitoring_mask] = 3
+        limit_of_detection[:, :, i] = target_lod
+        observed = np.isfinite(ww_signal)
+        censored = observed & (ww_signal < target_lod)
+        ww_signal[censored] = target_lod
 
         wastewater[:, :, i] = ww_signal
 
-    return wastewater, censor_flags
+    _, measurement_mask = apply_missing_data_patterns(
+        np.ones((n_time, n_regions), dtype=float),
+        missing_rate=missing_rate,
+        missing_gap_length=missing_gap_length,
+        rng=rng,
+    )
+    wastewater[measurement_mask == 0.0, :] = np.nan
+
+    return wastewater, limit_of_detection
 
 
 def resolve_kappa0_path(config: dict, run_dir: Path):
@@ -881,26 +934,37 @@ def write_mobility_time_varying_to_zarr(
             valid_edge_mask = (src < n_regions) & (tgt < n_regions)
             src_valid = src[valid_edge_mask]
             tgt_valid = tgt[valid_edge_mask]
+            flat_indices = src_valid * n_regions + tgt_valid
             t_available = min(R_series.shape[0], n_dates)
+            for chunk_start in range(0, n_dates, date_chunk):
+                chunk_end = min(chunk_start + date_chunk, n_dates)
+                chunk_len = chunk_end - chunk_start
+                block = np.zeros((n_regions, n_regions, chunk_len), dtype=np.float16)
 
-            frame = np.zeros((n_regions, n_regions), dtype=np.float16)
-            for t in range(n_dates):
-                frame.fill(0.0)
-                if t < t_available:
-                    frame[src_valid, tgt_valid] = R_series[t, valid_edge_mask].astype(
-                        np.float16
-                    )
-                mobility_arr[global_run_idx, :, :, t] = frame
+                if chunk_start < t_available:
+                    available_end = min(chunk_end, t_available)
+                    available_len = available_end - chunk_start
+                    if available_len > 0:
+                        block.reshape(-1, chunk_len)[flat_indices, :available_len] = (
+                            R_series[chunk_start:available_end, valid_edge_mask]
+                            .T.astype(np.float16)
+                        )
+
+                mobility_arr[global_run_idx, :, :, chunk_start:chunk_end] = block
         else:
-            frame = np.empty((n_regions, n_regions), dtype=np.float16)
-            for t in range(n_dates):
-                np.multiply(
-                    base_mobility,
-                    np.float16(1.0 - mobility_kappa0_arr[local_run_idx, t]),
-                    out=frame,
+            for chunk_start in range(0, n_dates, date_chunk):
+                chunk_end = min(chunk_start + date_chunk, n_dates)
+                scales = np.float16(
+                    1.0 - mobility_kappa0_arr[local_run_idx, chunk_start:chunk_end]
+                )
+                block = np.multiply(
+                    base_mobility.astype(np.float16, copy=False)[:, :, np.newaxis],
+                    scales[np.newaxis, np.newaxis, :],
                     casting="unsafe",
                 )
-                mobility_arr[global_run_idx, :, :, t] = frame
+                if block.dtype != np.float16:
+                    block = block.astype(np.float16)
+                mobility_arr[global_run_idx, :, :, chunk_start:chunk_end] = block
 
         logger.info(
             "Wrote mobility_time_varying for run %s (%s)",
@@ -1053,16 +1117,63 @@ def main():
         help="Output path for zarr store",
     )
     parser.add_argument(
-        "--missing-rate",
-        type=float,
-        default=0.05,
-        help="Fraction of case data to make missing (default: 0.05)",
+        "--nvme-output",
+        type=str,
+        default=None,
+        help="If provided, write zarr output to this NVMe path first, then rsync to final --output location",
     )
     parser.add_argument(
-        "--missing-gap-length",
+        "--skip-rsync",
+        action="store_true",
+        help="Skip the final rsync from NVMe to GPFS (useful when orchestrator handles rsync)",
+    )
+    parser.add_argument(
+        "--cases-missing-rate",
+        type=float,
+        default=DEFAULT_CASES_MISSING_RATE,
+        help=f"Fraction of case observations to make missing (default: {DEFAULT_CASES_MISSING_RATE})",
+    )
+    parser.add_argument(
+        "--cases-missing-gap-length",
         type=int,
-        default=3,
-        help="Average length of missing data gaps in days (default: 3)",
+        default=DEFAULT_CLINICAL_MISSING_GAP_LENGTH,
+        help=f"Typical case missing-data gap length in days (default: {DEFAULT_CLINICAL_MISSING_GAP_LENGTH})",
+    )
+    parser.add_argument(
+        "--hosp-missing-rate",
+        type=float,
+        default=DEFAULT_HOSP_MISSING_RATE,
+        help=f"Fraction of hospitalization observations to make missing (default: {DEFAULT_HOSP_MISSING_RATE})",
+    )
+    parser.add_argument(
+        "--hosp-missing-gap-length",
+        type=int,
+        default=DEFAULT_CLINICAL_MISSING_GAP_LENGTH,
+        help=f"Typical hospitalization missing-data gap length in days (default: {DEFAULT_CLINICAL_MISSING_GAP_LENGTH})",
+    )
+    parser.add_argument(
+        "--deaths-missing-rate",
+        type=float,
+        default=DEFAULT_DEATHS_MISSING_RATE,
+        help=f"Fraction of death observations to make missing (default: {DEFAULT_DEATHS_MISSING_RATE})",
+    )
+    parser.add_argument(
+        "--deaths-missing-gap-length",
+        type=int,
+        default=DEFAULT_CLINICAL_MISSING_GAP_LENGTH,
+        help=f"Typical death missing-data gap length in days (default: {DEFAULT_CLINICAL_MISSING_GAP_LENGTH})",
+    )
+    parser.add_argument(
+        "--ww-missing-rate",
+        type=float,
+        default=DEFAULT_WW_MISSING_RATE,
+        help=f"Fraction of wastewater sampling events to make missing (default: {DEFAULT_WW_MISSING_RATE})",
+    )
+    parser.add_argument(
+        "--ww-missing-gap-length",
+        type=int,
+        default=DEFAULT_WW_MISSING_GAP_LENGTH,
+        help=f"Typical wastewater missing-data gap length in days (default: {DEFAULT_WW_MISSING_GAP_LENGTH})",
     )
     parser.add_argument(
         "--min-rate", type=float, default=DEFAULT_REPORTED_CASES_CONFIG["min_rate"]
@@ -1195,27 +1306,6 @@ def main():
         help="Std dev of deaths reporting delay (default: 2)",
     )
 
-    # Sparsity tier configuration for curriculum learning
-    parser.add_argument(
-        "--sparsity-mode",
-        choices=["uniform", "tiers"],
-        default="tiers",
-        help="Sparsity distribution mode: uniform (same for all runs) or tiers (vary per run for curriculum learning)",
-    )
-    parser.add_argument(
-        "--sparsity-tiers",
-        type=float,
-        nargs="+",
-        default=[0.05, 0.20, 0.40, 0.60, 0.80],
-        help="Sparsity levels for tier assignment when --sparsity-mode=tiers (default: 0.05 0.20 0.40 0.60 0.80)",
-    )
-    parser.add_argument(
-        "--sparsity-seed",
-        type=int,
-        default=None,
-        help="Seed for deterministic tier assignment (default: None)",
-    )
-
     # Wastewater gene-specific noise parameters (can override defaults)
     parser.add_argument(
         "--ww-noise-n1",
@@ -1249,8 +1339,9 @@ def main():
     )
     parser.add_argument(
         "--include-latents",
-        action="store_true",
-        help="Export latent simulator compartment targets from compartments_full.nc",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Export latent simulator compartment targets from compartments_full.nc (default: enabled)",
     )
 
     args = parser.parse_args()
@@ -1261,6 +1352,23 @@ def main():
         n_jobs = os.cpu_count() or 1
     if n_jobs > 1:
         logger.info(f"Using {n_jobs} parallel workers for processing.")
+
+    # Determine working output path (NVMe staging if provided)
+    if args.nvme_output:
+        working_output = args.nvme_output
+        final_output = args.output
+        logger.info(f"Using NVMe staging: {working_output} -> {final_output}")
+
+        # If appending and NVMe staging, copy existing zarr from GPFS to NVMe first
+        if args.append and os.path.exists(final_output) and not os.path.exists(working_output):
+            logger.info("Copying existing zarr from GPFS to NVMe for appending...")
+            os.makedirs(os.path.dirname(working_output) or working_output, exist_ok=True)
+            rsync_copy_cmd = ["rsync", "-av", f"{final_output}/", f"{working_output}/"]
+            subprocess.run(rsync_copy_cmd, check=True)
+            logger.info("Copied existing zarr to NVMe staging")
+    else:
+        working_output = args.output
+        final_output = None
 
     # Define Gene Targets with biological properties
     # Allow command-line override of noise parameters
@@ -1306,7 +1414,7 @@ def main():
 
     if not run_dirs:
         raise ValueError(f"No run_* folders found in {runs_dir}")
-    
+
         # Filter to baseline-only scenarios if requested
     if args.baseline_only:
         run_dirs = [
@@ -1316,15 +1424,6 @@ def main():
         ]
         if not run_dirs:
             raise ValueError(f"No baseline runs found in {runs_dir}")
-
-    # Determine sparsity level for each run
-    n_runs_expected = len(run_dirs)
-    if args.sparsity_mode == "uniform":
-        sparsity_per_run = np.full(n_runs_expected, args.missing_rate)
-    elif args.sparsity_mode == "tiers":
-        sparsity_per_run = assign_sparsity_tiers(
-            n_runs_expected, args.sparsity_tiers, seed=args.sparsity_seed
-        )
 
     metapop_df = pd.read_csv(args.metapop_csv, dtype={"id": str})
     metapop_df["id"] = metapop_df["id"].astype(str)
@@ -1361,11 +1460,10 @@ def main():
     first_config, first_obs_path, _ = first_artifacts
     with xr.open_dataset(first_obs_path) as ds_meta:
         n_dates = ds_meta.sizes["T"]
-        n_age_groups = ds_meta.sizes["G"] if "G" in ds_meta.sizes else 1
     dates_ref = build_date_range(first_config, n_dates)
 
     # Check for time-varying mobility
-    output_path = args.output
+    output_path = working_output
     target_has_mobility_tv = False
     if args.append and os.path.exists(output_path):
         try:
@@ -1375,10 +1473,8 @@ def main():
             pass
 
     has_time_varying = target_has_mobility_tv
-    mobility_types_pre = []
     for rd in run_dirs:
         is_tv = (rd / "mobility" / "mobility_series.npz").exists()
-        mobility_types_pre.append("time_varying" if is_tv else "static")
         if is_tv:
             has_time_varying = True
 
@@ -1391,7 +1487,12 @@ def main():
                 shutil.rmtree(output_path)
             else:
                 os.remove(output_path)
-        
+
+        chunk_size = args.chunk_size
+        region_chunk = min(chunk_size, len(region_ids))
+        date_chunk = min(chunk_size, n_dates)
+        ww_chunk = min(chunk_size, len(edar_ids if emap_data else region_ids))
+
         # Build coordinate space for skeleton
         run_ids = [sanitize_run_id(d.name) for d in run_dirs]
         coords = {
@@ -1400,78 +1501,83 @@ def main():
             "date": dates_ref,
             "origin": region_ids,
             "target": region_ids,
-            "age_group": [str(i) for i in range(n_age_groups)]
         }
         if emap_data is not None:
             coords["edar_id"] = edar_ids
-    
+
             # Create lazy skeleton dataset
         import dask.array as da
         data_vars = {}
-        
+
+        dim_chunks = {
+            "run_id": 1,
+            "region_id": region_chunk,
+            "date": date_chunk,
+            "origin": region_chunk,
+            "target": region_chunk,
+            "edar_id": ww_chunk,
+        }
+
         def create_lazy(dims, dtype=np.float16):
             shape = [len(coords[d]) for d in dims]
-            return (dims, da.zeros(shape, chunks=(1, *[len(coords[d]) for d in dims[1:]]), dtype=dtype))
+            chunks = tuple(dim_chunks[d] for d in dims)
+            return (dims, da.zeros(shape, chunks=chunks, dtype=dtype))
 
-        data_vars["infections_true"] = create_lazy(("run_id", "region_id", "date"))
-        data_vars["hospitalizations_true"] = create_lazy(("run_id", "region_id", "date"))
-        data_vars["deaths_true"] = create_lazy(("run_id", "region_id", "date"))
+        data_vars["infections_true"] = create_lazy(("run_id", "region_id", "date"), dtype=np.float32)
+        data_vars["hospitalizations_true"] = create_lazy(("run_id", "region_id", "date"), dtype=np.float32)
+        data_vars["deaths_true"] = create_lazy(("run_id", "region_id", "date"), dtype=np.float32)
         if args.include_latents:
             for latent_var in LATENT_ZARR_VARS:
-                data_vars[latent_var] = create_lazy(("run_id", "region_id", "date"))
+                data_vars[latent_var] = create_lazy(("run_id", "date", "region_id"), dtype=np.float32)
         data_vars["cases"] = create_lazy(("run_id", "date", "region_id"))
-        data_vars["cases_mask"] = create_lazy(("run_id", "date", "region_id"))
-        data_vars["cases_age"] = create_lazy(("run_id", "date", "region_id", "age_group"))
         data_vars["hospitalizations"] = create_lazy(("run_id", "date", "region_id"))
         data_vars["deaths"] = create_lazy(("run_id", "date", "region_id"))
-        
+
         data_vars["mobility_base"] = (("origin", "target"), base_mobility.astype(np.float16))
         data_vars["mobility_kappa0"] = create_lazy(("run_id", "date"))
         if has_time_varying:
             data_vars["mobility_time_varying"] = create_lazy(("run_id", "origin", "target", "date"))
-        
+
         data_vars["synthetic_mobility_type"] = (("run_id",), da.from_array(np.array([""] * len(run_ids), dtype="U20"), chunks=1))
-        
+
         population_tiled = np.tile(population_vector.astype(np.int32), (len(run_ids), 1))
         data_vars["population"] = (("run_id", "region_id"), population_tiled)
 
         for tname in TARGET_NAMES:
             data_vars[f"edar_biomarker_{tname}"] = create_lazy(("run_id", "date", ww_spatial_dim))
-            data_vars[f"edar_biomarker_{tname}_censor_hints"] = create_lazy(("run_id", "date", ww_spatial_dim), dtype=np.int8)
-            lod_val = GENE_TARGETS[tname]["limit_of_detection_log1p"]
-            data_vars[f"edar_biomarker_{tname}_LoD"] = (("run_id", ww_spatial_dim), np.full((len(run_ids), len(coords[ww_spatial_dim])), lod_val, dtype=np.float16))
+            data_vars[f"limit_of_detection_{tname}"] = create_lazy(("run_id", "date", ww_spatial_dim))
 
         # Add metadata variables
-        for meta_var in ["synthetic_strength", "synthetic_sparsity_level", "synthetic_mobility_noise_sigma_O", 
+        for meta_var in ["synthetic_strength", "synthetic_sparsity_level", "synthetic_mobility_noise_sigma_O",
                         "synthetic_mobility_noise_sigma_D", "synthetic_mobility_noise_factor",
                         "synthetic_cases_report_rate_min", "synthetic_cases_report_rate_max", "synthetic_cases_report_delay_mean",
                         "synthetic_hosp_report_rate", "synthetic_hosp_report_delay_mean", "synthetic_hosp_report_delay_std",
                         "synthetic_deaths_report_rate", "synthetic_deaths_report_delay_mean", "synthetic_deaths_report_delay_std",
                         "synthetic_ww_noise_sigma_N1", "synthetic_ww_noise_sigma_N2", "synthetic_ww_noise_sigma_IP4", "synthetic_ww_transport_loss"]:
             data_vars[meta_var] = create_lazy(("run_id",), dtype=float)
-        
+
         data_vars["synthetic_scenario_type"] = (("run_id",), da.from_array(np.array([""] * len(run_ids), dtype="U20"), chunks=1))
 
         ds_skeleton = xr.Dataset(data_vars, coords=coords)
-        
+
         # Apply encodings
-        chunk_size = args.chunk_size
-        region_chunk = min(chunk_size, len(region_ids))
-        date_chunk = min(chunk_size, n_dates)
         ww_chunk = min(chunk_size, len(coords[ww_spatial_dim]))
-        
+
         truth_vars = ["infections_true", "hospitalizations_true", "deaths_true"]
         if args.include_latents:
             truth_vars.extend(LATENT_ZARR_VARS)
-        encoding = {v: {"chunksizes": (1, region_chunk, date_chunk)} for v in truth_vars}
-        encoding.update({v: {"chunksizes": (1, date_chunk, region_chunk)} for v in ["cases", "cases_mask", "hospitalizations", "deaths"]})
-        encoding["cases_age"] = {"chunksizes": (1, date_chunk, region_chunk, n_age_groups)}
+        encoding = {v: {"chunksizes": (1, region_chunk, date_chunk)} for v in ["infections_true", "hospitalizations_true", "deaths_true"]}
+        if args.include_latents:
+            encoding.update(
+                {v: {"chunksizes": (1, date_chunk, region_chunk)} for v in LATENT_ZARR_VARS}
+            )
+        encoding.update({v: {"chunksizes": (1, date_chunk, region_chunk)} for v in ["cases", "hospitalizations", "deaths"]})
         encoding["mobility_kappa0"] = {"chunksizes": (1, date_chunk)}
         if has_time_varying:
             encoding["mobility_time_varying"] = {"chunksizes": (1, region_chunk, region_chunk, date_chunk)}
         for tname in TARGET_NAMES:
             encoding[f"edar_biomarker_{tname}"] = {"chunksizes": (1, date_chunk, ww_chunk)}
-            encoding[f"edar_biomarker_{tname}_censor_hints"] = {"chunksizes": (1, date_chunk, ww_chunk)}
+            encoding[f"limit_of_detection_{tname}"] = {"chunksizes": (1, date_chunk, ww_chunk)}
 
         for v in encoding:
             if v in ds_skeleton.data_vars:
@@ -1484,35 +1590,62 @@ def main():
     rng = np.random.default_rng(args.seed)
     reported_cfg = {"min_rate": args.min_rate, "max_rate": args.max_rate, "inflection_day": args.inflection_day, "slope": args.slope}
     wastewater_cfg = {"gamma_shape": args.gamma_shape, "gamma_scale": args.gamma_scale, "noise_sigma": args.noise_sigma, "kernel_quantile": args.kernel_quantile}
-    args_dict = {"missing_gap_length": args.missing_gap_length, "monitoring_threshold": args.monitoring_threshold, 
-                 "monitoring_delay_mean": args.monitoring_delay_mean, "monitoring_delay_std": args.monitoring_delay_std,
-                 "hosp_report_rate": args.hosp_report_rate, "hosp_delay_mean": args.hosp_delay_mean, "hosp_delay_std": args.hosp_delay_std,
-                 "deaths_report_rate": args.deaths_report_rate, "deaths_delay_mean": args.deaths_delay_mean, "deaths_delay_std": args.deaths_delay_std,
-                 "include_latents": args.include_latents}
+    args_dict = {
+        "cases_missing_rate": args.cases_missing_rate,
+        "cases_missing_gap_length": args.cases_missing_gap_length,
+        "hosp_missing_rate": args.hosp_missing_rate,
+        "hosp_missing_gap_length": args.hosp_missing_gap_length,
+        "deaths_missing_rate": args.deaths_missing_rate,
+        "deaths_missing_gap_length": args.deaths_missing_gap_length,
+        "ww_missing_rate": args.ww_missing_rate,
+        "ww_missing_gap_length": args.ww_missing_gap_length,
+        "monitoring_threshold": args.monitoring_threshold,
+        "monitoring_delay_mean": args.monitoring_delay_mean,
+        "monitoring_delay_std": args.monitoring_delay_std,
+        "hosp_report_rate": args.hosp_report_rate,
+        "hosp_delay_mean": args.hosp_delay_mean,
+        "hosp_delay_std": args.hosp_delay_std,
+        "deaths_report_rate": args.deaths_report_rate,
+        "deaths_delay_mean": args.deaths_delay_mean,
+        "deaths_delay_std": args.deaths_delay_std,
+        "include_latents": args.include_latents,
+    }
 
     if args.append and args.include_latents and os.path.exists(output_path):
         with xr.open_zarr(output_path, chunks=None) as ds_existing:
             missing_latents = [
                 var for var in LATENT_ZARR_VARS if var not in ds_existing.data_vars
             ]
+            latent_dim_mismatches = [
+                var
+                for var in LATENT_ZARR_VARS
+                if var in ds_existing.data_vars
+                and ds_existing[var].dims != ("run_id", "date", "region_id")
+            ]
         if missing_latents:
             raise ValueError(
                 "Cannot append latent targets to an existing zarr without latent schema. "
                 f"Missing variables: {missing_latents}"
             )
+        if latent_dim_mismatches:
+            raise ValueError(
+                "Cannot append latent targets to an existing zarr with incompatible latent dims. "
+                f"Expected ('run_id', 'date', 'region_id'), got mismatches for: {latent_dim_mismatches}"
+            )
 
     work_items = []
-    for run_idx, run_dir in enumerate(run_dirs):
-        if load_run_artifacts(run_dir) is None: continue
+    for run_dir in run_dirs:
+        if load_run_artifacts(run_dir) is None:
+            continue
         seed = rng.integers(0, 2**32 - 1) if args.seed else None
-        work_items.append((str(run_dir), sparsity_per_run[run_idx], seed))
+        work_items.append((str(run_dir), seed))
 
     if not work_items:
         logger.warning(f"No valid run artifacts (config/observables) found in {args.runs_dir}")
         return
 
     run_id_to_idx = {sanitize_run_id(d.name): i for i, d in enumerate(run_dirs)}
-    
+
     # Store kappa0 series for final mobility pass if time-varying is enabled
     mobility_kappa0_map = {}
 
@@ -1521,40 +1654,51 @@ def main():
         run_idx = run_id_to_idx[run_id]
         with np.load(result["npz_path"]) as data:
             dv = {}
-            dv["infections_true"] = (("run_id", "region_id", "date"), data["infections_true"][None, :, :].astype(np.float16))
-            dv["hospitalizations_true"] = (("run_id", "region_id", "date"), data["hospitalizations_true"][None, :, :].astype(np.float16))
-            dv["deaths_true"] = (("run_id", "region_id", "date"), data["deaths_true"][None, :, :].astype(np.float16))
+            dv["infections_true"] = (("run_id", "region_id", "date"), data["infections_true"][None, :, :].astype(np.float32))
+            dv["hospitalizations_true"] = (("run_id", "region_id", "date"), data["hospitalizations_true"][None, :, :].astype(np.float32))
+            dv["deaths_true"] = (("run_id", "region_id", "date"), data["deaths_true"][None, :, :].astype(np.float32))
             if args.include_latents:
                 for latent_var in LATENT_ZARR_VARS:
                     dv[latent_var] = (
-                        ("run_id", "region_id", "date"),
-                        data[latent_var][None, :, :].astype(np.float16),
+                        ("run_id", "date", "region_id"),
+                        data[latent_var][None, :, :].transpose(0, 2, 1).astype(np.float32),
                     )
-            dv["cases"] = (("run_id", "date", "region_id"), data["cases_raw"][None, :, :].transpose(0, 2, 1).astype(np.float16))
-            dv["cases_mask"] = (("run_id", "date", "region_id"), data["cases_mask"][None, :, :].transpose(0, 2, 1).astype(np.float16))
-            dv["cases_age"] = (("run_id", "date", "region_id", "age_group"), data["cases_age"][None, :].astype(np.float16))
-            dv["hospitalizations"] = (("run_id", "date", "region_id"), data["hospitalizations_raw"][None, :, :].transpose(0, 2, 1).astype(np.float16))
-            dv["deaths"] = (("run_id", "date", "region_id"), data["deaths_raw"][None, :, :].transpose(0, 2, 1).astype(np.float16))
+            cases_arr = data["cases_raw"].astype(np.float16)
+            hosp_arr = data["hospitalizations_raw"].astype(np.float16)
+            deaths_arr = data["deaths_raw"].astype(np.float16)
+            wastewater_log = np.log1p(data["wastewater_raw"]).astype(np.float16)
+            lod_log = np.log1p(data["limit_of_detection"]).astype(np.float16)
+
+            dv["cases"] = (("run_id", "date", "region_id"), cases_arr[None, :, :])
+            dv["hospitalizations"] = (("run_id", "date", "region_id"), hosp_arr[None, :, :])
+            dv["deaths"] = (("run_id", "date", "region_id"), deaths_arr[None, :, :])
             dv["mobility_kappa0"] = (("run_id", "date"), data["mobility_kappa0"][None, :].astype(np.float16))
-            
-            # Save for second pass if mobility_time_varying is needed
+
             if has_time_varying:
                 mobility_kappa0_map[run_id] = data["mobility_kappa0"]
 
             dv["population"] = (("run_id", "region_id"), population_vector[None, :].astype(np.int32))
             dv["synthetic_mobility_type"] = (("run_id",), np.array([result["mobility_type"]], dtype="U20"))
             dv["synthetic_scenario_type"] = (("run_id",), np.array([result["scenario_type"]], dtype="U20"))
-            
+
             for tname_idx, tname in enumerate(TARGET_NAMES):
-                dv[f"edar_biomarker_{tname}"] = (("run_id", "date", ww_spatial_dim), np.log1p(data["wastewater_raw"][None, :, :, tname_idx]).astype(np.float16))
-                dv[f"edar_biomarker_{tname}_censor_hints"] = (("run_id", "date", ww_spatial_dim), data["wastewater_censor"][None, :, :, tname_idx])
-            
+                dv[f"edar_biomarker_{tname}"] = (("run_id", "date", ww_spatial_dim), wastewater_log[None, :, :, tname_idx])
+                dv[f"limit_of_detection_{tname}"] = (("run_id", "date", ww_spatial_dim), lod_log[None, :, :, tname_idx])
+
             dv["synthetic_strength"] = (("run_id",), np.array([result["strength"]], dtype=float))
-            dv["synthetic_sparsity_level"] = (("run_id",), np.array([result["sparsity"]], dtype=float))
+            realized_sparsity = compute_realized_joint_sparsity(
+                [
+                    cases_arr,
+                    hosp_arr,
+                    deaths_arr,
+                    wastewater_log,
+                ]
+            )
+            dv["synthetic_sparsity_level"] = (("run_id",), np.array([realized_sparsity], dtype=float))
             dv["synthetic_mobility_noise_sigma_O"] = (("run_id",), np.array([result["mobility_sigma_O"]], dtype=float))
             dv["synthetic_mobility_noise_sigma_D"] = (("run_id",), np.array([result["mobility_sigma_D"]], dtype=float))
             dv["synthetic_mobility_noise_factor"] = (("run_id",), np.array([result["mobility_noise"]], dtype=float))
-            
+
             dv["synthetic_cases_report_rate_min"] = (("run_id",), np.array([args.min_rate], dtype=float))
             dv["synthetic_cases_report_rate_max"] = (("run_id",), np.array([args.max_rate], dtype=float))
             dv["synthetic_cases_report_delay_mean"] = (("run_id",), np.array([0.0], dtype=float))
@@ -1569,8 +1713,8 @@ def main():
             dv["synthetic_ww_noise_sigma_IP4"] = (("run_id",), np.array([GENE_TARGETS["IP4"]["noise_sigma"]], dtype=float))
             dv["synthetic_ww_transport_loss"] = (("run_id",), np.array([GENE_TARGETS["N1"]["transport_loss"]], dtype=float))
 
-            ds_run = xr.Dataset(dv, coords={"run_id": [run_id], "date": dates_ref, "region_id": region_ids, "origin": region_ids, "target": region_ids, "age_group": [str(i) for i in range(n_age_groups)], ww_spatial_dim: edar_ids if emap_data else region_ids})
-            
+            ds_run = xr.Dataset(dv, coords={"run_id": [run_id], "date": dates_ref, "region_id": region_ids, "origin": region_ids, "target": region_ids, ww_spatial_dim: edar_ids if emap_data else region_ids})
+
             if args.append:
                 ds_run.to_zarr(output_path, mode="a", append_dim="run_id")
             else:
@@ -1578,15 +1722,16 @@ def main():
                 # otherwise xarray will try to write them and fail because they don't fit the region.
                 vars_to_drop = [c for c in ds_run.coords if "run_id" not in ds_run.coords[c].dims]
                 ds_run.drop_vars(vars_to_drop).to_zarr(output_path, region={"run_id": slice(run_idx, run_idx+1)})
-            
-        if os.path.exists(result["npz_path"]): os.remove(result["npz_path"])
+
+        if os.path.exists(result["npz_path"]):
+            os.remove(result["npz_path"])
 
     # Execute processing
     processed_results = []
     if n_jobs > 1:
         logger.info(f"Processing {len(work_items)} runs with {n_jobs} workers...")
-        with ProcessPoolExecutor(max_workers=n_jobs, initializer=init_worker, 
-                                 initargs=(region_ids, population_vector, emap_data, GENE_TARGETS, 
+        with ProcessPoolExecutor(max_workers=n_jobs, initializer=init_worker,
+                                 initargs=(region_ids, population_vector, emap_data, GENE_TARGETS,
                                            reported_cfg, wastewater_cfg, args_dict)) as executor:
             futures = [executor.submit(process_single_run, *item) for item in work_items]
             for future in as_completed(futures):
@@ -1616,7 +1761,7 @@ def main():
         # Final pass for large mobility arrays using efficient frame-by-frame streaming
         processed_results.sort(key=lambda x: x["run_id"])
         mobility_kappa0_arr = np.stack([mobility_kappa0_map[r["run_id"]] for r in processed_results], axis=0)
-        
+
         # Determine start index for mobility write
         run_start_idx = 0
         if args.append:
@@ -1639,7 +1784,16 @@ def main():
 
     logger.info(f"Done! Output written to {output_path}")
 
+    # Sync from NVMe staging to final GPFS location if staging was used
+    if final_output and os.path.exists(working_output) and not args.skip_rsync:
+        logger.info(f"Syncing zarr from NVMe to GPFS: {working_output} -> {final_output}")
+        rsync_cmd = ["rsync", "-av", "--remove-source-files", f"{working_output}/", f"{final_output}/"]
+        subprocess.run(rsync_cmd, check=True)
+        # Remove the now-empty source directory
+        if os.path.isdir(working_output) and not os.listdir(working_output):
+            os.rmdir(working_output)
+        logger.info("Sync complete, cleaned up NVMe staging")
+
 
 if __name__ == "__main__":
     main()
-    

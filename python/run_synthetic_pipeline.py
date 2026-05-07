@@ -18,7 +18,6 @@ Environment variables:
 import argparse
 import json
 import logging
-import os
 import shutil
 import subprocess
 import sys
@@ -77,11 +76,56 @@ def clean_run_folders(directory=None):
     """
     global OUTPUT_FOLDER
     target_dir = directory if directory is not None else OUTPUT_FOLDER
+    if not target_dir.exists():
+        logger.info(f"Run folder cleanup skipped; directory does not exist: {target_dir}")
+        return
     logger.info(f"Cleaning run folders in {target_dir}")
     for item in target_dir.iterdir():
         if item.is_dir() and item.name.startswith("run_"):
             shutil.rmtree(item)
     logger.info("Run folders cleaned.")
+
+
+def drop_zarr_variables(zarr_path, variable_names):
+    """Remove variables from a zarr group if they exist."""
+    import zarr
+
+    zarr_path = Path(zarr_path)
+    if not zarr_path.exists():
+        logger.info(f"Zarr cleanup skipped; store does not exist: {zarr_path}")
+        return
+
+    group = zarr.open_group(str(zarr_path), mode="a")
+    removed = []
+    for name in variable_names:
+        if name in group:
+            del group[name]
+            removed.append(name)
+
+    if removed:
+        logger.info(f"Removed zarr variables from final output: {removed}")
+
+
+def sync_zarr_from_nvme_if_needed(nvme_base, final_zarr_path):
+    """Ensure the final zarr exists on GPFS when work was staged on NVMe."""
+    if not nvme_base:
+        return
+
+    final_zarr_path = Path(final_zarr_path)
+    if final_zarr_path.exists():
+        return
+
+    source_zarr = Path(nvme_base) / "raw_synthetic_observations.zarr"
+    if not source_zarr.exists():
+        logger.info(
+            f"Final zarr sync skipped; NVMe source does not exist: {source_zarr}"
+        )
+        return
+
+    logger.info(f"Syncing final zarr from NVMe to GPFS: {source_zarr} -> {final_zarr_path}")
+    final_zarr_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(source_zarr, final_zarr_path)
+    logger.info("Final zarr sync complete.")
 
 
 def check_baseline_success(baseline_dir, n_profiles_requested):
@@ -345,9 +389,14 @@ def run_two_phase_pipeline(
     skip_process=False,
     edar_edges=None,
     failure_tolerance=10,
-    sparsity_mode="tiers",
-    sparsity_tiers=None,
-    sparsity_seed=42,
+    cases_missing_rate=0.72,
+    cases_missing_gap_length=3,
+    hosp_missing_rate=0.89,
+    hosp_missing_gap_length=3,
+    deaths_missing_rate=0.58,
+    deaths_missing_gap_length=3,
+    ww_missing_rate=0.95,
+    ww_missing_gap_length=7,
     max_intervention_duration=90,
     intervention_profile_fraction=1.0,
     intervention_seed=42,
@@ -355,7 +404,7 @@ def run_two_phase_pipeline(
     mobility_sigma_max=0.6,
     n_jobs=-1,
     nvme_base=None,
-    include_latents=False,
+    include_latents=True,
 ):
     """Execute the two-phase synthetic data generation pipeline with batching support.
 
@@ -375,9 +424,14 @@ def run_two_phase_pipeline(
         skip_process: Skip processing stages (use existing zarr)
         edar_edges: Path to EDAR-municipality edges file
         failure_tolerance: Number of consecutive failures before aborting
-        sparsity_mode: Sparsity distribution mode for post-processing (default: "tiers")
-        sparsity_tiers: Sparsity levels for tier assignment (default: [0.05, 0.20, 0.40, 0.60, 0.80])
-        sparsity_seed: Seed for deterministic tier assignment (default: 42)
+        cases_missing_rate: Fraction of case observations to make missing
+        cases_missing_gap_length: Typical case missing-data gap length in days
+        hosp_missing_rate: Fraction of hospitalization observations to make missing
+        hosp_missing_gap_length: Typical hospitalization missing-data gap length in days
+        deaths_missing_rate: Fraction of death observations to make missing
+        deaths_missing_gap_length: Typical death missing-data gap length in days
+        ww_missing_rate: Fraction of wastewater sampling events to make missing
+        ww_missing_gap_length: Typical wastewater missing-data gap length in days
         max_intervention_duration: Maximum intervention duration in days (default: 90)
         intervention_profile_fraction: Fraction of profiles receiving full intervention sweep (default: 1.0)
         intervention_seed: Random seed for profile sampling (default: 42)
@@ -392,6 +446,7 @@ def run_two_phase_pipeline(
     # Handle NVMe staging if provided
     if nvme_base:
         nvme_path = Path(nvme_base)
+        nvme_path.mkdir(parents=True, exist_ok=True)
         baseline_dir = nvme_path / "baselines"
         intervention_dir = nvme_path / "interventions"
         logger.info(f"Using NVMe staging at: {nvme_path}")
@@ -403,6 +458,25 @@ def run_two_phase_pipeline(
 
     # Save original OUTPUT_FOLDER for restoration
     original_output_folder = OUTPUT_FOLDER
+
+    missingness_args = [
+        "--cases-missing-rate",
+        str(cases_missing_rate),
+        "--cases-missing-gap-length",
+        str(cases_missing_gap_length),
+        "--hosp-missing-rate",
+        str(hosp_missing_rate),
+        "--hosp-missing-gap-length",
+        str(hosp_missing_gap_length),
+        "--deaths-missing-rate",
+        str(deaths_missing_rate),
+        "--deaths-missing-gap-length",
+        str(deaths_missing_gap_length),
+        "--ww-missing-rate",
+        str(ww_missing_rate),
+        "--ww-missing-gap-length",
+        str(ww_missing_gap_length),
+    ]
 
     # Calculate batches for Phase 1
     total_batches = (n_profiles + batch_size - 1) // batch_size
@@ -583,21 +657,21 @@ def run_two_phase_pipeline(
             "--output",
             str(baseline_zarr),
             "--baseline-only",
-            "--sparsity-mode",
-            sparsity_mode,
-            "--sparsity-seed",
-            str(sparsity_seed),
             "--n-jobs",
             str(n_jobs),
         ]
-
-        if sparsity_tiers:
-            cmd.extend(["--sparsity-tiers"] + [str(t) for t in sparsity_tiers])
+        cmd.extend(missingness_args)
 
         if edar_edges:
             cmd.extend(["--edar-edges", str(edar_edges)])
         if include_latents:
             cmd.append("--include-latents")
+
+        # Add NVMe staging if nvme_base is provided
+        if nvme_base:
+            nvme_zarr = Path(nvme_base) / "raw_synthetic_observations.zarr"
+            cmd.extend(["--nvme-output", str(nvme_zarr)])
+            cmd.append("--skip-rsync")  # Keep baseline zarr on NVMe for Phase 2
 
         run_stage("Process Baselines", cmd)
 
@@ -606,8 +680,15 @@ def run_two_phase_pipeline(
     print("PHASE 2: Generating spike-based intervention scenarios...")
     print("=" * 60)
 
+    should_generate_interventions = intervention_profile_fraction > 0.0
+
+    if not should_generate_interventions:
+        logger.info(
+            "Phase 2 skipped: intervention_profile_fraction <= 0, so no interventions were requested."
+        )
+
     # Check if Phase 1 succeeded sufficiently before proceeding
-    if not skip_sim:
+    if not skip_sim and should_generate_interventions:
         # Determine which baseline directory to check
         if nvme_base:
             baseline_check_dir = output_base / "baselines"
@@ -643,12 +724,19 @@ def run_two_phase_pipeline(
         # Marker is now created by synthetic_generator.py after sampling
         # This prevents false positives when intervention_profile_fraction = 0
 
-        # When using NVMe, baseline_dir was cleared - use final GPFS path for intervention generation
+        # Prefer NVMe for Phase 2 when the staged baseline zarr is available there.
         if nvme_base:
-            baseline_reference_dir = output_base / "baselines"
-            logger.info(
-                f"Using GPFS baseline dir for intervention generation: {baseline_reference_dir}"
-            )
+            nvme_baseline_zarr = Path(nvme_base) / "raw_synthetic_observations.zarr"
+            if baseline_dir.exists() and nvme_baseline_zarr.exists():
+                baseline_reference_dir = baseline_dir
+                logger.info(
+                    f"Using NVMe baseline dir for intervention generation: {baseline_reference_dir}"
+                )
+            else:
+                baseline_reference_dir = output_base / "baselines"
+                logger.info(
+                    f"Using GPFS baseline dir for intervention generation: {baseline_reference_dir}"
+                )
         else:
             baseline_reference_dir = baseline_dir
 
@@ -720,21 +808,20 @@ def run_two_phase_pipeline(
             str(baseline_zarr),
             "--append",
             "--init",
-            "--sparsity-mode",
-            sparsity_mode,
-            "--sparsity-seed",
-            str(sparsity_seed),
             "--n-jobs",
             str(n_jobs),
         ]
-
-        if sparsity_tiers:
-            cmd.extend(["--sparsity-tiers"] + [str(t) for t in sparsity_tiers])
+        cmd.extend(missingness_args)
 
         if edar_edges:
             cmd.extend(["--edar-edges", str(edar_edges)])
         if include_latents:
             cmd.append("--include-latents")
+
+        # Add NVMe staging if nvme_base is provided
+        if nvme_base:
+            nvme_zarr = Path(nvme_base) / "raw_synthetic_observations.zarr"
+            cmd.extend(["--nvme-output", str(nvme_zarr)])
 
         run_stage("Process Interventions (Append)", cmd)
 
@@ -752,9 +839,12 @@ def run_two_phase_pipeline(
     # Restore original OUTPUT_FOLDER
     OUTPUT_FOLDER = original_output_folder
 
+    final_zarr = output_base / "raw_synthetic_observations.zarr"
+    sync_zarr_from_nvme_if_needed(nvme_base, final_zarr)
+
     print("\n" + "=" * 60)
     print("Two-Phase Pipeline Complete!")
-    print(f"Final output: {output_base / 'raw_synthetic_observations.zarr'}")
+    print(f"Final output: {final_zarr}")
     print("=" * 60)
 
 
@@ -861,25 +951,53 @@ def main():
         default=1e-4,
         help="Minimum cases per person for growth_rate method (default: 1e-4 = 1 per 10K)",
     )
-    # Sparsity configuration for curriculum learning
     parser.add_argument(
-        "--sparsity-mode",
-        choices=["uniform", "tiers"],
-        default="tiers",
-        help="Sparsity distribution mode for post-processing (default: tiers)",
-    )
-    parser.add_argument(
-        "--sparsity-tiers",
+        "--cases-missing-rate",
         type=float,
-        nargs="+",
-        default=[0.05, 0.20, 0.40, 0.60, 0.80],
-        help="Sparsity levels for tier assignment (default: 0.05 0.20 0.40 0.60 0.80)",
+        default=0.72,
+        help="Fraction of case observations to make missing during processing (default: 0.72)",
     )
     parser.add_argument(
-        "--sparsity-seed",
+        "--cases-missing-gap-length",
         type=int,
-        default=42,
-        help="Seed for deterministic tier assignment (default: 42)",
+        default=3,
+        help="Typical case missing-data gap length in days (default: 3)",
+    )
+    parser.add_argument(
+        "--hosp-missing-rate",
+        type=float,
+        default=0.89,
+        help="Fraction of hospitalization observations to make missing during processing (default: 0.89)",
+    )
+    parser.add_argument(
+        "--hosp-missing-gap-length",
+        type=int,
+        default=3,
+        help="Typical hospitalization missing-data gap length in days (default: 3)",
+    )
+    parser.add_argument(
+        "--deaths-missing-rate",
+        type=float,
+        default=0.58,
+        help="Fraction of death observations to make missing during processing (default: 0.58)",
+    )
+    parser.add_argument(
+        "--deaths-missing-gap-length",
+        type=int,
+        default=3,
+        help="Typical death missing-data gap length in days (default: 3)",
+    )
+    parser.add_argument(
+        "--ww-missing-rate",
+        type=float,
+        default=0.95,
+        help="Fraction of wastewater sampling events to make missing during processing (default: 0.95)",
+    )
+    parser.add_argument(
+        "--ww-missing-gap-length",
+        type=int,
+        default=7,
+        help="Typical wastewater missing-data gap length in days (default: 7)",
     )
     parser.add_argument(
         "--max-intervention-duration",
@@ -926,8 +1044,15 @@ def main():
     )
     parser.add_argument(
         "--include-latents",
-        action="store_true",
-        help="Export latent simulator states into the synthetic zarr for hybrid supervision.",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Export latent simulator states into the synthetic zarr for hybrid supervision (default: enabled).",
+    )
+    parser.add_argument(
+        "--run-name",
+        type=str,
+        default=None,
+        help="Name for this run (overrides default output folder naming). Output will be in runs/${RUN_NAME}/",
     )
 
     args = parser.parse_args()
@@ -937,7 +1062,11 @@ def main():
     dataset_config = DATASET_CONFIGS[args.dataset]
     DATA_FOLDER = dataset_config["data_folder"]
     CONFIG_PATH = DATA_FOLDER / dataset_config["config"]
-    OUTPUT_FOLDER = PROJECT_ROOT / "runs" / dataset_config["output_suffix"]
+    # Use run_name if provided, otherwise use dataset default
+    if args.run_name:
+        OUTPUT_FOLDER = PROJECT_ROOT / "runs" / args.run_name
+    else:
+        OUTPUT_FOLDER = PROJECT_ROOT / "runs" / dataset_config["output_suffix"]
     METAPOP_CSV = DATA_FOLDER / "metapopulation_data.csv"
 
     # Validate paths
@@ -1002,9 +1131,14 @@ def main():
             skip_process=args.skip_process,
             edar_edges=args.edar_edges,
             failure_tolerance=args.failure_tolerance,
-            sparsity_mode=args.sparsity_mode,
-            sparsity_tiers=args.sparsity_tiers,
-            sparsity_seed=args.sparsity_seed,
+            cases_missing_rate=args.cases_missing_rate,
+            cases_missing_gap_length=args.cases_missing_gap_length,
+            hosp_missing_rate=args.hosp_missing_rate,
+            hosp_missing_gap_length=args.hosp_missing_gap_length,
+            deaths_missing_rate=args.deaths_missing_rate,
+            deaths_missing_gap_length=args.deaths_missing_gap_length,
+            ww_missing_rate=args.ww_missing_rate,
+            ww_missing_gap_length=args.ww_missing_gap_length,
             max_intervention_duration=args.max_intervention_duration,
             intervention_profile_fraction=args.intervention_profile_fraction,
             intervention_seed=args.intervention_seed,

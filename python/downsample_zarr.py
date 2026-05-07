@@ -50,9 +50,9 @@ FLOAT_VARS_TO_CONVERT = [
     "edar_biomarker_N2",
     "edar_biomarker_IP4",
     # Wastewater metadata
-    "edar_biomarker_N1_LoD",
-    "edar_biomarker_N2_LoD",
-    "edar_biomarker_IP4_LoD",
+    "limit_of_detection_N1",
+    "limit_of_detection_N2",
+    "limit_of_detection_IP4",
     # Mobility
     "mobility_base",
     "mobility_kappa0",
@@ -80,9 +80,6 @@ FLOAT_VARS_TO_CONVERT = [
 
 # Variables to keep as int (or convert to int32 for population)
 INT_VARS = [
-    "edar_biomarker_N1_censor_hints",
-    "edar_biomarker_N2_censor_hints",
-    "edar_biomarker_IP4_censor_hints",
     "population",
 ]
 

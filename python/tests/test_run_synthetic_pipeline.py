@@ -1,7 +1,8 @@
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import patch, MagicMock
+
 import run_synthetic_pipeline
-from pathlib import Path
 
 
 def test_check_baseline_success_missing_json(tmp_path):
@@ -68,3 +69,101 @@ def test_pipeline_retry_logic_success_eventually(
         pytest.fail(f"Pipeline failed unexpectedly: {e}")
 
     assert mock_check.call_count == 3
+
+
+@patch("run_synthetic_pipeline.run_baseline_batch")
+@patch("run_synthetic_pipeline.check_baseline_success")
+@patch("run_synthetic_pipeline.shutil")
+@patch("run_synthetic_pipeline.run_stage")
+def test_pipeline_skips_phase2_when_no_interventions_requested(
+    mock_run_stage, mock_shutil, mock_check, mock_run_batch, tmp_path
+):
+    mock_check.return_value = (10, 1.0, True, [])
+    run_synthetic_pipeline.OUTPUT_FOLDER = tmp_path
+
+    run_synthetic_pipeline.run_two_phase_pipeline(
+        n_profiles=10,
+        batch_size=5,
+        skip_sim=False,
+        skip_process=False,
+        intervention_profile_fraction=0.0,
+    )
+
+    stage_names = [call.args[0] for call in mock_run_stage.call_args_list]
+    process_cmd = next(
+        call.args[1]
+        for call in mock_run_stage.call_args_list
+        if call.args[0] == "Process Baselines"
+    )
+
+    assert "Process Baselines" in stage_names
+    assert "Generate Spike-Based Interventions" not in stage_names
+    assert "--cases-missing-rate" in process_cmd
+    assert "--hosp-missing-rate" in process_cmd
+    assert "--deaths-missing-rate" in process_cmd
+    assert "--ww-missing-rate" in process_cmd
+    assert "--sparsity-mode" not in process_cmd
+    assert "--sparsity-seed" not in process_cmd
+
+
+@patch("run_synthetic_pipeline.run_baseline_batch")
+@patch("run_synthetic_pipeline.check_baseline_success")
+@patch("run_synthetic_pipeline.shutil")
+@patch("run_synthetic_pipeline.run_stage")
+def test_pipeline_prefers_nvme_baseline_dir_for_phase2(
+    mock_run_stage, mock_shutil, mock_check, mock_run_batch, tmp_path
+):
+    mock_check.return_value = (2, 1.0, True, [])
+    output_folder = tmp_path / "runs" / "smoke"
+    nvme_base = tmp_path / "nvme"
+    run_synthetic_pipeline.OUTPUT_FOLDER = output_folder
+
+    baseline_dir = nvme_base / "baselines"
+    baseline_dir.mkdir(parents=True)
+    (nvme_base / "raw_synthetic_observations.zarr").mkdir()
+
+    run_synthetic_pipeline.run_two_phase_pipeline(
+        n_profiles=2,
+        batch_size=1,
+        skip_sim=False,
+        skip_process=False,
+        intervention_profile_fraction=0.5,
+        nvme_base=str(nvme_base),
+    )
+
+    intervention_calls = [
+        call for call in mock_run_stage.call_args_list
+        if call.args[0] == "Generate Spike-Based Interventions"
+    ]
+    assert len(intervention_calls) == 1
+    intervention_cmd = intervention_calls[0].args[1]
+    assert "--intervention-only" in intervention_cmd
+    assert str(baseline_dir) in intervention_cmd
+
+
+@patch("run_synthetic_pipeline.run_baseline_batch")
+@patch("run_synthetic_pipeline.check_baseline_success")
+@patch("run_synthetic_pipeline.shutil")
+@patch("run_synthetic_pipeline.run_stage")
+def test_pipeline_syncs_final_zarr_from_nvme_when_phase2_skipped(
+    mock_run_stage, mock_shutil, mock_check, mock_run_batch, tmp_path
+):
+    mock_check.return_value = (10, 1.0, True, [])
+    output_folder = tmp_path / "runs" / "smoke"
+    nvme_base = tmp_path / "nvme"
+    final_zarr = output_folder / "raw_synthetic_observations.zarr"
+    nvme_zarr = nvme_base / "raw_synthetic_observations.zarr"
+
+    run_synthetic_pipeline.OUTPUT_FOLDER = output_folder
+    nvme_zarr.mkdir(parents=True)
+
+    run_synthetic_pipeline.run_two_phase_pipeline(
+        n_profiles=10,
+        batch_size=5,
+        skip_sim=False,
+        skip_process=False,
+        intervention_profile_fraction=0.0,
+        nvme_base=str(nvme_base),
+    )
+
+    mock_shutil.copytree.assert_called_with(nvme_zarr, final_zarr)

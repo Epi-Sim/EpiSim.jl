@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """
-One-time migration script to add cases_mask and cases_age to existing synthetic observation zarr files.
+Legacy utility to add cases_mask and cases_age to synthetic observation zarr files.
+
+These variables are not part of the default raw synthetic observation schema. Use
+this script only for downstream experiments that still need the legacy
+convenience variables.
 
 Usage:
     python add_cases_vars_to_zarr.py <zarr_path> [--runs-dir <runs_dir>] [--output <output_path>]
@@ -255,7 +259,7 @@ def set_encodings(ds: xr.Dataset, chunk_size: int = 256) -> xr.Dataset:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Add cases_mask and cases_age to existing synthetic observation zarr files."
+        description="Legacy utility: add cases_mask and cases_age to synthetic observation zarr files for downstream experiments."
     )
     parser.add_argument("zarr_path", help="Path to existing zarr file")
     parser.add_argument(

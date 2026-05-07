@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import xarray as xr
+import zarr
 
 # Add python directory to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -19,6 +20,7 @@ from process_synthetic_outputs import (
     apply_missing_data_patterns,
     assign_sparsity_tiers,
     build_date_range,
+    compute_realized_joint_sparsity,
     detect_and_load_time_varying_mobility,
     generate_wastewater_with_censoring,
     load_compartment_latents,
@@ -29,6 +31,7 @@ from process_synthetic_outputs import (
     parse_run_metadata,
     resolve_kappa0_path,
     sanitize_run_id,
+    write_mobility_time_varying_to_zarr,
 )
 
 
@@ -80,12 +83,12 @@ class TestParseRunMetadata:
 
     def test_parses_high_strength(self):
         """Should parse high strength values."""
-        scenario, strength = parse_run_metadata("run_0_Global_Timed_s100")
+        _scenario, strength = parse_run_metadata("run_0_Global_Timed_s100")
         assert strength == 1.0
 
     def test_handles_no_strength_suffix(self):
         """Should handle missing strength suffix."""
-        scenario, strength = parse_run_metadata("run_0_UnknownScenario")
+        _scenario, strength = parse_run_metadata("run_0_UnknownScenario")
         assert np.isnan(strength)
 
     def test_strips_run_prefix(self):
@@ -124,7 +127,7 @@ class TestApplyMissingDataPatterns:
     def test_applies_gap_based_missing(self):
         """Should apply gap-based missing values."""
         data = np.ones((50, 10))
-        data_with_gaps, mask = apply_missing_data_patterns(
+        data_with_gaps, _mask = apply_missing_data_patterns(
             data, missing_rate=0.1, missing_gap_length=5, rng=np.random.default_rng(42)
         )
 
@@ -141,26 +144,55 @@ class TestApplyMissingDataPatterns:
         assert data_with_gaps.shape == (50,)
         assert mask.shape == (50,)
 
-    def test_zero_missing_rate_minimal_missing(self):
-        """Zero missing rate should have minimal missing data (gap-based may still apply)."""
+    def test_zero_missing_rate_no_missing(self):
+        """Zero missing rate should not add missing values."""
         data = np.ones((10, 5))
         data_with_gaps, mask = apply_missing_data_patterns(data, missing_rate=0.0)
 
-        # With missing_rate=0, random missing is 0, but gap-based may still add some
-        # Just verify it doesn't crash and returns proper shapes
         assert data_with_gaps.shape == data.shape
         assert mask.shape == data.shape
+        assert not np.any(np.isnan(data_with_gaps))
+        assert np.all(mask == 1.0)
 
     def test_full_missing_rate(self):
         """High missing rate should create many NaNs."""
         data = np.ones((10, 5))
-        data_with_gaps, mask = apply_missing_data_patterns(
+        data_with_gaps, _mask = apply_missing_data_patterns(
             data, missing_rate=0.9, rng=np.random.default_rng(42)
         )
 
         # Most values should be NaN
         nan_count = np.sum(np.isnan(data_with_gaps))
         assert nan_count > 20  # Significant portion
+
+    def test_date_major_gaps_are_consecutive_for_region(self):
+        """Gap missingness should produce consecutive missing dates in a region."""
+        data = np.ones((30, 4))
+        data_with_gaps, _ = apply_missing_data_patterns(
+            data, missing_rate=0.35, missing_gap_length=4, rng=np.random.default_rng(7)
+        )
+
+        has_consecutive_region_gap = False
+        for region_idx in range(data.shape[1]):
+            missing_dates = np.flatnonzero(np.isnan(data_with_gaps[:, region_idx]))
+            if np.any(np.diff(missing_dates) == 1):
+                has_consecutive_region_gap = True
+                break
+
+        assert has_consecutive_region_gap
+
+    def test_modalities_can_use_independent_missing_rates(self):
+        """Different rates should produce different missingness by modality."""
+        data = np.ones((40, 3))
+        cases, _ = apply_missing_data_patterns(
+            data, missing_rate=0.0, rng=np.random.default_rng(1)
+        )
+        deaths, _ = apply_missing_data_patterns(
+            data, missing_rate=0.5, rng=np.random.default_rng(1)
+        )
+
+        assert np.count_nonzero(np.isnan(cases)) == 0
+        assert np.count_nonzero(np.isnan(deaths)) > 0
 
 
 class TestBuildDateRange:
@@ -178,7 +210,7 @@ class TestBuildDateRange:
         """Should raise error if start_date missing."""
         config = {"simulation": {}}
 
-        with pytest.raises(ValueError, match="Missing simulation.start_date"):
+        with pytest.raises(ValueError, match=r"Missing simulation\.start_date"):
             build_date_range(config, time_len=10)
 
     def test_different_start_dates(self):
@@ -188,6 +220,132 @@ class TestBuildDateRange:
 
         assert len(dates) == 5
         assert str(dates[0]) == "2021-01-15 00:00:00"
+
+
+class TestWriteMobilityTimeVaryingToZarr:
+    def test_writes_factorized_mobility_frames(self, tmp_path):
+        output_path = tmp_path / "mobility.zarr"
+        ordered_results = [
+            {
+                "run_id": "0_Baseline",
+                "mobility_type": "factorized",
+                "run_dir_path": str(tmp_path / "run_0_Baseline"),
+            }
+        ]
+        region_ids = ["r0", "r1"]
+        dates_ref = pd.date_range("2020-01-01", periods=3)
+        base_mobility = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float16)
+        mobility_kappa0_arr = np.array([[0.0, 0.5, 1.0]], dtype=np.float16)
+
+        write_mobility_time_varying_to_zarr(
+            output_path=str(output_path),
+            ordered_results=ordered_results,
+            run_start_index=0,
+            region_ids=region_ids,
+            dates_ref=dates_ref,
+            base_mobility=base_mobility,
+            mobility_kappa0_arr=mobility_kappa0_arr,
+            chunk_size=2,
+        )
+
+        written = zarr.open_group(str(output_path), mode="r")["mobility_time_varying"][:]
+
+        assert written.shape == (1, 2, 2, 3)
+        np.testing.assert_allclose(written[0, :, :, 0], base_mobility)
+        np.testing.assert_allclose(written[0, :, :, 1], base_mobility * 0.5)
+        np.testing.assert_allclose(
+            written[0, :, :, 2], np.zeros_like(base_mobility, dtype=np.float16)
+        )
+
+
+class TestAppendSchemaConsistency:
+    def test_limit_of_detection_appends_along_run_id(self, tmp_path):
+        output_path = tmp_path / "append_lod.zarr"
+        dates = pd.date_range("2020-01-01", periods=2)
+        region_ids = ["r0", "r1"]
+        edar_ids = ["e0"]
+
+        ds_initial = xr.Dataset(
+            data_vars={
+                "cases": (
+                    ("run_id", "date", "region_id"),
+                    np.zeros((1, len(dates), len(region_ids)), dtype=np.float16),
+                ),
+                "edar_biomarker_IP4": (
+                    ("run_id", "date", "edar_id"),
+                    np.zeros((1, len(dates), len(edar_ids)), dtype=np.float16),
+                ),
+                "limit_of_detection_IP4": (
+                    ("run_id", "date", "edar_id"),
+                    np.full((1, len(dates), len(edar_ids)), 1.23, dtype=np.float16),
+                ),
+            },
+            coords={
+                "run_id": ["0_Baseline".ljust(50)],
+                "date": dates,
+                "region_id": region_ids,
+                "edar_id": edar_ids,
+            },
+        )
+        ds_initial.to_zarr(output_path, mode="w", zarr_format=2)
+
+        ds_append = xr.Dataset(
+            data_vars={
+                "cases": (
+                    ("run_id", "date", "region_id"),
+                    np.ones((1, len(dates), len(region_ids)), dtype=np.float16),
+                ),
+                "edar_biomarker_IP4": (
+                    ("run_id", "date", "edar_id"),
+                    np.ones((1, len(dates), len(edar_ids)), dtype=np.float16),
+                ),
+                "limit_of_detection_IP4": (
+                    ("run_id", "date", "edar_id"),
+                    np.full((1, len(dates), len(edar_ids)), 1.23, dtype=np.float16),
+                ),
+            },
+            coords={
+                "run_id": ["1_Baseline".ljust(50)],
+                "date": dates,
+                "region_id": region_ids,
+                "edar_id": edar_ids,
+            },
+        )
+        ds_append.to_zarr(output_path, mode="a", append_dim="run_id")
+
+        opened = xr.open_zarr(output_path)
+        assert opened.sizes["run_id"] == 2
+        assert opened["limit_of_detection_IP4"].dims == ("run_id", "date", "edar_id")
+        assert opened["limit_of_detection_IP4"].sizes["run_id"] == 2
+
+    def test_latent_variables_are_saved_date_major(self, tmp_path):
+        output_path = tmp_path / "latent_dims.zarr"
+        dates = pd.date_range("2020-01-01", periods=2)
+        region_ids = ["r0", "r1"]
+
+        latent_region_date = np.array([[11, 13], [23, 25]], dtype=np.float32)
+        ds = xr.Dataset(
+            data_vars={
+                "latent_S_true": (
+                    ("run_id", "date", "region_id"),
+                    latent_region_date[None, :, :].transpose(0, 2, 1),
+                ),
+            },
+            coords={
+                "run_id": ["0_Baseline".ljust(50)],
+                "date": dates,
+                "region_id": region_ids,
+            },
+        )
+
+        ds.to_zarr(output_path, mode="w", zarr_format=2)
+
+        opened = xr.open_zarr(output_path)
+        assert opened["latent_S_true"].dims == ("run_id", "date", "region_id")
+        np.testing.assert_array_equal(
+            opened["latent_S_true"].isel(run_id=0).values,
+            np.array([[11, 23], [13, 25]], dtype=np.float32),
+        )
 
 
 class TestResolveKappa0Path:
@@ -514,6 +672,10 @@ class TestLoadCompartmentLatents:
             "latent_E_true",
             "latent_A_true",
             "latent_I_true",
+            "latent_PH_true",
+            "latent_PD_true",
+            "latent_HR_true",
+            "latent_HD_true",
             "latent_R_true",
             "latent_D_true",
             "latent_CH_true",
@@ -527,59 +689,133 @@ class TestLoadCompartmentLatents:
             latents["latent_hospitalized_true"], np.array([[4, 3], [4, 5]])
         )
         np.testing.assert_array_equal(
+            latents["latent_HR_true"], np.array([[3, 2], [3, 4]])
+        )
+        np.testing.assert_array_equal(
             latents["latent_active_true"], np.array([[27, 30], [37, 40]])
         )
 
     def test_raises_if_compartment_file_missing(self, tmp_path):
         """Should fail clearly when latent export is requested without compartments."""
-        with pytest.raises(FileNotFoundError, match="Missing compartments_full.nc"):
+        with pytest.raises(FileNotFoundError, match=r"Missing compartments_full\.nc"):
             load_compartment_latents(tmp_path / "missing.nc")
 
 
 class TestGenerateWastewaterWithCensoring:
     """Tests for generate_wastewater_with_censoring function."""
 
-    def test_returns_wastewater_and_censor_arrays(self):
-        """Should return wastewater and censor flag arrays."""
+    def test_returns_wastewater_and_lod_surface(self):
+        """Should return wastewater and LoD per target per sampling event."""
         infections = np.ones((10, 5, 3)) * 100  # Time, Region, Age
         population = np.ones(5) * 1000
         gene_targets = {
             "N1": {
                 "sensitivity_scale": 500000,
-                "noise_sigma": 0.5,
-                "limit_of_detection": 375,
+                "noise_sigma": 0.0,
+                "limit_of_detection": 375.0,
                 "lod_probabilistic": False,
             }
         }
         wastewater_cfg = {"gamma_shape": 2.5, "gamma_scale": 4.0}
 
-        wastewater, censor = generate_wastewater_with_censoring(
-            infections, population, gene_targets, wastewater_cfg
+        wastewater, lod = generate_wastewater_with_censoring(
+            infections,
+            population,
+            gene_targets,
+            wastewater_cfg,
+            missing_rate=0.0,
         )
 
         assert wastewater.shape == (10, 5, 1)  # Time, Region, Targets
-        assert censor.shape == (10, 5, 1)
-        assert censor.dtype == np.int8
+        assert lod.shape == (10, 5, 1)  # Time, Region, Targets
 
-    def test_censor_flags_are_valid(self):
-        """Censor flags should be 0, 1, or 2."""
-        infections = np.ones((10, 5, 3)) * 100
-        population = np.ones(5) * 1000
+    def test_censored_values_equal_per_target_threshold(self):
+        """Below-LoD biomarker values should be pinned to each target's own LoD."""
+        infections = np.zeros((6, 2, 1))
+        population = np.ones(2) * 1000
         gene_targets = {
             "N1": {
-                "sensitivity_scale": 500000,
-                "noise_sigma": 0.5,
-                "limit_of_detection": 375,
+                "sensitivity_scale": 1.0,
+                "noise_sigma": 0.0,
+                "limit_of_detection": 10.0,
+                "transport_loss": 0.0,
                 "lod_probabilistic": False,
-            }
+            },
+            "N2": {
+                "sensitivity_scale": 1.0,
+                "noise_sigma": 0.0,
+                "limit_of_detection": 20.0,
+                "transport_loss": 0.0,
+                "lod_probabilistic": False,
+            },
+            "IP4": {
+                "sensitivity_scale": 1.0,
+                "noise_sigma": 0.0,
+                "limit_of_detection": 30.0,
+                "transport_loss": 0.0,
+                "lod_probabilistic": False,
+            },
         }
-        wastewater_cfg = {"gamma_shape": 2.5, "gamma_scale": 4.0}
+        wastewater_cfg = {"gamma_shape": 1.0, "gamma_scale": 1.0, "kernel_quantile": 0.95}
 
-        wastewater, censor = generate_wastewater_with_censoring(
-            infections, population, gene_targets, wastewater_cfg
+        wastewater, lod = generate_wastewater_with_censoring(
+            infections,
+            population,
+            gene_targets,
+            wastewater_cfg,
+            missing_rate=0.0,
         )
 
-        assert np.all((censor == 0) | (censor == 1) | (censor == 2))
+        np.testing.assert_array_equal(lod[:, :, 0], 10.0)
+        np.testing.assert_array_equal(lod[:, :, 1], 20.0)
+        np.testing.assert_array_equal(lod[:, :, 2], 30.0)
+        np.testing.assert_allclose(wastewater, lod)
+
+    def test_missing_wastewater_measurements_are_nan(self):
+        """Explicit wastewater missingness should set all targets for an event to NaN."""
+        infections = np.ones((20, 3, 1)) * 100
+        population = np.ones(3) * 1000
+        gene_targets = {
+            "N1": {
+                "sensitivity_scale": 1000.0,
+                "noise_sigma": 0.0,
+                "limit_of_detection": 1.0,
+                "transport_loss": 0.0,
+                "lod_probabilistic": False,
+            },
+            "N2": {
+                "sensitivity_scale": 1000.0,
+                "noise_sigma": 0.0,
+                "limit_of_detection": 1.0,
+                "transport_loss": 0.0,
+                "lod_probabilistic": False,
+            },
+        }
+        wastewater_cfg = {"gamma_shape": 1.0, "gamma_scale": 1.0, "kernel_quantile": 0.95}
+
+        wastewater, _ = generate_wastewater_with_censoring(
+            infections,
+            population,
+            gene_targets,
+            wastewater_cfg,
+            rng=np.random.default_rng(4),
+            missing_rate=0.5,
+            missing_gap_length=3,
+        )
+
+        event_missing = np.all(np.isnan(wastewater), axis=2)
+        assert np.any(event_missing)
+
+
+class TestRealizedJointSparsity:
+    def test_computes_joint_missing_fraction_from_final_arrays(self):
+        cases = np.array([[1.0, np.nan], [2.0, 3.0]])
+        hosp = np.array([[np.nan, np.nan]])
+        ww = np.array([[[1.0, np.nan], [2.0, np.nan]]])
+
+        sparsity = compute_realized_joint_sparsity([cases, hosp, ww])
+
+        assert sparsity == pytest.approx(5 / 10)
 
 
 class TestAssignSparsityTiers:
