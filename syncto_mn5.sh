@@ -39,6 +39,7 @@ rsync -avz --progress . "${DEST}" \
   --exclude=".ruff_cache/" \
   --exclude="*.egg-info/" \
   --exclude="runs/" \
+  --exclude="logs/" \
   --exclude="*.nc" \
   --exclude="*.zarr" \
   --exclude=".DS_Store" \

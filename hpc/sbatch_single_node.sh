@@ -2,9 +2,17 @@
 # Single-Node Maxed Out Synthetic Pipeline
 # Runs entire pipeline on one GPP node using the Python orchestrator
 #
-# Usage: sbatch sbatch_single_node.sh [--n-jobs N] [--n-profiles M]
-#   --n-jobs N: Number of parallel workers (default: 45)
+# Usage: sbatch [-J run_name] sbatch_single_node.sh [RUN_NAME] [--n-jobs N] [--n-profiles M]
+#   RUN_NAME: Name for this run (default: synthetic_catalonia)
+#             Output will be in runs/${RUN_NAME}/
+#             Pass -J RUN_NAME to sbatch for proper job naming in queue
+#   --n-jobs N: Number of parallel workers (default: 40)
 #   --n-profiles M: Number of epidemiological profiles (default: 50)
+#
+# Examples:
+#   sbatch hpc/sbatch_single_node.sh my_experiment --n-profiles 100
+#   sbatch -J exp1 hpc/sbatch_single_node.sh exp1 --n-profiles 50
+#   sbatch hpc/sbatch_single_node.sh  # Uses default: synthetic_catalonia
 #
 # CPU Allocation Strategy:
 # Uses a single --n-jobs parameter for both Python multiprocessing and Julia simulations.
@@ -32,9 +40,19 @@ set -uo pipefail
 
 export PROJECT_DIR=/gpfs/projects/bsc08/shared_projects/MePreCiSa/synthetic_episim
 
-# Parse command line arguments
-N_JOBS=""
-N_PROFILES=""
+# Defaults
+RUN_NAME=${RUN_NAME:-"synthetic_catalonia"}
+AVAILABLE_CPUS=${SLURM_CPUS_PER_TASK:-$(nproc)}
+N_JOBS=${N_JOBS:-40}
+N_PROFILES=${N_PROFILES:-50}
+BATCH_SIZE=${N_JOBS} # Process N_JOBS profiles at a time
+
+# Parse RUN_NAME as first positional argument (before optional flags)
+if [[ $# -gt 0 && ! "$1" =~ ^-- ]]; then
+  RUN_NAME="$1"
+  shift
+fi
+
 while [[ $# -gt 0 ]]; do
   case $1 in
   --n-jobs)
@@ -47,21 +65,16 @@ while [[ $# -gt 0 ]]; do
     ;;
   *)
     echo "Unknown option: $1"
-    echo "Usage: $0 [--n-jobs N] [--n-profiles M]"
+    echo "Usage: $0 [RUN_NAME] [--n-jobs N] [--n-profiles M]"
     exit 1
     ;;
   esac
 done
 
-# Set defaults
-AVAILABLE_CPUS=${SLURM_CPUS_PER_TASK:-$(nproc)}
-N_JOBS=${N_JOBS:-40}
-N_PROFILES=${N_PROFILES:-50}
-BATCH_SIZE=${N_JOBS} # Process N_JOBS profiles at a time
-
 echo "=========================================="
 echo "Single-Node Synthetic Pipeline"
 echo "=========================================="
+echo "Run name: ${RUN_NAME}"
 echo "Available CPUs: ${AVAILABLE_CPUS}"
 echo "n_jobs (parallel workers): ${N_JOBS}"
 echo "Profiles: ${N_PROFILES}"
@@ -72,7 +85,7 @@ echo ""
 
 # Configuration
 DATASET="catalonia"
-OUTPUT_BASE="$PROJECT_DIR/runs/synthetic_${DATASET}"
+OUTPUT_BASE="$PROJECT_DIR/runs/${RUN_NAME}"
 
 # Use NVMe for all temporary storage
 NVME_BASE="${TMPDIR:-/tmp}/synthetic_pipeline"
@@ -96,6 +109,7 @@ echo "=========================================="
 echo "Using unified Python orchestrator with NVMe staging..."
 
 python python/run_synthetic_pipeline.py \
+  --run-name ${RUN_NAME} \
   --n-profiles ${N_PROFILES} \
   --n-jobs ${N_JOBS} \
   --batch-size ${BATCH_SIZE} \
@@ -103,10 +117,7 @@ python python/run_synthetic_pipeline.py \
   --dataset ${DATASET} \
   --failure-tolerance 10 \
   --intervention-profile-fraction 0.0 \
-  --mobility-sigma-max 0.6 \
-  --sparsity-mode tiers \
-  --sparsity-tiers 0.05 0.20 0.40 0.60 0.80 \
-  --sparsity-seed 42
+  --mobility-sigma-max 0.6
 
 PYTHON_EXIT=$?
 
