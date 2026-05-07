@@ -1312,6 +1312,12 @@ class SyntheticDataGenerator:
         """
         from spike_detector import detect_spike_periods_from_zarr
 
+        if intervention_profiles is not None and len(intervention_profiles) == 0:
+            logger.info(
+                "No profiles selected for interventions; skipping spike-based intervention generation."
+            )
+            return 0
+
         # Validate baseline directory exists
         # The zarr file is in the parent directory of baseline_dir (output_base)
         # because it contains both baselines AND interventions (interventions are appended)
@@ -1762,6 +1768,12 @@ if __name__ == "__main__":
             logger.info(
                 f"Selected {len(intervention_profiles)}/{args.n_profiles} profiles for interventions"
             )
+
+        if intervention_profiles is not None and len(intervention_profiles) == 0:
+            logger.info(
+                "No intervention profiles selected; exiting intervention-only mode without generating scenarios."
+            )
+            sys.exit(0)
 
         # Create marker only if interventions will actually be generated
         # This prevents false positives when intervention_profile_fraction = 0
