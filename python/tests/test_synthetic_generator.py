@@ -105,6 +105,13 @@ class TestGenerateParameterGrid:
             "seed_fraction",
             "mobility_sigma_O",
             "mobility_sigma_D",
+            "mobility_calendar_enabled",
+            "mobility_generator",
+            "mobility_weekend_volume_factor",
+            "mobility_weekday_volume_jitter",
+            "mobility_edge_weekend_effect",
+            "mobility_intermit_prob",
+            "mobility_temporal_rho",
         ]
 
         for profile in profiles:
@@ -184,6 +191,19 @@ class TestGenerateParameterGrid:
         for profile in profiles:
             assert 0.1 <= profile["mobility_sigma_O"] <= 0.5
             assert 0.1 <= profile["mobility_sigma_D"] <= 0.5
+
+    def test_calendar_mobility_params_in_valid_ranges(self, mock_generator):
+        """Calendar mobility parameters should be sampled in configured ranges."""
+        profiles = mock_generator.generate_parameter_grid(n_profiles=20)
+
+        for profile in profiles:
+            assert profile["mobility_generator"] == "calendar_ipfp"
+            assert profile["mobility_calendar_enabled"] is True
+            assert 0.35 <= profile["mobility_weekend_volume_factor"] <= 0.55
+            assert 0.02 <= profile["mobility_weekday_volume_jitter"] <= 0.08
+            assert 0.6 <= profile["mobility_edge_weekend_effect"] <= 1.1
+            assert 0.05 <= profile["mobility_intermit_prob"] <= 0.25
+            assert 0.4 <= profile["mobility_temporal_rho"] <= 0.8
 
 
 class TestValidateProfileParameters:
