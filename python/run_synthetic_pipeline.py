@@ -281,6 +281,20 @@ def run_baseline_batch(
     intervention_seed=42,
     mobility_sigma_min=0.0,
     mobility_sigma_max=0.6,
+    mobility_generator="calendar_ipfp",
+    mobility_weekend_volume_factor_min=0.35,
+    mobility_weekend_volume_factor_max=0.55,
+    mobility_weekday_volume_jitter_min=0.02,
+    mobility_weekday_volume_jitter_max=0.08,
+    mobility_edge_weekend_effect_min=0.6,
+    mobility_edge_weekend_effect_max=1.1,
+    mobility_intermit_prob_min=0.05,
+    mobility_intermit_prob_max=0.25,
+    mobility_temporal_rho_min=0.4,
+    mobility_temporal_rho_max=0.8,
+    mobility_edge_class_mode="quantile_markov",
+    mobility_intermit_persistence_min=0.3,
+    mobility_intermit_persistence_max=0.9,
     n_jobs=-1,
 ):
     """Run a single baseline batch (used for initial run and retries).
@@ -327,6 +341,34 @@ def run_baseline_batch(
         str(mobility_sigma_min),
         "--mobility-sigma-max",
         str(mobility_sigma_max),
+        "--mobility-generator",
+        mobility_generator,
+        "--mobility-weekend-volume-factor-min",
+        str(mobility_weekend_volume_factor_min),
+        "--mobility-weekend-volume-factor-max",
+        str(mobility_weekend_volume_factor_max),
+        "--mobility-weekday-volume-jitter-min",
+        str(mobility_weekday_volume_jitter_min),
+        "--mobility-weekday-volume-jitter-max",
+        str(mobility_weekday_volume_jitter_max),
+        "--mobility-edge-weekend-effect-min",
+        str(mobility_edge_weekend_effect_min),
+        "--mobility-edge-weekend-effect-max",
+        str(mobility_edge_weekend_effect_max),
+        "--mobility-intermit-prob-min",
+        str(mobility_intermit_prob_min),
+        "--mobility-intermit-prob-max",
+        str(mobility_intermit_prob_max),
+        "--mobility-temporal-rho-min",
+        str(mobility_temporal_rho_min),
+        "--mobility-temporal-rho-max",
+        str(mobility_temporal_rho_max),
+        "--mobility-edge-class-mode",
+        mobility_edge_class_mode,
+        "--mobility-intermit-persistence-min",
+        str(mobility_intermit_persistence_min),
+        "--mobility-intermit-persistence-max",
+        str(mobility_intermit_persistence_max),
         "--n-jobs",
         str(n_jobs),
     ]
@@ -402,6 +444,20 @@ def run_two_phase_pipeline(
     intervention_seed=42,
     mobility_sigma_min=0.0,
     mobility_sigma_max=0.6,
+    mobility_generator="calendar_ipfp",
+    mobility_weekend_volume_factor_min=0.35,
+    mobility_weekend_volume_factor_max=0.55,
+    mobility_weekday_volume_jitter_min=0.02,
+    mobility_weekday_volume_jitter_max=0.08,
+    mobility_edge_weekend_effect_min=0.6,
+    mobility_edge_weekend_effect_max=1.1,
+    mobility_intermit_prob_min=0.05,
+    mobility_intermit_prob_max=0.25,
+    mobility_temporal_rho_min=0.4,
+    mobility_temporal_rho_max=0.8,
+    mobility_edge_class_mode="quantile_markov",
+    mobility_intermit_persistence_min=0.3,
+    mobility_intermit_persistence_max=0.9,
     n_jobs=-1,
     nvme_base=None,
     include_latents=True,
@@ -532,6 +588,20 @@ def run_two_phase_pipeline(
                         intervention_seed=intervention_seed,
                         mobility_sigma_min=mobility_sigma_min,
                         mobility_sigma_max=mobility_sigma_max,
+                        mobility_generator=mobility_generator,
+                        mobility_weekend_volume_factor_min=mobility_weekend_volume_factor_min,
+                        mobility_weekend_volume_factor_max=mobility_weekend_volume_factor_max,
+                        mobility_weekday_volume_jitter_min=mobility_weekday_volume_jitter_min,
+                        mobility_weekday_volume_jitter_max=mobility_weekday_volume_jitter_max,
+                        mobility_edge_weekend_effect_min=mobility_edge_weekend_effect_min,
+                        mobility_edge_weekend_effect_max=mobility_edge_weekend_effect_max,
+                        mobility_intermit_prob_min=mobility_intermit_prob_min,
+                        mobility_intermit_prob_max=mobility_intermit_prob_max,
+                        mobility_temporal_rho_min=mobility_temporal_rho_min,
+                        mobility_temporal_rho_max=mobility_temporal_rho_max,
+                        mobility_edge_class_mode=mobility_edge_class_mode,
+                        mobility_intermit_persistence_min=mobility_intermit_persistence_min,
+                        mobility_intermit_persistence_max=mobility_intermit_persistence_max,
                         n_jobs=n_jobs,
                     )
 
@@ -562,6 +632,20 @@ def run_two_phase_pipeline(
                         intervention_seed=retry_seed,  # Use new seed for retry
                         mobility_sigma_min=mobility_sigma_min,
                         mobility_sigma_max=mobility_sigma_max,
+                        mobility_generator=mobility_generator,
+                        mobility_weekend_volume_factor_min=mobility_weekend_volume_factor_min,
+                        mobility_weekend_volume_factor_max=mobility_weekend_volume_factor_max,
+                        mobility_weekday_volume_jitter_min=mobility_weekday_volume_jitter_min,
+                        mobility_weekday_volume_jitter_max=mobility_weekday_volume_jitter_max,
+                        mobility_edge_weekend_effect_min=mobility_edge_weekend_effect_min,
+                        mobility_edge_weekend_effect_max=mobility_edge_weekend_effect_max,
+                        mobility_intermit_prob_min=mobility_intermit_prob_min,
+                        mobility_intermit_prob_max=mobility_intermit_prob_max,
+                        mobility_temporal_rho_min=mobility_temporal_rho_min,
+                        mobility_temporal_rho_max=mobility_temporal_rho_max,
+                        mobility_edge_class_mode=mobility_edge_class_mode,
+                        mobility_intermit_persistence_min=mobility_intermit_persistence_min,
+                        mobility_intermit_persistence_max=mobility_intermit_persistence_max,
                         n_jobs=n_jobs,
                     )
 
@@ -775,6 +859,34 @@ def run_two_phase_pipeline(
             str(mobility_sigma_min),
             "--mobility-sigma-max",
             str(mobility_sigma_max),
+            "--mobility-generator",
+            mobility_generator,
+            "--mobility-weekend-volume-factor-min",
+            str(mobility_weekend_volume_factor_min),
+            "--mobility-weekend-volume-factor-max",
+            str(mobility_weekend_volume_factor_max),
+            "--mobility-weekday-volume-jitter-min",
+            str(mobility_weekday_volume_jitter_min),
+            "--mobility-weekday-volume-jitter-max",
+            str(mobility_weekday_volume_jitter_max),
+            "--mobility-edge-weekend-effect-min",
+            str(mobility_edge_weekend_effect_min),
+            "--mobility-edge-weekend-effect-max",
+            str(mobility_edge_weekend_effect_max),
+            "--mobility-intermit-prob-min",
+            str(mobility_intermit_prob_min),
+            "--mobility-intermit-prob-max",
+            str(mobility_intermit_prob_max),
+            "--mobility-temporal-rho-min",
+            str(mobility_temporal_rho_min),
+            "--mobility-temporal-rho-max",
+            str(mobility_temporal_rho_max),
+            "--mobility-edge-class-mode",
+            mobility_edge_class_mode,
+            "--mobility-intermit-persistence-min",
+            str(mobility_intermit_persistence_min),
+            "--mobility-intermit-persistence-max",
+            str(mobility_intermit_persistence_max),
             "--n-jobs",
             str(n_jobs),
         ]
@@ -1031,6 +1143,90 @@ def main():
         help="Maximum mobility sigma for origin/destination noise (default: 0.6).",
     )
     parser.add_argument(
+        "--mobility-generator",
+        choices=["ipfp_simple", "calendar_ipfp"],
+        default="calendar_ipfp",
+        help="Mobility generator mode (default: calendar_ipfp).",
+    )
+    parser.add_argument(
+        "--mobility-weekend-volume-factor-min",
+        type=float,
+        default=0.35,
+        help="Minimum weekend off-diagonal volume factor (default: 0.35).",
+    )
+    parser.add_argument(
+        "--mobility-weekend-volume-factor-max",
+        type=float,
+        default=0.55,
+        help="Maximum weekend off-diagonal volume factor (default: 0.55).",
+    )
+    parser.add_argument(
+        "--mobility-weekday-volume-jitter-min",
+        type=float,
+        default=0.02,
+        help="Minimum weekday off-diagonal jitter sigma (default: 0.02).",
+    )
+    parser.add_argument(
+        "--mobility-weekday-volume-jitter-max",
+        type=float,
+        default=0.08,
+        help="Maximum weekday off-diagonal jitter sigma (default: 0.08).",
+    )
+    parser.add_argument(
+        "--mobility-edge-weekend-effect-min",
+        type=float,
+        default=0.6,
+        help="Minimum selected-edge weekend suppression effect (default: 0.6).",
+    )
+    parser.add_argument(
+        "--mobility-edge-weekend-effect-max",
+        type=float,
+        default=1.1,
+        help="Maximum selected-edge weekend suppression effect (default: 1.1).",
+    )
+    parser.add_argument(
+        "--mobility-intermit-prob-min",
+        type=float,
+        default=0.05,
+        help="Minimum weak-edge intermittency probability (default: 0.05).",
+    )
+    parser.add_argument(
+        "--mobility-intermit-prob-max",
+        type=float,
+        default=0.25,
+        help="Maximum weak-edge intermittency probability (default: 0.25).",
+    )
+    parser.add_argument(
+        "--mobility-temporal-rho-min",
+        type=float,
+        default=0.4,
+        help="Minimum AR(1) residual persistence for mobility noise (default: 0.4).",
+    )
+    parser.add_argument(
+        "--mobility-temporal-rho-max",
+        type=float,
+        default=0.8,
+        help="Maximum AR(1) residual persistence for mobility noise (default: 0.8).",
+    )
+    parser.add_argument(
+        "--mobility-edge-class-mode",
+        choices=["none", "quantile_markov"],
+        default="quantile_markov",
+        help="Edge class mode for intermittent edge dynamics (default: quantile_markov).",
+    )
+    parser.add_argument(
+        "--mobility-intermit-persistence-min",
+        type=float,
+        default=0.3,
+        help="Minimum intermittency persistence for Markov edge dynamics (default: 0.3).",
+    )
+    parser.add_argument(
+        "--mobility-intermit-persistence-max",
+        type=float,
+        default=0.9,
+        help="Maximum intermittency persistence for Markov edge dynamics (default: 0.9).",
+    )
+    parser.add_argument(
         "--n-jobs",
         type=int,
         default=-1,
@@ -1084,6 +1280,22 @@ def main():
     logger.info(f"Data Folder: {DATA_FOLDER}")
     logger.info(f"Output Folder: {OUTPUT_FOLDER}")
 
+    if args.dry_run:
+        logger.info("DRY RUN - Two-Phase Pipeline:")
+        logger.info(f"  Total Profiles: {args.n_profiles}")
+        logger.info(f"  Batch Size: {args.batch_size}")
+        logger.info(f"  Spike Threshold: {args.spike_threshold}")
+        logger.info(
+            f"  Mobility Sigma Range: [{args.mobility_sigma_min}, {args.mobility_sigma_max}]"
+        )
+        logger.info(f"  Mobility Generator: {args.mobility_generator}")
+        logger.info(
+            f"  Batches: {(args.n_profiles + args.batch_size - 1) // args.batch_size}"
+        )
+        logger.info(f"  n_jobs: {args.n_jobs}")
+        logger.info(f"  NVMe Base: {args.nvme_base or 'None (GPFS direct)'}")
+        return
+
     # Clean if requested (Global Clean)
     if args.clean:
         clean_output()
@@ -1101,21 +1313,6 @@ def main():
         else:
             logger.info(f"Removing existing zarr output: {zarr_path}")
             shutil.rmtree(zarr_path)
-
-    if args.dry_run:
-        logger.info("DRY RUN - Two-Phase Pipeline:")
-        logger.info(f"  Total Profiles: {args.n_profiles}")
-        logger.info(f"  Batch Size: {args.batch_size}")
-        logger.info(f"  Spike Threshold: {args.spike_threshold}")
-        logger.info(
-            f"  Mobility Sigma Range: [{args.mobility_sigma_min}, {args.mobility_sigma_max}]"
-        )
-        logger.info(
-            f"  Batches: {(args.n_profiles + args.batch_size - 1) // args.batch_size}"
-        )
-        logger.info(f"  n_jobs: {args.n_jobs}")
-        logger.info(f"  NVMe Base: {args.nvme_base or 'None (GPFS direct)'}")
-        return
 
     # Execute Two-Phase Pipeline
     try:
@@ -1144,6 +1341,20 @@ def main():
             intervention_seed=args.intervention_seed,
             mobility_sigma_min=args.mobility_sigma_min,
             mobility_sigma_max=args.mobility_sigma_max,
+            mobility_generator=args.mobility_generator,
+            mobility_weekend_volume_factor_min=args.mobility_weekend_volume_factor_min,
+            mobility_weekend_volume_factor_max=args.mobility_weekend_volume_factor_max,
+            mobility_weekday_volume_jitter_min=args.mobility_weekday_volume_jitter_min,
+            mobility_weekday_volume_jitter_max=args.mobility_weekday_volume_jitter_max,
+            mobility_edge_weekend_effect_min=args.mobility_edge_weekend_effect_min,
+            mobility_edge_weekend_effect_max=args.mobility_edge_weekend_effect_max,
+            mobility_intermit_prob_min=args.mobility_intermit_prob_min,
+            mobility_intermit_prob_max=args.mobility_intermit_prob_max,
+            mobility_temporal_rho_min=args.mobility_temporal_rho_min,
+            mobility_temporal_rho_max=args.mobility_temporal_rho_max,
+            mobility_edge_class_mode=args.mobility_edge_class_mode,
+            mobility_intermit_persistence_min=args.mobility_intermit_persistence_min,
+            mobility_intermit_persistence_max=args.mobility_intermit_persistence_max,
             n_jobs=args.n_jobs,
             nvme_base=args.nvme_base,
             include_latents=args.include_latents,

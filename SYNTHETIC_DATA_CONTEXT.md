@@ -100,6 +100,7 @@ These variables contain the *true* values from the simulation. Use them **only**
 | `infections_true` | `(run_id, region_id, date)` | Daily infections (sum over ages) |
 | `hospitalizations_true` | `(run_id, region_id, date)` | Daily hospitalizations |
 | `deaths_true` | `(run_id, region_id, date)` | Daily deaths |
+| `vaccination_rate_true` | `(run_id, date, region_id)` | Fraction of population vaccinated (V + PV statuses). Only present when using MMCACovid19Vac engine with `--include-latents`; absent (zeros) for non-Vac engine runs |
 
 **⚠️ Critical**: Ground truth variables have different dimension ordering than raw observations. See "Coordinate System Note" below.
 
@@ -178,6 +179,7 @@ When the processor is run with `--include-latents`, the zarr also includes simul
 | `latent_CH_true` | `(run_id, date, region_id)` | Confined-population latent |
 | `latent_hospitalized_true` | `(run_id, date, region_id)` | `HR + HD` |
 | `latent_active_true` | `(run_id, date, region_id)` | `E + A + I + PH + PD + HR + HD` |
+| `vaccination_rate_true` | `(run_id, date, region_id)` | Fraction of population with any vaccination status (V + PV) / total. Only populated when using MMCACovid19Vac engine |
 
 These variables are intended for synthetic-only auxiliary supervision. They should not be treated as features available in a real-data deployment.
 

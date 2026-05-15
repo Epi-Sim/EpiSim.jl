@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 import os
@@ -23,6 +24,12 @@ logging.basicConfig(
 logger = logging.getLogger("SyntheticGenerator")
 
 
+def stable_seed_from_run_id(run_id: str) -> int:
+    """Create a reproducible non-negative seed from a run id."""
+    digest = hashlib.sha256(run_id.encode("utf-8")).digest()
+    return int.from_bytes(digest[:4], "little", signed=False)
+
+
 def generate_profile_standalone(
     profile: dict,
     base_config_path: str,
@@ -32,6 +39,23 @@ def generate_profile_standalone(
     intervention_profiles: set = None,
     mobility_sigma_min: float = 0.0,
     mobility_sigma_max: float = 0.6,
+    mobility_generator: str = "calendar_ipfp",
+    mobility_weekend_volume_factor_min: float = 0.35,
+    mobility_weekend_volume_factor_max: float = 0.55,
+    mobility_weekday_volume_jitter_min: float = 0.02,
+    mobility_weekday_volume_jitter_max: float = 0.08,
+    mobility_edge_weekend_effect_min: float = 0.6,
+    mobility_edge_weekend_effect_max: float = 1.1,
+    mobility_intermit_prob_min: float = 0.05,
+    mobility_intermit_prob_max: float = 0.25,
+    mobility_temporal_rho_min: float = 0.4,
+    mobility_temporal_rho_max: float = 0.8,
+    mobility_edge_class_mode: str = "quantile_markov",
+    mobility_intermit_persistence_min: float = 0.3,
+    mobility_intermit_persistence_max: float = 0.9,
+    vacc_start: int = None,
+    vacc_duration: int = None,
+    vacc_rate_per_day: float = None,
 ) -> dict:
     """
     Standalone function to generate a single profile's configuration.
@@ -49,6 +73,23 @@ def generate_profile_standalone(
         )
         generator.mobility_sigma_min = mobility_sigma_min
         generator.mobility_sigma_max = mobility_sigma_max
+        generator.mobility_generator = mobility_generator
+        generator.mobility_weekend_volume_factor_min = mobility_weekend_volume_factor_min
+        generator.mobility_weekend_volume_factor_max = mobility_weekend_volume_factor_max
+        generator.mobility_weekday_volume_jitter_min = mobility_weekday_volume_jitter_min
+        generator.mobility_weekday_volume_jitter_max = mobility_weekday_volume_jitter_max
+        generator.mobility_edge_weekend_effect_min = mobility_edge_weekend_effect_min
+        generator.mobility_edge_weekend_effect_max = mobility_edge_weekend_effect_max
+        generator.mobility_intermit_prob_min = mobility_intermit_prob_min
+        generator.mobility_intermit_prob_max = mobility_intermit_prob_max
+        generator.mobility_temporal_rho_min = mobility_temporal_rho_min
+        generator.mobility_temporal_rho_max = mobility_temporal_rho_max
+        generator.mobility_edge_class_mode = mobility_edge_class_mode
+        generator.mobility_intermit_persistence_min = mobility_intermit_persistence_min
+        generator.mobility_intermit_persistence_max = mobility_intermit_persistence_max
+        generator.vacc_start = vacc_start
+        generator.vacc_duration = vacc_duration
+        generator.vacc_rate_per_day = vacc_rate_per_day
 
         # Run sweep for this profile
         generator.run_profile_sweep(
@@ -125,6 +166,25 @@ class SyntheticDataGenerator:
 
         self.mobility_sigma_min = 0.0
         self.mobility_sigma_max = 0.6
+        self.mobility_generator = "calendar_ipfp"
+        self.mobility_weekend_volume_factor_min = 0.35
+        self.mobility_weekend_volume_factor_max = 0.55
+        self.mobility_weekday_volume_jitter_min = 0.02
+        self.mobility_weekday_volume_jitter_max = 0.08
+        self.mobility_edge_weekend_effect_min = 0.6
+        self.mobility_edge_weekend_effect_max = 1.1
+        self.mobility_intermit_prob_min = 0.05
+        self.mobility_intermit_prob_max = 0.25
+        self.mobility_temporal_rho_min = 0.4
+        self.mobility_temporal_rho_max = 0.8
+        self.mobility_edge_class_mode = "quantile_markov"
+        self.mobility_intermit_persistence_min = 0.3
+        self.mobility_intermit_persistence_max = 0.9
+
+        # Vaccination parameters (set from CLI, used only with MMCACovid19Vac engine)
+        self.vacc_start = None
+        self.vacc_duration = None
+        self.vacc_rate_per_day = None
 
         # Configuration for intervention sweep (set during run_profile_sweep, used during retry)
         self.baseline_only = False
@@ -150,6 +210,19 @@ class SyntheticDataGenerator:
         seed=42,
         mobility_sigma_min=None,
         mobility_sigma_max=None,
+        mobility_weekend_volume_factor_min=None,
+        mobility_weekend_volume_factor_max=None,
+        mobility_weekday_volume_jitter_min=None,
+        mobility_weekday_volume_jitter_max=None,
+        mobility_edge_weekend_effect_min=None,
+        mobility_edge_weekend_effect_max=None,
+        mobility_intermit_prob_min=None,
+        mobility_intermit_prob_max=None,
+        mobility_temporal_rho_min=None,
+        mobility_temporal_rho_max=None,
+        mobility_edge_class_mode=None,
+        mobility_intermit_persistence_min=None,
+        mobility_intermit_persistence_max=None,
     ):
         """
         Generate Latin Hypercube Samples for Epidemiological Profiles:
@@ -165,20 +238,52 @@ class SyntheticDataGenerator:
         9: Seed Fraction [0.001, 0.05] (Fraction of region population, capped at 10%)
         10: Mobility Sigma O [mobility_sigma_min, mobility_sigma_max] - Origin outflow noise level
         11: Mobility Sigma D [mobility_sigma_min, mobility_sigma_max] - Destination inflow noise level
+        12: Mobility Weekend Volume Factor
+        13: Mobility Weekday Volume Jitter
+        14: Mobility Edge Weekend Effect
+        15: Mobility Intermittency Probability
+        16: Mobility Temporal Rho
+        17: Mobility Intermittency Persistence
 
         NOTE: We enforce T_inf <= T_inc to ensure μᵍ >= ηᵍ for model stability.
         """
         # Use rng parameter for scipy >= 1.10, fallback to seed for older versions
         try:
-            sampler = qmc.LatinHypercube(d=12, seed=int(seed))
+            sampler = qmc.LatinHypercube(d=18, seed=int(seed))
         except TypeError:
-            sampler = qmc.LatinHypercube(d=12, rng=np.random.default_rng(int(seed)))
+            sampler = qmc.LatinHypercube(d=18, rng=np.random.default_rng(int(seed)))
         sample = sampler.random(n=n_profiles)
 
         if mobility_sigma_min is None:
             mobility_sigma_min = self.mobility_sigma_min
         if mobility_sigma_max is None:
             mobility_sigma_max = self.mobility_sigma_max
+        if mobility_weekend_volume_factor_min is None:
+            mobility_weekend_volume_factor_min = self.mobility_weekend_volume_factor_min
+        if mobility_weekend_volume_factor_max is None:
+            mobility_weekend_volume_factor_max = self.mobility_weekend_volume_factor_max
+        if mobility_weekday_volume_jitter_min is None:
+            mobility_weekday_volume_jitter_min = self.mobility_weekday_volume_jitter_min
+        if mobility_weekday_volume_jitter_max is None:
+            mobility_weekday_volume_jitter_max = self.mobility_weekday_volume_jitter_max
+        if mobility_edge_weekend_effect_min is None:
+            mobility_edge_weekend_effect_min = self.mobility_edge_weekend_effect_min
+        if mobility_edge_weekend_effect_max is None:
+            mobility_edge_weekend_effect_max = self.mobility_edge_weekend_effect_max
+        if mobility_intermit_prob_min is None:
+            mobility_intermit_prob_min = self.mobility_intermit_prob_min
+        if mobility_intermit_prob_max is None:
+            mobility_intermit_prob_max = self.mobility_intermit_prob_max
+        if mobility_temporal_rho_min is None:
+            mobility_temporal_rho_min = self.mobility_temporal_rho_min
+        if mobility_temporal_rho_max is None:
+            mobility_temporal_rho_max = self.mobility_temporal_rho_max
+        if mobility_edge_class_mode is None:
+            mobility_edge_class_mode = self.mobility_edge_class_mode
+        if mobility_intermit_persistence_min is None:
+            mobility_intermit_persistence_min = self.mobility_intermit_persistence_min
+        if mobility_intermit_persistence_max is None:
+            mobility_intermit_persistence_max = self.mobility_intermit_persistence_max
 
         # Scale samples
         # Updated ranges based on COVID-19 literature review
@@ -200,6 +305,12 @@ class SyntheticDataGenerator:
             0.001,  # seed_fraction (min 0.1% of population)
             mobility_sigma_min,
             mobility_sigma_min,
+            mobility_weekend_volume_factor_min,
+            mobility_weekday_volume_jitter_min,
+            mobility_edge_weekend_effect_min,
+            mobility_intermit_prob_min,
+            mobility_temporal_rho_min,
+            mobility_intermit_persistence_min,
         ]
         u_bounds = [
             5.0,  # R0_scale: up to ~R0=10 for Omicron
@@ -214,6 +325,12 @@ class SyntheticDataGenerator:
             0.05,  # seed_fraction (max 5% of population)
             mobility_sigma_max,
             mobility_sigma_max,
+            mobility_weekend_volume_factor_max,
+            mobility_weekday_volume_jitter_max,
+            mobility_edge_weekend_effect_max,
+            mobility_intermit_prob_max,
+            mobility_temporal_rho_max,
+            mobility_intermit_persistence_max,
         ]
 
         scaled = qmc.scale(sample, l_bounds, u_bounds)
@@ -235,6 +352,12 @@ class SyntheticDataGenerator:
                 seed_fraction,
                 mobility_sigma_O,
                 mobility_sigma_D,
+                mobility_weekend_volume_factor,
+                mobility_weekday_volume_jitter,
+                mobility_edge_weekend_effect,
+                mobility_intermit_prob,
+                mobility_temporal_rho,
+                mobility_intermit_persistence,
             ) = row
 
             # Enforce T_inf <= T_inc to ensure μᵍ >= ηᵍ for model stability
@@ -281,6 +404,16 @@ class SyntheticDataGenerator:
                     "seed_fraction": seed_fraction,
                     "mobility_sigma_O": mobility_sigma_O,
                     "mobility_sigma_D": mobility_sigma_D,
+                    "mobility_calendar_enabled": self.mobility_generator
+                    == "calendar_ipfp",
+                    "mobility_generator": self.mobility_generator,
+                    "mobility_weekend_volume_factor": mobility_weekend_volume_factor,
+                    "mobility_weekday_volume_jitter": mobility_weekday_volume_jitter,
+                    "mobility_edge_weekend_effect": mobility_edge_weekend_effect,
+                    "mobility_intermit_prob": mobility_intermit_prob,
+                    "mobility_temporal_rho": mobility_temporal_rho,
+                    "mobility_edge_class_mode": mobility_edge_class_mode,
+                    "mobility_intermit_persistence": mobility_intermit_persistence,
                 }
             )
 
@@ -499,12 +632,29 @@ class SyntheticDataGenerator:
         # 2. Generate new time-varying mobility
         mobility_sigma_O = profile.get("mobility_sigma_O", 0.0) if profile else 0.0
         mobility_sigma_D = profile.get("mobility_sigma_D", 0.0) if profile else 0.0
+        mobility_generator = (
+            profile.get("mobility_generator", self.mobility_generator)
+            if profile
+            else self.mobility_generator
+        )
+        mobility_calendar_enabled = (
+            profile.get("mobility_calendar_enabled", mobility_generator == "calendar_ipfp")
+            if profile
+            else mobility_generator == "calendar_ipfp"
+        )
 
-        if mobility_sigma_O > 0 or mobility_sigma_D > 0:
+        should_generate_time_varying = (
+            mobility_sigma_O > 0
+            or mobility_sigma_D > 0
+            or mobility_generator == "calendar_ipfp"
+        )
+
+        if should_generate_time_varying:
             # Generate time-varying mobility series
             logger.info(
                 f"Generating time-varying mobility for {run_id}: "
-                f"sigma_O={mobility_sigma_O:.3f}, sigma_D={mobility_sigma_D:.3f}"
+                f"mode={mobility_generator}, sigma_O={mobility_sigma_O:.3f}, "
+                f"sigma_D={mobility_sigma_D:.3f}"
             )
 
             # Load baseline mobility
@@ -527,11 +677,25 @@ class SyntheticDataGenerator:
                 baseline_R=(edgelist, R_baseline),
                 sigma_O=mobility_sigma_O,
                 sigma_D=mobility_sigma_D,
-                rng_seed=42,
+                rng_seed=stable_seed_from_run_id(run_id),
+                generator_mode=mobility_generator,
+                start_date=str(start_date),
+                weekend_volume_factor=profile.get(
+                    "mobility_weekend_volume_factor", 0.45
+                ),
+                weekday_volume_jitter=profile.get(
+                    "mobility_weekday_volume_jitter", 0.04
+                ),
+                edge_weekend_effect=profile.get("mobility_edge_weekend_effect", 0.8),
+                intermit_prob=profile.get("mobility_intermit_prob", 0.1),
+                temporal_rho=profile.get("mobility_temporal_rho", 0.6),
+                edge_class_mode=profile.get("mobility_edge_class_mode", "none"),
+                intermit_persistence=profile.get("mobility_intermit_persistence", 0.6),
             )
 
             # Generate mobility series
-            R_series = generator.generate_series(T=T, rng_seed=hash(run_id))
+            mobility_seed = stable_seed_from_run_id(run_id)
+            R_series = generator.generate_series(T=T, rng_seed=mobility_seed)
 
             # Save to NPZ file
             mobility_path = os.path.join(mobility_dir, "mobility_series.npz")
@@ -544,6 +708,22 @@ class SyntheticDataGenerator:
                 M=M,
                 sigma_O=mobility_sigma_O,
                 sigma_D=mobility_sigma_D,
+                generator_mode=mobility_generator,
+                mobility_calendar_enabled=mobility_calendar_enabled,
+                weekend_volume_factor=profile.get(
+                    "mobility_weekend_volume_factor", 0.45
+                ),
+                weekday_volume_jitter=profile.get(
+                    "mobility_weekday_volume_jitter", 0.04
+                ),
+                edge_weekend_effect=profile.get("mobility_edge_weekend_effect", 0.8),
+                intermit_prob=profile.get("mobility_intermit_prob", 0.1),
+                temporal_rho=profile.get("mobility_temporal_rho", 0.6),
+                edge_class_mode=profile.get("mobility_edge_class_mode", "none"),
+                intermit_persistence=profile.get("mobility_intermit_persistence", 0.6),
+                start_date=str(start_date),
+                end_date=str(end_date),
+                rng_seed=mobility_seed,
             )
 
             # Still write the baseline CSV for compatibility
@@ -726,6 +906,16 @@ class SyntheticDataGenerator:
 
         config.inject(updates)
 
+        # Inject vaccination parameters if using Vac engine
+        if self.vacc_start is not None:
+            vacc_updates = {
+                "vaccination.are_there_vaccines": True,
+                "vaccination.start_vacc": self.vacc_start,
+                "vaccination.dur_vacc": self.vacc_duration,
+                "vaccination.percentage_of_vacc_per_day": self.vacc_rate_per_day,
+            }
+            config.inject(vacc_updates)
+
         # Always set kappa0_filename - CSV is now single source of truth for κ₀
         config.update_param("data.kappa0_filename", kappa0_path)
 
@@ -836,6 +1026,23 @@ class SyntheticDataGenerator:
                     intervention_profiles=intervention_profiles,
                     mobility_sigma_min=self.mobility_sigma_min,
                     mobility_sigma_max=self.mobility_sigma_max,
+                    mobility_generator=self.mobility_generator,
+                    mobility_weekend_volume_factor_min=self.mobility_weekend_volume_factor_min,
+                    mobility_weekend_volume_factor_max=self.mobility_weekend_volume_factor_max,
+                    mobility_weekday_volume_jitter_min=self.mobility_weekday_volume_jitter_min,
+                    mobility_weekday_volume_jitter_max=self.mobility_weekday_volume_jitter_max,
+                    mobility_edge_weekend_effect_min=self.mobility_edge_weekend_effect_min,
+                    mobility_edge_weekend_effect_max=self.mobility_edge_weekend_effect_max,
+                    mobility_intermit_prob_min=self.mobility_intermit_prob_min,
+                    mobility_intermit_prob_max=self.mobility_intermit_prob_max,
+                    mobility_temporal_rho_min=self.mobility_temporal_rho_min,
+                    mobility_temporal_rho_max=self.mobility_temporal_rho_max,
+                    mobility_edge_class_mode=self.mobility_edge_class_mode,
+                    mobility_intermit_persistence_min=self.mobility_intermit_persistence_min,
+                    mobility_intermit_persistence_max=self.mobility_intermit_persistence_max,
+                    vacc_start=self.vacc_start,
+                    vacc_duration=self.vacc_duration,
+                    vacc_rate_per_day=self.vacc_rate_per_day,
                 )
                 results.append(result)
             return results
@@ -862,6 +1069,23 @@ class SyntheticDataGenerator:
                     intervention_profiles=intervention_profiles,
                     mobility_sigma_min=self.mobility_sigma_min,
                     mobility_sigma_max=self.mobility_sigma_max,
+                    mobility_generator=self.mobility_generator,
+                    mobility_weekend_volume_factor_min=self.mobility_weekend_volume_factor_min,
+                    mobility_weekend_volume_factor_max=self.mobility_weekend_volume_factor_max,
+                    mobility_weekday_volume_jitter_min=self.mobility_weekday_volume_jitter_min,
+                    mobility_weekday_volume_jitter_max=self.mobility_weekday_volume_jitter_max,
+                    mobility_edge_weekend_effect_min=self.mobility_edge_weekend_effect_min,
+                    mobility_edge_weekend_effect_max=self.mobility_edge_weekend_effect_max,
+                    mobility_intermit_prob_min=self.mobility_intermit_prob_min,
+                    mobility_intermit_prob_max=self.mobility_intermit_prob_max,
+                    mobility_temporal_rho_min=self.mobility_temporal_rho_min,
+                    mobility_temporal_rho_max=self.mobility_temporal_rho_max,
+                    mobility_edge_class_mode=self.mobility_edge_class_mode,
+                    mobility_intermit_persistence_min=self.mobility_intermit_persistence_min,
+                    mobility_intermit_persistence_max=self.mobility_intermit_persistence_max,
+                    vacc_start=self.vacc_start,
+                    vacc_duration=self.vacc_duration,
+                    vacc_rate_per_day=self.vacc_rate_per_day,
                 )
                 future_to_profile[future] = profile
 
@@ -1701,8 +1925,123 @@ if __name__ == "__main__":
         default=0.6,
         help="Maximum mobility sigma for origin/destination noise (default: 0.6).",
     )
+    parser.add_argument(
+        "--mobility-generator",
+        choices=["ipfp_simple", "calendar_ipfp"],
+        default="calendar_ipfp",
+        help="Mobility generator mode (default: calendar_ipfp).",
+    )
+    parser.add_argument(
+        "--mobility-weekend-volume-factor-min",
+        type=float,
+        default=0.35,
+        help="Minimum weekend off-diagonal volume factor (default: 0.35).",
+    )
+    parser.add_argument(
+        "--mobility-weekend-volume-factor-max",
+        type=float,
+        default=0.55,
+        help="Maximum weekend off-diagonal volume factor (default: 0.55).",
+    )
+    parser.add_argument(
+        "--mobility-weekday-volume-jitter-min",
+        type=float,
+        default=0.02,
+        help="Minimum weekday off-diagonal jitter sigma (default: 0.02).",
+    )
+    parser.add_argument(
+        "--mobility-weekday-volume-jitter-max",
+        type=float,
+        default=0.08,
+        help="Maximum weekday off-diagonal jitter sigma (default: 0.08).",
+    )
+    parser.add_argument(
+        "--mobility-edge-weekend-effect-min",
+        type=float,
+        default=0.6,
+        help="Minimum selected-edge weekend suppression effect (default: 0.6).",
+    )
+    parser.add_argument(
+        "--mobility-edge-weekend-effect-max",
+        type=float,
+        default=1.1,
+        help="Maximum selected-edge weekend suppression effect (default: 1.1).",
+    )
+    parser.add_argument(
+        "--mobility-intermit-prob-min",
+        type=float,
+        default=0.05,
+        help="Minimum weak-edge intermittency probability (default: 0.05).",
+    )
+    parser.add_argument(
+        "--mobility-intermit-prob-max",
+        type=float,
+        default=0.25,
+        help="Maximum weak-edge intermittency probability (default: 0.25).",
+    )
+    parser.add_argument(
+        "--mobility-temporal-rho-min",
+        type=float,
+        default=0.4,
+        help="Minimum AR(1) residual persistence for mobility noise (default: 0.4).",
+    )
+    parser.add_argument(
+        "--mobility-temporal-rho-max",
+        type=float,
+        default=0.8,
+        help="Maximum AR(1) residual persistence for mobility noise (default: 0.8).",
+    )
+    parser.add_argument(
+        "--mobility-edge-class-mode",
+        choices=["none", "quantile_markov"],
+        default="quantile_markov",
+        help="Edge class mode for intermittent edge dynamics (default: quantile_markov).",
+    )
+    parser.add_argument(
+        "--mobility-intermit-persistence-min",
+        type=float,
+        default=0.3,
+        help="Minimum intermittency persistence for Markov edge dynamics (default: 0.3).",
+    )
+    parser.add_argument(
+        "--mobility-intermit-persistence-max",
+        type=float,
+        default=0.9,
+        help="Maximum intermittency persistence for Markov edge dynamics (default: 0.9).",
+    )
+
+    parser.add_argument(
+        "--engine",
+        type=str,
+        default="MMCACovid19",
+        choices=["MMCACovid19", "MMCACovid19Vac"],
+        help="Simulation engine to use (default: MMCACovid19).",
+    )
+    parser.add_argument(
+        "--vacc-start",
+        type=int,
+        default=None,
+        help="Vaccination start day (0-indexed from simulation start). Requires --engine MMCACovid19Vac.",
+    )
+    parser.add_argument(
+        "--vacc-duration",
+        type=int,
+        default=None,
+        help="Vaccination campaign duration in days. Requires --engine MMCACovid19Vac.",
+    )
+    parser.add_argument(
+        "--vacc-rate-per-day",
+        type=float,
+        default=None,
+        help="Fraction of population vaccinated per day. Requires --engine MMCACovid19Vac.",
+    )
 
     args = parser.parse_args()
+
+    # Validate vaccination args require Vac engine
+    vacc_args = [args.vacc_start, args.vacc_duration, args.vacc_rate_per_day]
+    if any(v is not None for v in vacc_args) and args.engine != "MMCACovid19Vac":
+        parser.error("--vacc-start/--vacc-duration/--vacc-rate-per-day require --engine MMCACovid19Vac")
 
     # Paths
     PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -1713,7 +2052,10 @@ if __name__ == "__main__":
 
     CONFIG_PATH = args.config
     if not CONFIG_PATH:
-        CONFIG_PATH = os.path.join(DATA_FOLDER, "config_MMCACovid19.json")
+        if args.engine == "MMCACovid19Vac":
+            CONFIG_PATH = os.path.join(DATA_FOLDER, "config_MMCACovid19-vac.json")
+        else:
+            CONFIG_PATH = os.path.join(DATA_FOLDER, "config_MMCACovid19.json")
 
     OUTPUT_FOLDER = args.output_folder
     if not OUTPUT_FOLDER:
@@ -1732,6 +2074,31 @@ if __name__ == "__main__":
     generator = SyntheticDataGenerator(CONFIG_PATH, DATA_FOLDER, OUTPUT_FOLDER)
     generator.mobility_sigma_min = args.mobility_sigma_min
     generator.mobility_sigma_max = args.mobility_sigma_max
+    generator.mobility_generator = args.mobility_generator
+    generator.mobility_weekend_volume_factor_min = (
+        args.mobility_weekend_volume_factor_min
+    )
+    generator.mobility_weekend_volume_factor_max = (
+        args.mobility_weekend_volume_factor_max
+    )
+    generator.mobility_weekday_volume_jitter_min = (
+        args.mobility_weekday_volume_jitter_min
+    )
+    generator.mobility_weekday_volume_jitter_max = (
+        args.mobility_weekday_volume_jitter_max
+    )
+    generator.mobility_edge_weekend_effect_min = args.mobility_edge_weekend_effect_min
+    generator.mobility_edge_weekend_effect_max = args.mobility_edge_weekend_effect_max
+    generator.vacc_start = args.vacc_start
+    generator.vacc_duration = args.vacc_duration
+    generator.vacc_rate_per_day = args.vacc_rate_per_day
+    generator.mobility_intermit_prob_min = args.mobility_intermit_prob_min
+    generator.mobility_intermit_prob_max = args.mobility_intermit_prob_max
+    generator.mobility_temporal_rho_min = args.mobility_temporal_rho_min
+    generator.mobility_temporal_rho_max = args.mobility_temporal_rho_max
+    generator.mobility_edge_class_mode = args.mobility_edge_class_mode
+    generator.mobility_intermit_persistence_min = args.mobility_intermit_persistence_min
+    generator.mobility_intermit_persistence_max = args.mobility_intermit_persistence_max
 
     # Handle failure scanning mode (standalone utility)
     if args.scan_failures:
@@ -1840,6 +2207,16 @@ if __name__ == "__main__":
         n_profiles=args.n_profiles,
         mobility_sigma_min=args.mobility_sigma_min,
         mobility_sigma_max=args.mobility_sigma_max,
+        mobility_weekend_volume_factor_min=args.mobility_weekend_volume_factor_min,
+        mobility_weekend_volume_factor_max=args.mobility_weekend_volume_factor_max,
+        mobility_weekday_volume_jitter_min=args.mobility_weekday_volume_jitter_min,
+        mobility_weekday_volume_jitter_max=args.mobility_weekday_volume_jitter_max,
+        mobility_edge_weekend_effect_min=args.mobility_edge_weekend_effect_min,
+        mobility_edge_weekend_effect_max=args.mobility_edge_weekend_effect_max,
+        mobility_intermit_prob_min=args.mobility_intermit_prob_min,
+        mobility_intermit_prob_max=args.mobility_intermit_prob_max,
+        mobility_temporal_rho_min=args.mobility_temporal_rho_min,
+        mobility_temporal_rho_max=args.mobility_temporal_rho_max,
     )
 
     # Determine subset to process

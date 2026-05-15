@@ -93,6 +93,7 @@ LATENT_ZARR_VARS = (
     "latent_CH_true",
     "latent_hospitalized_true",
     "latent_active_true",
+    "vaccination_rate_true",
 )
 
 DEFAULT_CASES_MISSING_RATE = 0.72
@@ -260,7 +261,13 @@ def load_deaths(observables_path: Path):
 
 
 def load_compartment_latents(compartments_path: Path) -> dict[str, np.ndarray]:
-    """Load latent compartment trajectories aggregated to (region, date)."""
+    """Load latent compartment trajectories aggregated to (region, date).
+
+    Handles both non-Vac engine (dims: G, M, T) and Vac engine (dims: G, M, V, T).
+    When the V dimension is present, latent compartments are summed across V for
+    backward compatibility, and ``vaccination_rate_true`` is computed as the
+    fraction of the population in V or PV status per (region, date).
+    """
     if compartments_path is None or not compartments_path.exists():
         raise FileNotFoundError(
             f"Missing compartments_full.nc required for latent export: {compartments_path}"
@@ -274,15 +281,54 @@ def load_compartment_latents(compartments_path: Path) -> dict[str, np.ndarray]:
                 f"Missing latent compartment variables in {compartments_path}: {missing}"
             )
 
-        def load_state(var_name: str) -> np.ndarray:
-            arr = ds[var_name]
-            if set(arr.dims) != {"G", "M", "T"}:
-                raise ValueError(
-                    f"Unexpected dims for {var_name} in {compartments_path}: {arr.dims}"
-                )
-            return arr.transpose("M", "T", "G").values
+        # Detect whether compartments have a V (vaccination) dimension
+        sample_var = ds[next(iter(required))]
+        has_v_dim = "V" in sample_var.dims
 
-        states = {name: load_state(name) for name in required}
+        if has_v_dim:
+            v_labels = ds.coords["V"].values
+
+            def load_state(var_name: str) -> np.ndarray:
+                arr = ds[var_name]
+                if set(arr.dims) != {"G", "M", "V", "T"}:
+                    raise ValueError(
+                        f"Unexpected dims for {var_name} in {compartments_path}: {arr.dims}"
+                    )
+                return arr.transpose("M", "T", "V", "G").values  # (M, T, V, G)
+
+            states = {name: load_state(name) for name in required}
+
+            # Compute total population per (region, date) across all V and G
+            total_pop = np.zeros_like(states["S"][:, :, 0, 0], dtype=np.float64)
+            for state_arr in states.values():
+                total_pop += state_arr.sum(axis=(2, 3))  # sum over V and G
+
+            # vaccination_rate_true = (sum of V + PV compartments) / total
+            # V labels are typically ["NV", "V", "PV"]; V and PV are vaccinated statuses
+            vaccinated_pop = np.zeros_like(total_pop)
+            for i, label in enumerate(v_labels):
+                if label in ("V", "PV"):
+                    for state_arr in states.values():
+                        vaccinated_pop += state_arr[:, :, i, :].sum(axis=2)
+
+            vaccination_rate = np.where(
+                total_pop > 0, vaccinated_pop / total_pop, 0.0
+            ).astype(np.float32)
+
+            # Sum across V for backward-compatible latent outputs
+            # Original shape (M, T, V, G) -> sum over V -> (M, T, G)
+            states = {name: arr.sum(axis=2) for name, arr in states.items()}
+        else:
+            def load_state(var_name: str) -> np.ndarray:
+                arr = ds[var_name]
+                if set(arr.dims) != {"G", "M", "T"}:
+                    raise ValueError(
+                        f"Unexpected dims for {var_name} in {compartments_path}: {arr.dims}"
+                    )
+                return arr.transpose("M", "T", "G").values
+
+            states = {name: load_state(name) for name in required}
+            vaccination_rate = None
 
     hospitalized = states["HR"] + states["HD"]
     active = (
@@ -310,6 +356,9 @@ def load_compartment_latents(compartments_path: Path) -> dict[str, np.ndarray]:
         "latent_hospitalized_true": hospitalized.sum(axis=2),
         "latent_active_true": active.sum(axis=2),
     }
+    if vaccination_rate is not None:
+        latents["vaccination_rate_true"] = vaccination_rate
+
     return {name: values.astype(np.float32) for name, values in latents.items()}
 
 
@@ -493,7 +542,9 @@ def process_single_run(
     # Determine mobility type
     mobility_npz_path = run_dir / "mobility" / "mobility_series.npz"
     mobility_type = "time_varying" if mobility_npz_path.exists() else "factorized"
-    sigma_O, sigma_D = load_mobility_noise_params(run_dir)
+    mobility_meta = load_mobility_metadata(run_dir)
+    sigma_O = mobility_meta["sigma_O"]
+    sigma_D = mobility_meta["sigma_D"]
 
     # Parse metadata
     scenario_type, strength = parse_run_metadata(run_dir.name)
@@ -527,6 +578,14 @@ def process_single_run(
         "mobility_sigma_O": sigma_O,
         "mobility_sigma_D": sigma_D,
         "mobility_noise": max(sigma_O, sigma_D),
+        "mobility_generator": mobility_meta["generator_mode"],
+        "mobility_weekend_volume_factor": mobility_meta["weekend_volume_factor"],
+        "mobility_weekday_volume_jitter": mobility_meta["weekday_volume_jitter"],
+        "mobility_edge_weekend_effect": mobility_meta["edge_weekend_effect"],
+        "mobility_intermit_prob": mobility_meta["intermit_prob"],
+        "mobility_temporal_rho": mobility_meta["temporal_rho"],
+        "mobility_edge_class_mode": mobility_meta["edge_class_mode"],
+        "mobility_intermit_persistence": mobility_meta["intermit_persistence"],
         "npz_path": str(npz_path),
     }
 
@@ -832,27 +891,65 @@ def detect_and_load_time_varying_mobility(
         return None
 
 
-def load_mobility_noise_params(run_dir: Path) -> tuple[float, float]:
+def load_mobility_metadata(run_dir: Path) -> dict:
     """
-    Load mobility noise sigmas (origin/destination) from mobility_series.npz if present.
+    Load mobility metadata from mobility_series.npz if present.
 
     Returns:
-        (sigma_O, sigma_D): floats, defaults to 0.0 if static or missing.
+        Metadata dict, with defaults for static or legacy mobility files.
     """
+    metadata = {
+        "sigma_O": 0.0,
+        "sigma_D": 0.0,
+        "generator_mode": "factorized",
+        "weekend_volume_factor": np.nan,
+        "weekday_volume_jitter": np.nan,
+        "edge_weekend_effect": np.nan,
+        "intermit_prob": np.nan,
+        "temporal_rho": np.nan,
+        "edge_class_mode": "none",
+        "intermit_persistence": np.nan,
+    }
     mobility_npz_path = run_dir / "mobility" / "mobility_series.npz"
     if not mobility_npz_path.exists():
-        return 0.0, 0.0
+        return metadata
 
     try:
-        data = np.load(mobility_npz_path)
-        sigma_O = float(data.get("sigma_O", 0.0))
-        sigma_D = float(data.get("sigma_D", 0.0))
-        return sigma_O, sigma_D
+        with np.load(mobility_npz_path) as data:
+            metadata["sigma_O"] = float(data.get("sigma_O", 0.0))
+            metadata["sigma_D"] = float(data.get("sigma_D", 0.0))
+            metadata["generator_mode"] = str(
+                np.asarray(data.get("generator_mode", "ipfp_simple")).item()
+            )
+            metadata["weekend_volume_factor"] = float(
+                data.get("weekend_volume_factor", np.nan)
+            )
+            metadata["weekday_volume_jitter"] = float(
+                data.get("weekday_volume_jitter", np.nan)
+            )
+            metadata["edge_weekend_effect"] = float(
+                data.get("edge_weekend_effect", np.nan)
+            )
+            metadata["intermit_prob"] = float(data.get("intermit_prob", np.nan))
+            metadata["temporal_rho"] = float(data.get("temporal_rho", np.nan))
+            metadata["edge_class_mode"] = str(
+                np.asarray(data.get("edge_class_mode", "none")).item()
+            )
+            metadata["intermit_persistence"] = float(
+                data.get("intermit_persistence", np.nan)
+            )
+        return metadata
     except Exception as e:
         logger.warning(
-            f"Failed to load mobility noise params from {mobility_npz_path}: {e}"
+            f"Failed to load mobility metadata from {mobility_npz_path}: {e}"
         )
-        return 0.0, 0.0
+        return metadata
+
+
+def load_mobility_noise_params(run_dir: Path) -> tuple[float, float]:
+    """Backward-compatible helper for tests and callers."""
+    metadata = load_mobility_metadata(run_dir)
+    return metadata["sigma_O"], metadata["sigma_D"]
 
 
 def write_mobility_time_varying_to_zarr(
@@ -1550,6 +1647,10 @@ def main():
         # Add metadata variables
         for meta_var in ["synthetic_strength", "synthetic_sparsity_level", "synthetic_mobility_noise_sigma_O",
                         "synthetic_mobility_noise_sigma_D", "synthetic_mobility_noise_factor",
+                        "synthetic_mobility_weekend_volume_factor", "synthetic_mobility_weekday_volume_jitter",
+                        "synthetic_mobility_edge_weekend_effect", "synthetic_mobility_intermit_prob",
+                        "synthetic_mobility_temporal_rho",
+                        "synthetic_mobility_intermit_persistence",
                         "synthetic_cases_report_rate_min", "synthetic_cases_report_rate_max", "synthetic_cases_report_delay_mean",
                         "synthetic_hosp_report_rate", "synthetic_hosp_report_delay_mean", "synthetic_hosp_report_delay_std",
                         "synthetic_deaths_report_rate", "synthetic_deaths_report_delay_mean", "synthetic_deaths_report_delay_std",
@@ -1557,6 +1658,8 @@ def main():
             data_vars[meta_var] = create_lazy(("run_id",), dtype=float)
 
         data_vars["synthetic_scenario_type"] = (("run_id",), da.from_array(np.array([""] * len(run_ids), dtype="U20"), chunks=1))
+        data_vars["synthetic_mobility_generator"] = (("run_id",), da.from_array(np.array([""] * len(run_ids), dtype="U32"), chunks=1))
+        data_vars["synthetic_mobility_edge_class_mode"] = (("run_id",), da.from_array(np.array([""] * len(run_ids), dtype="U20"), chunks=1))
 
         ds_skeleton = xr.Dataset(data_vars, coords=coords)
 
@@ -1613,8 +1716,11 @@ def main():
 
     if args.append and args.include_latents and os.path.exists(output_path):
         with xr.open_zarr(output_path, chunks=None) as ds_existing:
+            # vaccination_rate_true is optional (only present with Vac engine)
+            optional_latent_vars = {"vaccination_rate_true"}
+            required_latent_vars = [v for v in LATENT_ZARR_VARS if v not in optional_latent_vars]
             missing_latents = [
-                var for var in LATENT_ZARR_VARS if var not in ds_existing.data_vars
+                var for var in required_latent_vars if var not in ds_existing.data_vars
             ]
             latent_dim_mismatches = [
                 var
@@ -1659,6 +1765,8 @@ def main():
             dv["deaths_true"] = (("run_id", "region_id", "date"), data["deaths_true"][None, :, :].astype(np.float32))
             if args.include_latents:
                 for latent_var in LATENT_ZARR_VARS:
+                    if latent_var not in data:
+                        continue
                     dv[latent_var] = (
                         ("run_id", "date", "region_id"),
                         data[latent_var][None, :, :].transpose(0, 2, 1).astype(np.float32),
@@ -1698,6 +1806,14 @@ def main():
             dv["synthetic_mobility_noise_sigma_O"] = (("run_id",), np.array([result["mobility_sigma_O"]], dtype=float))
             dv["synthetic_mobility_noise_sigma_D"] = (("run_id",), np.array([result["mobility_sigma_D"]], dtype=float))
             dv["synthetic_mobility_noise_factor"] = (("run_id",), np.array([result["mobility_noise"]], dtype=float))
+            dv["synthetic_mobility_generator"] = (("run_id",), np.array([result["mobility_generator"]], dtype="U32"))
+            dv["synthetic_mobility_weekend_volume_factor"] = (("run_id",), np.array([result["mobility_weekend_volume_factor"]], dtype=float))
+            dv["synthetic_mobility_weekday_volume_jitter"] = (("run_id",), np.array([result["mobility_weekday_volume_jitter"]], dtype=float))
+            dv["synthetic_mobility_edge_weekend_effect"] = (("run_id",), np.array([result["mobility_edge_weekend_effect"]], dtype=float))
+            dv["synthetic_mobility_intermit_prob"] = (("run_id",), np.array([result["mobility_intermit_prob"]], dtype=float))
+            dv["synthetic_mobility_temporal_rho"] = (("run_id",), np.array([result["mobility_temporal_rho"]], dtype=float))
+            dv["synthetic_mobility_edge_class_mode"] = (("run_id",), np.array([result["mobility_edge_class_mode"]], dtype="U20"))
+            dv["synthetic_mobility_intermit_persistence"] = (("run_id",), np.array([result["mobility_intermit_persistence"]], dtype=float))
 
             dv["synthetic_cases_report_rate_min"] = (("run_id",), np.array([args.min_rate], dtype=float))
             dv["synthetic_cases_report_rate_max"] = (("run_id",), np.array([args.max_rate], dtype=float))
