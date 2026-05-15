@@ -48,6 +48,16 @@ class MobilityGenerator:
         sigma_O: float = 0.0,
         sigma_D: float = 0.0,
         rng_seed: Optional[int] = None,
+        generator_mode: str = "ipfp_simple",
+        start_date: Optional[str] = None,
+        weekend_volume_factor: float = 0.45,
+        weekday_volume_jitter: float = 0.04,
+        edge_weekend_effect: float = 0.8,
+        intermit_prob: float = 0.1,
+        temporal_rho: float = 0.6,
+        edge_class_mode: str = "none",
+        intermit_persistence: float = 0.6,
+        off_damping: float = 0.02,
     ):
         if isinstance(baseline_R, tuple):
             # Sparse format: (edgelist, weights)
@@ -66,6 +76,24 @@ class MobilityGenerator:
         self.sigma_O = sigma_O
         self.sigma_D = sigma_D
         self.rng_seed = rng_seed
+        if generator_mode not in {"ipfp_simple", "calendar_ipfp"}:
+            raise ValueError(
+                "generator_mode must be one of {'ipfp_simple', 'calendar_ipfp'}"
+            )
+        self.generator_mode = generator_mode
+        self.start_date = pd.to_datetime(start_date) if start_date is not None else None
+        self.weekend_volume_factor = float(np.clip(weekend_volume_factor, 0.0, 1.0))
+        self.weekday_volume_jitter = max(0.0, float(weekday_volume_jitter))
+        self.edge_weekend_effect = max(0.0, float(edge_weekend_effect))
+        self.intermit_prob = float(np.clip(intermit_prob, 0.0, 1.0))
+        self.temporal_rho = float(np.clip(temporal_rho, 0.0, 0.99))
+        if edge_class_mode not in {"none", "quantile_markov"}:
+            raise ValueError(
+                "edge_class_mode must be one of {'none', 'quantile_markov'}"
+            )
+        self.edge_class_mode = edge_class_mode
+        self.intermit_persistence = float(np.clip(intermit_persistence, 0.0, 1.0))
+        self.off_damping = float(off_damping)
         self.M = self._compute_num_patches()
 
         # Pre-compute baseline marginals
@@ -77,6 +105,44 @@ class MobilityGenerator:
         destinations = self.edgelist[:, 1]
         self._origin_to_edges = {i: np.where(origins == i)[0] for i in range(self.M)}
         self._destination_to_edges = {j: np.where(destinations == j)[0] for j in range(self.M)}
+        self._self_edge_mask = origins == destinations
+        self._nonself_edge_mask = ~self._self_edge_mask
+        nonself_weights = self.baseline_R[self._nonself_edge_mask]
+        if len(nonself_weights) > 0:
+            weak_threshold = np.nanpercentile(nonself_weights, 35)
+            self._weak_nonself_edge_mask = (
+                self._nonself_edge_mask & (self.baseline_R <= weak_threshold)
+            )
+        else:
+            self._weak_nonself_edge_mask = np.zeros_like(self.baseline_R, dtype=bool)
+
+        # Edge class quantile classification (for quantile_markov mode)
+        self._edge_class_enabled = edge_class_mode == "quantile_markov"
+        if self._edge_class_enabled:
+            E = len(self.baseline_R)
+            self._edge_class = np.full(E, -1, dtype=np.int8)
+            if len(nonself_weights) > 0:
+                quantiles = np.nanpercentile(nonself_weights, [25, 50, 75])
+                nonself_indices = np.where(self._nonself_edge_mask)[0]
+                nonself_w = self.baseline_R[nonself_indices]
+                # Class 0 is the stable trunk class; class 3 is the weakest,
+                # most intermittent class.
+                classes = (3 - np.searchsorted(quantiles, nonself_w)).astype(np.int8)
+                self._edge_class[nonself_indices] = classes
+
+            self._class_masks = {c: (self._edge_class == c) for c in range(4)}
+
+            # Markov transition parameters per class
+            pi_on = {0: 1.0, 1: 0.85, 2: 0.60, 3: 0.30}
+            base_run = {1: 14, 2: 7, 3: 3}
+            run_multiplier = 1.0 + self.intermit_persistence * 13.0
+            self._class_transition_params = {}
+            for c in [1, 2, 3]:
+                mean_on = base_run[c] * run_multiplier
+                p_off = 1.0 / mean_on
+                p_on = (pi_on[c] * p_off) / (1.0 - pi_on[c])
+                self._class_transition_params[c] = (p_off, p_on)
+            self._class_pi_on = pi_on
 
     @staticmethod
     def _dense_to_sparse(R_dense: np.ndarray, edgelist: np.ndarray) -> np.ndarray:
@@ -169,6 +235,228 @@ class MobilityGenerator:
         D_t *= np.sum(O_t) / np.sum(D_t)
 
         return O_t, D_t
+
+    def _generate_noisy_marginals_from_residuals(
+        self, residual_O: np.ndarray, residual_D: np.ndarray
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Generate noisy marginals from precomputed stationary residuals."""
+        if self.sigma_O > 0:
+            O_t = self.O_base * np.exp(
+                residual_O * self.sigma_O - (self.sigma_O**2 / 2)
+            )
+        else:
+            O_t = self.O_base.copy()
+
+        if self.sigma_D > 0:
+            D_t = self.D_base * np.exp(
+                residual_D * self.sigma_D - (self.sigma_D**2 / 2)
+            )
+        else:
+            D_t = self.D_base.copy()
+
+        D_sum = np.sum(D_t)
+        if D_sum > 0:
+            D_t *= np.sum(O_t) / D_sum
+        return O_t, D_t
+
+    def _calendar_date(self, t: int):
+        if self.start_date is None:
+            return None
+        return self.start_date + pd.Timedelta(days=int(t))
+
+    def _init_edge_states(self, rng: np.random.Generator):
+        """Initialize Markov chain edge states (all start on, then sample from steady-state)."""
+        E = len(self.baseline_R)
+        self._edge_active_state = np.ones(E, dtype=bool)
+        for c in [1, 2, 3]:
+            mask = self._class_masks[c]
+            n_c = int(np.sum(mask))
+            if n_c > 0:
+                self._edge_active_state[mask] = rng.random(n_c) < self._class_pi_on[c]
+
+    def _update_edge_states(self, rng: np.random.Generator):
+        """Advance Markov chain one step for classes 1-3."""
+        E = len(self.baseline_R)
+        for c in [1, 2, 3]:
+            mask = self._class_masks[c]
+            if not np.any(mask):
+                continue
+            p_off, p_on = self._class_transition_params[c]
+            currently_on = self._edge_active_state & mask
+            currently_off = (~self._edge_active_state) & mask
+            flips = rng.random(E)
+            flip_off = currently_on & (flips < p_off)
+            flip_on = currently_off & (flips < p_on)
+            self._edge_active_state[flip_off] = False
+            self._edge_active_state[flip_on] = True
+
+    def _calendar_masks(self, rng: np.random.Generator):
+        weekend_candidates = self._nonself_edge_mask.copy()
+        weekend_edge_mask = weekend_candidates & (rng.random(len(self.baseline_R)) < 0.5)
+        if self._edge_class_enabled:
+            # Markov state determines off edges (all non-stable classes)
+            intermit_edge_mask = (~self._edge_active_state) & (self._edge_class >= 1)
+        else:
+            intermit_edge_mask = self._weak_nonself_edge_mask & (
+                rng.random(len(self.baseline_R)) < self.intermit_prob
+            )
+        return weekend_edge_mask, intermit_edge_mask
+
+    def _calendar_adjust_baseline(
+        self,
+        t: int,
+        rng: np.random.Generator,
+        weekend_edge_mask: np.ndarray,
+        intermit_edge_mask: np.ndarray,
+    ) -> np.ndarray:
+        """Apply calendar and intermittency weights before IPFP projection."""
+        B_t = self.baseline_R.copy().astype(np.float64)
+        date = self._calendar_date(t)
+        is_weekend = date is not None and date.weekday() >= 5
+
+        if is_weekend:
+            # Reduce broad off-diagonal movement, which increases self-loop mass
+            # after IPFP and row-normalization.
+            B_t[self._nonself_edge_mask] *= self.weekend_volume_factor
+            selected_factor = max(0.02, 1.0 - self.edge_weekend_effect)
+            B_t[weekend_edge_mask] *= selected_factor
+        elif self.weekday_volume_jitter > 0:
+            jitter = rng.normal(0.0, self.weekday_volume_jitter)
+            weekday_factor = float(np.exp(jitter - (self.weekday_volume_jitter**2 / 2)))
+            B_t[self._nonself_edge_mask] *= weekday_factor
+
+        if self._edge_class_enabled:
+            # Use off_damping from Markov state (no second random draw)
+            if np.any(intermit_edge_mask):
+                B_t[intermit_edge_mask] *= self.off_damping
+        elif self.intermit_prob > 0 and np.any(intermit_edge_mask):
+            active_today = intermit_edge_mask & (rng.random(len(B_t)) < self.intermit_prob)
+            B_t[active_today] *= 0.02
+
+        return np.maximum(B_t, 0.0)
+
+    def _normalize_sparse_rows(self, R: np.ndarray) -> np.ndarray:
+        origins = self.edgelist[:, 0]
+        row_sums = np.zeros(self.M, dtype=np.float64)
+        np.add.at(row_sums, origins, R)
+        normalized = R.copy()
+        for i, edge_indices in self._origin_to_edges.items():
+            if len(edge_indices) > 0 and row_sums[i] > 1e-12:
+                normalized[edge_indices] /= row_sums[i]
+        return normalized
+
+    def _apply_offdiag_target_factor(self, R: np.ndarray, target_factor: float) -> None:
+        """Scale each row's non-self edges to target a fraction of current offdiag mass."""
+        for _i, edge_indices in self._origin_to_edges.items():
+            if len(edge_indices) == 0:
+                continue
+            row_values = R[edge_indices]
+            row_edges = self.edgelist[edge_indices]
+            nonself_local = row_edges[:, 0] != row_edges[:, 1]
+            offdiag_mass = float(np.sum(row_values[nonself_local]))
+            row_sum = float(np.sum(row_values))
+            self_mass = max(0.0, row_sum - offdiag_mass)
+            desired_offdiag = target_factor * offdiag_mass
+            if offdiag_mass <= 1e-12:
+                continue
+            if self_mass <= 1e-12 or desired_offdiag >= row_sum:
+                R[edge_indices[nonself_local]] *= target_factor
+                continue
+            multiplier = (desired_offdiag * self_mass) / (
+                offdiag_mass * max(1e-12, row_sum - desired_offdiag)
+            )
+            R[edge_indices[nonself_local]] *= max(0.0, multiplier)
+
+    def _calendar_postprocess(
+        self,
+        R: np.ndarray,
+        t: int,
+        rng: np.random.Generator,
+        weekend_edge_mask: np.ndarray,
+        intermit_edge_mask: np.ndarray,
+    ) -> np.ndarray:
+        """Reapply calendar artifacts after IPFP, then restore row-stochasticity."""
+        adjusted = R.copy()
+        date = self._calendar_date(t)
+        is_weekend = date is not None and date.weekday() >= 5
+
+        if is_weekend:
+            self._apply_offdiag_target_factor(adjusted, self.weekend_volume_factor)
+            selected_factor = max(0.02, 1.0 - self.edge_weekend_effect)
+            adjusted[weekend_edge_mask] *= selected_factor
+        elif self.weekday_volume_jitter > 0:
+            jitter = rng.normal(0.0, self.weekday_volume_jitter)
+            weekday_factor = float(np.exp(jitter - (self.weekday_volume_jitter**2 / 2)))
+            adjusted[self._nonself_edge_mask] *= weekday_factor
+
+        if self._edge_class_enabled:
+            # Use off_damping from Markov state (no second random draw)
+            if np.any(intermit_edge_mask):
+                adjusted[intermit_edge_mask] *= self.off_damping
+        elif self.intermit_prob > 0 and np.any(intermit_edge_mask):
+            active_today = intermit_edge_mask & (rng.random(len(adjusted)) < self.intermit_prob)
+            adjusted[active_today] *= 0.02
+
+        # Edge noise: per-class when edge classes enabled, global otherwise
+        base_sigma = min(1.5, self.edge_weekend_effect * self.intermit_prob * 4.0)
+        if self._edge_class_enabled and base_sigma > 0:
+            NOISE_SCALE = {0: 0.1, 1: 0.3, 2: 0.8, 3: 1.8}
+            noise = np.ones(len(adjusted))
+            for c in range(4):
+                sigma_c = base_sigma * NOISE_SCALE[c]
+                if sigma_c > 0:
+                    mask_c = self._class_masks[c] & self._nonself_edge_mask
+                    n_c = int(np.sum(mask_c))
+                    if n_c > 0:
+                        noise[mask_c] = np.exp(
+                            rng.normal(0.0, sigma_c, n_c) - sigma_c**2 / 2
+                        )
+            adjusted[self._nonself_edge_mask] *= noise[self._nonself_edge_mask]
+        elif base_sigma > 0:
+            noise = np.exp(
+                rng.normal(0.0, base_sigma, len(adjusted))
+                - (base_sigma**2 / 2)
+            )
+            adjusted[self._nonself_edge_mask] *= noise[self._nonself_edge_mask]
+
+        return self._normalize_sparse_rows(np.maximum(adjusted, 0.0))
+
+    def _generate_calendar_series(
+        self, T: int, rng: np.random.Generator
+    ) -> np.ndarray:
+        """Generate a calendar-aware IPFP mobility series."""
+        R_series = np.zeros((T, len(self.baseline_R)), dtype=np.float64)
+        if self._edge_class_enabled:
+            self._init_edge_states(rng)
+        weekend_edge_mask, intermit_edge_mask = self._calendar_masks(rng)
+        residual_O = np.zeros(self.M, dtype=np.float64)
+        residual_D = np.zeros(self.M, dtype=np.float64)
+        innovation_scale = np.sqrt(max(0.0, 1.0 - self.temporal_rho**2))
+
+        for t in range(T):
+            if self._edge_class_enabled:
+                self._update_edge_states(rng)
+                weekend_edge_mask, intermit_edge_mask = self._calendar_masks(rng)
+            residual_O = (
+                self.temporal_rho * residual_O
+                + innovation_scale * rng.standard_normal(self.M)
+            )
+            residual_D = (
+                self.temporal_rho * residual_D
+                + innovation_scale * rng.standard_normal(self.M)
+            )
+            O_t, D_t = self._generate_noisy_marginals_from_residuals(
+                residual_O, residual_D
+            )
+            B_t = self._calendar_adjust_baseline(
+                t, rng, weekend_edge_mask, intermit_edge_mask
+            )
+            R_t = self._ipfp(B_t, O_t, D_t)
+            R_series[t] = self._calendar_postprocess(
+                R_t, t, rng, weekend_edge_mask, intermit_edge_mask
+            )
+
+        return R_series
 
     def _ipfp(
         self,
@@ -279,6 +567,9 @@ class MobilityGenerator:
         seed = rng_seed if rng_seed is not None else self.rng_seed
         # Ensure seed is non-negative for numpy
         rng = np.random.default_rng(seed if seed is not None and seed >= 0 else None)
+
+        if self.generator_mode == "calendar_ipfp":
+            return self._generate_calendar_series(T, rng)
 
         R_series = np.zeros((T, len(self.baseline_R)), dtype=np.float64)
         for t in range(T):

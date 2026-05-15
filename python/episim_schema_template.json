@@ -314,7 +314,7 @@
         },
         "mobility_variation_type": {
           "type": "string",
-          "enum": ["none", "ipfp_simple", "external_netcdf"]
+          "enum": ["none", "ipfp_simple", "calendar_ipfp", "external_netcdf"]
         },
         "mobility_sigma_O": {
           "type": "number",
@@ -327,6 +327,29 @@
         "mobility_rng_seed": {
           "type": ["integer", "null"],
           "minimum": 0
+        },
+        "mobility_weekend_volume_factor": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "mobility_weekday_volume_jitter": {
+          "type": "number",
+          "minimum": 0
+        },
+        "mobility_edge_weekend_effect": {
+          "type": "number",
+          "minimum": 0
+        },
+        "mobility_intermit_prob": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "mobility_temporal_rho": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 0.99
         },
         "mobility_external_file": {
           "type": "string"
