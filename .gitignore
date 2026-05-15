@@ -42,3 +42,17 @@ test_output/
 python/prompts/*.md
 edar_muni_edges.nc
 logs/
+
+# Coverage
+.coverage
+python/.coverage*
+
+# Pytest caches
+pytest-of-lewis/
+python/pytest-of-lewis/
+
+# Build
+python/build/
+
+# Claude Code
+.claude/
