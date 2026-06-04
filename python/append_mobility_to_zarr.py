@@ -20,7 +20,7 @@ Output format (new variables in zarr):
         This maps each edge index to its origin-destination pair, allowing
         reconstruction of the full dense mobility matrix if needed.
 
-Note: For large datasets (many runs × long time series), this can significantly
+Note: For large datasets (many runs x long time series), this can significantly
 increase the zarr file size. Consider using factorized format (mobility_base +
 mobility_kappa0) for storage efficiency if you only need mobility variations.
 """
@@ -111,7 +111,9 @@ def append_mobility_to_zarr(
     existing_run_ids = existing_ds["run_id"].values
     existing_dates = existing_ds["date"].values
 
-    logger.info(f"Existing zarr has {len(existing_run_ids)} runs, {len(existing_dates)} dates")
+    logger.info(
+        f"Existing zarr has {len(existing_run_ids)} runs, {len(existing_dates)} dates"
+    )
 
     # Load metapopulation data to get region IDs
     metapop_df = pd.read_csv(metapop_csv, dtype={"id": str})
@@ -120,7 +122,7 @@ def append_mobility_to_zarr(
     M = len(region_ids)
 
     # Load first mobility file to get structure
-    first_run_id = list(mobility_files.keys())[0]
+    first_run_id = next(iter(mobility_files.keys()))
     first_mobility = load_mobility_series(mobility_files[first_run_id])
     edgelist = first_mobility["edgelist"]
     E = first_mobility["E"]
@@ -226,11 +228,15 @@ def append_mobility_to_zarr(
     if compressor == "zstd":
         from zarr import Blosc
 
-        compressor_obj = Blosc(cname="zstd", clevel=compressor_level, shuffle=Blosc.SHUFFLE)
+        compressor_obj = Blosc(
+            cname="zstd", clevel=compressor_level, shuffle=Blosc.SHUFFLE
+        )
     elif compressor == "lz4":
         from zarr import Blosc
 
-        compressor_obj = Blosc(cname="lz4", clevel=compressor_level, shuffle=Blosc.SHUFFLE)
+        compressor_obj = Blosc(
+            cname="lz4", clevel=compressor_level, shuffle=Blosc.SHUFFLE
+        )
     elif compressor == "blosc":
         from zarr import Blosc
 
@@ -258,7 +264,9 @@ def append_mobility_to_zarr(
     mobility_ds.to_zarr(zarr_path, mode="a", zarr_format=2)
 
     logger.info("Done!")
-    logger.info(f"Added mobility_series: ({len(run_ids_with_mobility)}, {n_dates}, {n_edges})")
+    logger.info(
+        f"Added mobility_series: ({len(run_ids_with_mobility)}, {n_dates}, {n_edges})"
+    )
     logger.info(f"Added mobility_edgelist: ({n_edges}, 2)")
 
 

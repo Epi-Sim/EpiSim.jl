@@ -132,7 +132,8 @@ def test_pipeline_prefers_nvme_baseline_dir_for_phase2(
     )
 
     intervention_calls = [
-        call for call in mock_run_stage.call_args_list
+        call
+        for call in mock_run_stage.call_args_list
         if call.args[0] == "Generate Spike-Based Interventions"
     ]
     assert len(intervention_calls) == 1

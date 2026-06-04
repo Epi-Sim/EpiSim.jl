@@ -8,7 +8,7 @@ Tests cover:
 - Error handling when EDAR file is missing
 
 Physical Model Context (from CONTEXT_SYNTHETIC_GEN.md):
-    Wastewater concentration follows: C = Σ(I_g × S_g) / (P × F)
+    Wastewater concentration follows: C = sum(I_g x S_g) / (P x F)
 
     Where:
     - I_g = infections in age group g
@@ -52,10 +52,12 @@ class TestLoadEdarMuniMapping:
         edar_path = os.path.join(FIXTURES_DIR, "mini_edar_muni_edges.nc")
 
         # Create metapop df matching EDAR home IDs
-        metapop_df = pd.DataFrame({
-            "id": ["muni_01", "muni_02", "muni_03", "muni_04", "muni_05"],
-            "total": [10000, 15000, 12000, 8000, 20000]
-        })
+        metapop_df = pd.DataFrame(
+            {
+                "id": ["muni_01", "muni_02", "muni_03", "muni_04", "muni_05"],
+                "total": [10000, 15000, 12000, 8000, 20000],
+            }
+        )
 
         result = load_edar_muni_mapping(metapop_df, edar_nc_path=edar_path)
 
@@ -69,17 +71,21 @@ class TestLoadEdarMuniMapping:
         """Should raise FileNotFoundError when EDAR edges file doesn't exist."""
         metapop_df = pd.DataFrame({"id": ["region_1"], "total": [10000]})
 
-        with pytest.raises(FileNotFoundError, match="EDAR-municipality edges file not found"):
+        with pytest.raises(
+            FileNotFoundError, match="EDAR-municipality edges file not found"
+        ):
             load_edar_muni_mapping(metapop_df, edar_nc_path="/nonexistent/path.nc")
 
     def test_emap_rows_normalize_to_one(self):
         """EMAP rows should sum to 1 (each EDAR receives fractional contributions)."""
         edar_path = os.path.join(FIXTURES_DIR, "mini_edar_muni_edges.nc")
 
-        metapop_df = pd.DataFrame({
-            "id": ["muni_01", "muni_02", "muni_03", "muni_04", "muni_05"],
-            "total": [10000, 15000, 12000, 8000, 20000]
-        })
+        metapop_df = pd.DataFrame(
+            {
+                "id": ["muni_01", "muni_02", "muni_03", "muni_04", "muni_05"],
+                "total": [10000, 15000, 12000, 8000, 20000],
+            }
+        )
 
         result = load_edar_muni_mapping(metapop_df, edar_nc_path=edar_path)
         emap = result["emap"]
@@ -92,10 +98,12 @@ class TestLoadEdarMuniMapping:
         """EMAP should handle sparse contribution matrices (some NaN values)."""
         edar_path = os.path.join(FIXTURES_DIR, "mini_edar_muni_edges.nc")
 
-        metapop_df = pd.DataFrame({
-            "id": ["muni_01", "muni_02", "muni_03", "muni_04", "muni_05"],
-            "total": [10000, 15000, 12000, 8000, 20000]
-        })
+        metapop_df = pd.DataFrame(
+            {
+                "id": ["muni_01", "muni_02", "muni_03", "muni_04", "muni_05"],
+                "total": [10000, 15000, 12000, 8000, 20000],
+            }
+        )
 
         result = load_edar_muni_mapping(metapop_df, edar_nc_path=edar_path)
         emap = result["emap"]
@@ -119,10 +127,19 @@ class TestLoadEdarMuniMapping:
         edar_path = os.path.join(FIXTURES_DIR, "mini_edar_muni_edges.nc")
 
         # Metapop has more regions than EDAR mapping
-        metapop_df = pd.DataFrame({
-            "id": ["muni_01", "muni_02", "muni_03", "muni_04", "muni_05", "muni_06"],
-            "total": [10000, 15000, 12000, 8000, 20000, 5000]
-        })
+        metapop_df = pd.DataFrame(
+            {
+                "id": [
+                    "muni_01",
+                    "muni_02",
+                    "muni_03",
+                    "muni_04",
+                    "muni_05",
+                    "muni_06",
+                ],
+                "total": [10000, 15000, 12000, 8000, 20000, 5000],
+            }
+        )
 
         result = load_edar_muni_mapping(metapop_df, edar_nc_path=edar_path)
 
@@ -136,10 +153,12 @@ class TestLoadEdarMuniMapping:
         """Should return correct EDAR and region IDs."""
         edar_path = os.path.join(FIXTURES_DIR, "mini_edar_muni_edges.nc")
 
-        metapop_df = pd.DataFrame({
-            "id": ["muni_01", "muni_02", "muni_03", "muni_04", "muni_05"],
-            "total": [10000, 15000, 12000, 8000, 20000]
-        })
+        metapop_df = pd.DataFrame(
+            {
+                "id": ["muni_01", "muni_02", "muni_03", "muni_04", "muni_05"],
+                "total": [10000, 15000, 12000, 8000, 20000],
+            }
+        )
 
         result = load_edar_muni_mapping(metapop_df, edar_nc_path=edar_path)
 
@@ -147,7 +166,13 @@ class TestLoadEdarMuniMapping:
         assert result["edar_ids"] == ["EDAR_01", "EDAR_02", "EDAR_03"]
 
         # Region IDs from metapop_df (converted to string)
-        assert result["region_ids"] == ["muni_01", "muni_02", "muni_03", "muni_04", "muni_05"]
+        assert result["region_ids"] == [
+            "muni_01",
+            "muni_02",
+            "muni_03",
+            "muni_04",
+            "muni_05",
+        ]
 
 
 class TestAggregateInfectionsToEdar:
@@ -156,23 +181,33 @@ class TestAggregateInfectionsToEdar:
     def test_aggregates_infections_correctly(self):
         """Should aggregate infections from regions to EDARs using EMAP."""
         # Simple test case: 2 EDARs, 3 regions, 2 age groups
-        infections = np.array([
-            [[10, 5],   # t=0: region 0, age groups [0, 1]
-             [8, 4],    # t=0: region 1
-             [5, 3]],   # t=0: region 2
-            [[20, 10],  # t=1: region 0
-             [16, 8],   # t=1: region 1
-             [10, 6]]   # t=1: region 2
-        ])  # Shape: (Time=2, Region=3, AgeGroup=2)
+        infections = np.array(
+            [
+                [
+                    [10, 5],  # t=0: region 0, age groups [0, 1]
+                    [8, 4],  # t=0: region 1
+                    [5, 3],
+                ],  # t=0: region 2
+                [
+                    [20, 10],  # t=1: region 0
+                    [16, 8],  # t=1: region 1
+                    [10, 6],
+                ],  # t=1: region 2
+            ]
+        )  # Shape: (Time=2, Region=3, AgeGroup=2)
 
-        emap = np.array([
-            [0.5, 0.3, 0.2],  # EDAR 0 receives 50%, 30%, 20%
-            [0.5, 0.7, 0.8],  # EDAR 1 receives remaining (normalized)
-        ])  # Shape: (EDAR=2, Region=3)
+        emap = np.array(
+            [
+                [0.5, 0.3, 0.2],  # EDAR 0 receives 50%, 30%, 20%
+                [0.5, 0.7, 0.8],  # EDAR 1 receives remaining (normalized)
+            ]
+        )  # Shape: (EDAR=2, Region=3)
 
         population = np.array([1000, 800, 600])
 
-        infections_edar, pop_edar = aggregate_infections_to_edar(infections, emap, population)
+        infections_edar, pop_edar = aggregate_infections_to_edar(
+            infections, emap, population
+        )
 
         # Check shape: (Time=2, EDAR=2, AgeGroup=2)
         assert infections_edar.shape == (2, 2, 2)
@@ -189,10 +224,12 @@ class TestAggregateInfectionsToEdar:
     def test_aggregates_population_correctly(self):
         """Should aggregate population weighted by EMAP contributions."""
         population = np.array([1000, 800, 600])
-        emap = np.array([
-            [0.5, 0.3, 0.2],
-            [0.5, 0.7, 0.8],
-        ])
+        emap = np.array(
+            [
+                [0.5, 0.3, 0.2],
+                [0.5, 0.7, 0.8],
+            ]
+        )
 
         _, pop_edar = aggregate_infections_to_edar(
             np.zeros((1, 3, 1)), emap, population
@@ -206,10 +243,12 @@ class TestAggregateInfectionsToEdar:
         """Aggregation should preserve age group dimension."""
         # 3 time points, 4 regions, 5 age groups
         infections = np.random.rand(3, 4, 5) * 100
-        emap = np.array([
-            [0.6, 0.4, 0.0, 0.0],  # EDAR 0
-            [0.4, 0.6, 0.0, 0.0],  # EDAR 1
-        ])
+        emap = np.array(
+            [
+                [0.6, 0.4, 0.0, 0.0],  # EDAR 0
+                [0.4, 0.6, 0.0, 0.0],  # EDAR 1
+            ]
+        )
         population = np.array([1000, 800, 600, 400])
 
         infections_edar, _ = aggregate_infections_to_edar(infections, emap, population)
@@ -220,38 +259,50 @@ class TestAggregateInfectionsToEdar:
     def test_handles_zero_infections(self):
         """Should handle zero infections without errors."""
         infections = np.zeros((2, 3, 2))
-        emap = np.array([
-            [0.5, 0.3, 0.2],
-            [0.5, 0.7, 0.8],
-        ])
+        emap = np.array(
+            [
+                [0.5, 0.3, 0.2],
+                [0.5, 0.7, 0.8],
+            ]
+        )
         population = np.array([1000, 800, 600])
 
-        infections_edar, pop_edar = aggregate_infections_to_edar(infections, emap, population)
+        infections_edar, pop_edar = aggregate_infections_to_edar(
+            infections, emap, population
+        )
 
         np.testing.assert_array_equal(infections_edar, np.zeros((2, 2, 2)))
 
     def test_handles_single_timepoint(self):
         """Should handle single timepoint data."""
         infections = np.array([[[10, 5], [8, 4], [5, 3]]])  # Shape: (1, 3, 2)
-        emap = np.array([
-            [0.5, 0.3, 0.2],
-            [0.5, 0.7, 0.8],
-        ])
+        emap = np.array(
+            [
+                [0.5, 0.3, 0.2],
+                [0.5, 0.7, 0.8],
+            ]
+        )
         population = np.array([1000, 800, 600])
 
-        infections_edar, pop_edar = aggregate_infections_to_edar(infections, emap, population)
+        infections_edar, pop_edar = aggregate_infections_to_edar(
+            infections, emap, population
+        )
 
         assert infections_edar.shape == (1, 2, 2)
 
     def test_single_edar_one_to_many_mapping(self):
         """Should handle one EDAR receiving contributions from multiple regions."""
-        infections = np.array([
-            [[10, 5], [20, 10], [30, 15]]  # 3 regions contributing to 1 EDAR
-        ])  # Shape: (1, 3, 2)
+        infections = np.array(
+            [
+                [[10, 5], [20, 10], [30, 15]]  # 3 regions contributing to 1 EDAR
+            ]
+        )  # Shape: (1, 3, 2)
         emap = np.array([[0.2, 0.3, 0.5]])  # 1 EDAR
         population = np.array([1000, 2000, 3000])
 
-        infections_edar, pop_edar = aggregate_infections_to_edar(infections, emap, population)
+        infections_edar, pop_edar = aggregate_infections_to_edar(
+            infections, emap, population
+        )
 
         # infections: 0.2*10 + 0.3*20 + 0.5*30 = 2 + 6 + 15 = 23
         np.testing.assert_allclose(infections_edar[0, 0, 0], 23.0, rtol=1e-5)
@@ -274,7 +325,9 @@ class TestAggregateInfectionsToEdar:
         emap = np.random.rand(n_edars, n_regions)
         emap = emap / emap.sum(axis=1, keepdims=True)
 
-        infections_edar, pop_edar = aggregate_infections_to_edar(infections, emap, population)
+        infections_edar, pop_edar = aggregate_infections_to_edar(
+            infections, emap, population
+        )
 
         assert infections_edar.shape == (n_time, n_edars, n_age_groups)
         assert pop_edar.shape == (n_edars,)

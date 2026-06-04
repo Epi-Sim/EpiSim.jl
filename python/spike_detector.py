@@ -290,7 +290,7 @@ def detect_spike_periods_from_zarr(
         national_infections = run_infections.sum(dim="region_id").values
 
         # Get population for this run (for growth_rate method)
-        run_population = population_by_run.get(run_id, None)
+        run_population = population_by_run.get(run_id)
 
         # Detect spikes
         spike_windows = detect_spike_periods(

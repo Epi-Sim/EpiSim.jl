@@ -43,7 +43,7 @@ def build_dense_matrix(mobility_csv, metapop_csv):
 
 
 def build_dataset(dates, region_ids, matrix, chunk_size=241):
-    mobility = np.broadcast_to(matrix, (len(dates),) + matrix.shape)
+    mobility = np.broadcast_to(matrix, (len(dates), *matrix.shape))
 
     dataset = xr.Dataset(
         {

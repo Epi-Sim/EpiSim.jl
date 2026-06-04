@@ -77,7 +77,9 @@ def clean_run_folders(directory=None):
     global OUTPUT_FOLDER
     target_dir = directory if directory is not None else OUTPUT_FOLDER
     if not target_dir.exists():
-        logger.info(f"Run folder cleanup skipped; directory does not exist: {target_dir}")
+        logger.info(
+            f"Run folder cleanup skipped; directory does not exist: {target_dir}"
+        )
         return
     logger.info(f"Cleaning run folders in {target_dir}")
     for item in target_dir.iterdir():
@@ -122,7 +124,9 @@ def sync_zarr_from_nvme_if_needed(nvme_base, final_zarr_path):
         )
         return
 
-    logger.info(f"Syncing final zarr from NVMe to GPFS: {source_zarr} -> {final_zarr_path}")
+    logger.info(
+        f"Syncing final zarr from NVMe to GPFS: {source_zarr} -> {final_zarr_path}"
+    )
     final_zarr_path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(source_zarr, final_zarr_path)
     logger.info("Final zarr sync complete.")
@@ -150,7 +154,7 @@ def check_baseline_success(baseline_dir, n_profiles_requested):
         return 0, 0.0, False, None
 
     try:
-        with open(batch_results_path, "r") as f:
+        with open(batch_results_path) as f:
             results = json.load(f)
 
         total = results.get("total", 0)
@@ -222,10 +226,7 @@ def check_baseline_success(baseline_dir, n_profiles_requested):
 
         # Calculate success rate based on attempted runs (excluding skipped)
         non_skipped = total - skipped
-        if non_skipped > 0:
-            success_rate = succeeded / non_skipped
-        else:
-            success_rate = 0.0
+        success_rate = succeeded / non_skipped if non_skipped > 0 else 0.0
 
         logger.info("=" * 60)
         logger.info("Phase 1 Baseline Results Summary")
@@ -662,9 +663,9 @@ def run_two_phase_pipeline(
 
             if failed_profiles is None:
                 logger.error(
-                    f"\n✗ Critical error: BATCH_RESULTS.json missing or invalid."
+                    "\n✗ Critical error: BATCH_RESULTS.json missing or invalid."
                 )
-                logger.error(f"  Cannot determine which profiles failed to retry.")
+                logger.error("  Cannot determine which profiles failed to retry.")
                 break
             elif all_profiles_succeeded:
                 logger.info(f"\n✓ ALL {n_profiles} PROFILES SUCCEEDED!")
@@ -673,7 +674,7 @@ def run_two_phase_pipeline(
                 break
             elif global_retry_count < max_global_retries:
                 logger.warning(f"\n⚠ {len(failed_profiles)} profiles still failing")
-                logger.warning(f"  Will retry in next iteration")
+                logger.warning("  Will retry in next iteration")
             else:
                 logger.error(f"\n✗ MAX RETRIES ({max_global_retries}) EXHAUSTED")
                 logger.error(f"  Only {success_count}/{n_profiles} profiles succeeded")
@@ -690,7 +691,7 @@ def run_two_phase_pipeline(
             final_baseline_dir = output_base / "baselines"
             final_baseline_dir.mkdir(parents=True, exist_ok=True)
             logger.info(f"\n{'=' * 60}")
-            logger.info(f"Phase 1 Complete - Syncing from NVMe to GPFS...")
+            logger.info("Phase 1 Complete - Syncing from NVMe to GPFS...")
             logger.info(f"  Source: {baseline_dir}")
             logger.info(f"  Destination: {final_baseline_dir}")
             logger.info(f"{'=' * 60}")
@@ -711,10 +712,10 @@ def run_two_phase_pipeline(
             batch_results_src = baseline_dir / "BATCH_RESULTS.json"
             batch_results_dst = final_baseline_dir / "BATCH_RESULTS.json"
             if batch_results_src.exists():
-                logger.info(f"  Syncing BATCH_RESULTS.json...")
+                logger.info("  Syncing BATCH_RESULTS.json...")
                 shutil.copy2(batch_results_src, batch_results_dst)
 
-            logger.info(f"✓ Sync complete")
+            logger.info("✓ Sync complete")
 
     # Process baseline outputs
     if not skip_process:
@@ -774,10 +775,7 @@ def run_two_phase_pipeline(
     # Check if Phase 1 succeeded sufficiently before proceeding
     if not skip_sim and should_generate_interventions:
         # Determine which baseline directory to check
-        if nvme_base:
-            baseline_check_dir = output_base / "baselines"
-        else:
-            baseline_check_dir = baseline_dir
+        baseline_check_dir = output_base / "baselines" if nvme_base else baseline_dir
 
         success_count, success_rate, should_proceed, _ = check_baseline_success(
             baseline_check_dir, n_profiles

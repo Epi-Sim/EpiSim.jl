@@ -307,8 +307,12 @@ def plot_run_epicurves(ds, run_id, output_dir, aggregate_regions=True, var_map=N
 
     if aggregate_regions:
         # Sum over region_id, then handle any remaining dimensions (e.g., duplicate run_id entries)
-        infections = run_data[var_map["infections"]].sum(dim="region_id").squeeze().values
-        hospitalizations = run_data[var_map["hospitalizations"]].sum(dim="region_id").squeeze().values
+        infections = (
+            run_data[var_map["infections"]].sum(dim="region_id").squeeze().values
+        )
+        hospitalizations = (
+            run_data[var_map["hospitalizations"]].sum(dim="region_id").squeeze().values
+        )
         deaths = run_data[var_map["deaths"]].sum(dim="region_id").squeeze().values
         cases = run_data[var_map["cases"]].sum(dim="region_id").squeeze().values
         # Handle case where squeeze leaves multiple dimensions (duplicate run_id entries)
@@ -428,7 +432,7 @@ def plot_run_epicurves(ds, run_id, output_dir, aggregate_regions=True, var_map=N
     periods = detect_lockdown_periods(mobility, dates)
     if periods:
         logger.info(f"Detected {len(periods)} lockdown period(s)")
-        for start, end, severity in periods:
+        for start, end, _severity in periods:
             ax2.axvspan(start, end, alpha=0.2, color="red")
 
     plt.tight_layout()
@@ -440,7 +444,9 @@ def plot_run_epicurves(ds, run_id, output_dir, aggregate_regions=True, var_map=N
     logger.info(f"Saved single-run plot to {output_path}")
 
 
-def plot_faceted_grid(ds, run_ids, output_dir, scenarios=None, n_runs=None, var_map=None):
+def plot_faceted_grid(
+    ds, run_ids, output_dir, scenarios=None, n_runs=None, var_map=None
+):
     """Plot epicurves in a faceted grid layout.
 
     Layout:
@@ -474,12 +480,9 @@ def plot_faceted_grid(ds, run_ids, output_dir, scenarios=None, n_runs=None, var_
     for run_id in run_ids:
         scenario_val = ds.sel(run_id=run_id)[var_map["scenario"]].values
         # Handle case where scenario is an array (duplicate run_id entries)
-        if scenario_val.size > 1:
-            scenario = str(scenario_val[0])
-        else:
-            scenario = str(scenario_val)
+        scenario = str(scenario_val[0]) if scenario_val.size > 1 else str(scenario_val)
         # Clean up string if it's an array representation
-        if scenario.startswith("['") or scenario.startswith('[\''):
+        if scenario.startswith(("['", "['")):
             scenario = scenario.split("'")[1]
         if scenario not in scenario_groups:
             scenario_groups[scenario] = []
@@ -526,8 +529,12 @@ def plot_faceted_grid(ds, run_ids, output_dir, scenarios=None, n_runs=None, var_
 
         # Aggregate across regions and combine biomarkers
         # Sum over region_id, then handle any remaining dimensions (e.g., duplicate run_id entries)
-        infections = run_data[var_map["infections"]].sum(dim="region_id").squeeze().values
-        hospitalizations = run_data[var_map["hospitalizations"]].sum(dim="region_id").squeeze().values
+        infections = (
+            run_data[var_map["infections"]].sum(dim="region_id").squeeze().values
+        )
+        hospitalizations = (
+            run_data[var_map["hospitalizations"]].sum(dim="region_id").squeeze().values
+        )
         deaths = run_data[var_map["deaths"]].sum(dim="region_id").squeeze().values
         cases = run_data[var_map["cases"]].sum(dim="region_id").squeeze().values
         # Handle case where squeeze leaves multiple dimensions (duplicate run_id entries)
@@ -693,10 +700,7 @@ def main():
     ds = load_zarr_data(args.zarr)
 
     # Determine which runs to plot
-    if args.runs:
-        run_ids = args.runs
-    else:
-        run_ids = list(ds.run_id.values)
+    run_ids = args.runs or list(ds.run_id.values)
 
     # Create output directory if needed
     os.makedirs(args.output_dir, exist_ok=True)

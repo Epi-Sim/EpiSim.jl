@@ -65,10 +65,7 @@ def generate_reported_cases(infections: np.ndarray, config=None, rng=None):
 
     p_t = p_min + (p_max - p_min) / (1.0 + np.exp(-k * (t_indices - mid)))
 
-    if infections_int.ndim == 2:
-        p_matrix = p_t[:, None]
-    else:
-        p_matrix = p_t
+    p_matrix = p_t[:, None] if infections_int.ndim == 2 else p_t
 
     reported = rng.binomial(infections_int, p_matrix)
     return reported, p_t
@@ -132,7 +129,11 @@ def generate_reported_with_delay(
             delay = delays[loc]
             if delay > 0:
                 # Shift forward: original[t] -> delayed[t + delay]
-                reported_delayed[delay:, loc] = reported[:-delay, loc] if delay < n_time else np.zeros(n_time - delay)
+                reported_delayed[delay:, loc] = (
+                    reported[:-delay, loc]
+                    if delay < n_time
+                    else np.zeros(n_time - delay)
+                )
             else:
                 reported_delayed[:, loc] = reported[:, loc]
 
@@ -304,11 +305,11 @@ def generate_wastewater_stratified(
     Generate wastewater signal using age-stratified shedding kinetics.
 
     Physical Model (see CONTEXT_SYNTHETIC_GEN.md):
-        Concentration = Σ(Infections_g × Shedding_g) / (Population × FlowPerCapita)
+        Concentration = sum(Infections_g x Shedding_g) / (Population x FlowPerCapita)
 
     This formula models the physical reality of wastewater surveillance:
-        - Σ(Infections_g × Shedding_g): Total viral load shed by infected individuals
-        - Population × FlowPerCapita: Total wastewater flow (dilution factor)
+        - sum(Infections_g x Shedding_g): Total viral load shed by infected individuals
+        - Population x FlowPerCapita: Total wastewater flow (dilution factor)
         - Division by population: Models DILUTION, not per-capita normalization
 
     Key insight: Population division models DILUTION physics.

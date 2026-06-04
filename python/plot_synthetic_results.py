@@ -495,7 +495,7 @@ def plot_intervention_bubble(results, output_dir):
         color_val = np.clip(row["Relative_Reduction"], -1.0, 1.0)
         color = cmap((color_val + 1.0) / 2.0)  # Map [-1,1] to [0,1]
 
-        scatter = ax.scatter(
+        ax.scatter(
             window_center,
             y_pos,
             s=bubble_size,

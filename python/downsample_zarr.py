@@ -271,7 +271,7 @@ def downsample_dataset(
         else 0
     )
 
-    logger.info(f"\nDownsampling Summary:")
+    logger.info("\nDownsampling Summary:")
     logger.info(f"  Variables processed: {stats['variables_processed']}")
     logger.info(f"  Variables skipped: {stats['variables_skipped']}")
     if stats["variables_failed"]:

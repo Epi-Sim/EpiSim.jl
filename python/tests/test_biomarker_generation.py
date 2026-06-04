@@ -122,12 +122,16 @@ class TestReportedCases:
 
     def test_returns_integer_counts(self, sample_infections):
         """Reported cases should be integers."""
-        reported, _ = generate_reported_cases(sample_infections, rng=np.random.default_rng(42))
+        reported, _ = generate_reported_cases(
+            sample_infections, rng=np.random.default_rng(42)
+        )
         assert reported.dtype == np.int64
 
     def test_returns_ascertainment_rate(self, sample_infections):
         """Should return daily ascertainment rates."""
-        reported, rates = generate_reported_cases(sample_infections, rng=np.random.default_rng(42))
+        reported, rates = generate_reported_cases(
+            sample_infections, rng=np.random.default_rng(42)
+        )
         assert len(rates) == len(sample_infections)
         assert np.all(rates >= 0) and np.all(rates <= 1)
 
@@ -139,7 +143,9 @@ class TestReportedCases:
             "inflection_day": 3.5,
             "slope": 1.0,
         }
-        reported, rates = generate_reported_cases(sample_infections, config=cfg, rng=np.random.default_rng(42))
+        reported, rates = generate_reported_cases(
+            sample_infections, config=cfg, rng=np.random.default_rng(42)
+        )
 
         # Rate should increase from min to max
         assert rates[0] < rates[-1]
@@ -149,7 +155,9 @@ class TestReportedCases:
 
     def test_reported_leverages_infections(self, sample_infections):
         """Reported cases should correlate with infections."""
-        reported, _ = generate_reported_cases(sample_infections, rng=np.random.default_rng(42))
+        reported, _ = generate_reported_cases(
+            sample_infections, rng=np.random.default_rng(42)
+        )
 
         # High infection days should generally have higher reports
         # (accounting for randomness)
@@ -178,7 +186,9 @@ class TestReportedCases:
     def test_zero_infections(self):
         """Should handle zero infections without errors."""
         infections = np.zeros(10)
-        reported, rates = generate_reported_cases(infections, rng=np.random.default_rng(42))
+        reported, rates = generate_reported_cases(
+            infections, rng=np.random.default_rng(42)
+        )
 
         np.testing.assert_array_equal(reported, np.zeros(10, dtype=int))
 
@@ -221,17 +231,23 @@ class TestWastewaterBasic:
 
     def test_returns_float_array(self, sample_infections_1d):
         """Wastewater signal should be float."""
-        result = generate_wastewater(sample_infections_1d, rng=np.random.default_rng(42))
+        result = generate_wastewater(
+            sample_infections_1d, rng=np.random.default_rng(42)
+        )
         assert result.dtype == np.float64
 
     def test_1d_input_shape(self, sample_infections_1d):
         """1D input should return 1D output."""
-        result = generate_wastewater(sample_infections_1d, rng=np.random.default_rng(42))
+        result = generate_wastewater(
+            sample_infections_1d, rng=np.random.default_rng(42)
+        )
         assert result.shape == sample_infections_1d.shape
 
     def test_2d_input_shape(self, sample_infections_2d):
         """2D input should return 2D output."""
-        result = generate_wastewater(sample_infections_2d, rng=np.random.default_rng(42))
+        result = generate_wastewater(
+            sample_infections_2d, rng=np.random.default_rng(42)
+        )
         assert result.shape == sample_infections_2d.shape
 
     def test_convolution_smoothing(self, sample_infections_1d):
@@ -255,14 +271,14 @@ class TestWastewaterBasic:
         rng = np.random.default_rng(42)
 
         # High signal
-        result_high = generate_wastewater(
+        generate_wastewater(
             np.array([1000]),
             config={"noise_sigma": 0.5, "limit_of_detection": 0.0},
             rng=rng,
         )
 
         # Low signal
-        result_low = generate_wastewater(
+        generate_wastewater(
             np.array([10]),
             config={"noise_sigma": 0.5, "limit_of_detection": 0.0},
             rng=rng,
@@ -375,8 +391,16 @@ class TestWastewaterBasic:
 
     def test_sensitivity_scale(self, sample_infections_1d):
         """Sensitivity scale should multiply the signal."""
-        config_low = {"sensitivity_scale": 0.5, "noise_sigma": 0.0, "limit_of_detection": 0.0}
-        config_high = {"sensitivity_scale": 2.0, "noise_sigma": 0.0, "limit_of_detection": 0.0}
+        config_low = {
+            "sensitivity_scale": 0.5,
+            "noise_sigma": 0.0,
+            "limit_of_detection": 0.0,
+        }
+        config_high = {
+            "sensitivity_scale": 2.0,
+            "noise_sigma": 0.0,
+            "limit_of_detection": 0.0,
+        }
 
         result_low = generate_wastewater(
             sample_infections_1d, config=config_low, rng=np.random.default_rng(42)
@@ -405,8 +429,12 @@ class TestWastewaterBasic:
 
     def test_deterministic_with_seed(self, sample_infections_1d):
         """Same seed should produce identical results."""
-        result1 = generate_wastewater(sample_infections_1d, rng=np.random.default_rng(42))
-        result2 = generate_wastewater(sample_infections_1d, rng=np.random.default_rng(42))
+        result1 = generate_wastewater(
+            sample_infections_1d, rng=np.random.default_rng(42)
+        )
+        result2 = generate_wastewater(
+            sample_infections_1d, rng=np.random.default_rng(42)
+        )
 
         np.testing.assert_allclose(result1, result2)
 
@@ -418,34 +446,38 @@ class TestWastewaterStratified:
     def sample_infections_3d(self):
         """3D infection data (time, location, age_group)."""
         # Shape: (10 time, 2 locations, 3 age groups)
-        return np.array([
-            [[0, 5, 2], [10, 20, 15]],
-            [[5, 15, 8], [20, 40, 30]],
-            [[20, 40, 20], [50, 80, 60]],
-            [[50, 80, 40], [100, 120, 90]],
-            [[100, 120, 60], [150, 180, 120]],
-            [[80, 100, 50], [120, 150, 100]],
-            [[40, 60, 30], [80, 100, 70]],
-            [[15, 30, 15], [30, 50, 35]],
-            [[5, 15, 8], [10, 20, 15]],
-            [[0, 5, 2], [5, 10, 5]],
-        ])
+        return np.array(
+            [
+                [[0, 5, 2], [10, 20, 15]],
+                [[5, 15, 8], [20, 40, 30]],
+                [[20, 40, 20], [50, 80, 60]],
+                [[50, 80, 40], [100, 120, 90]],
+                [[100, 120, 60], [150, 180, 120]],
+                [[80, 100, 50], [120, 150, 100]],
+                [[40, 60, 30], [80, 100, 70]],
+                [[15, 30, 15], [30, 50, 35]],
+                [[5, 15, 8], [10, 20, 15]],
+                [[0, 5, 2], [5, 10, 5]],
+            ]
+        )
 
     @pytest.fixture
     def sample_infections_2d(self):
         """2D infection data (time, age_group) for single location."""
-        return np.array([
-            [0, 5, 2],
-            [5, 15, 8],
-            [20, 40, 20],
-            [50, 80, 40],
-            [100, 120, 60],
-            [80, 100, 50],
-            [40, 60, 30],
-            [15, 30, 15],
-            [5, 15, 8],
-            [0, 5, 2],
-        ])
+        return np.array(
+            [
+                [0, 5, 2],
+                [5, 15, 8],
+                [20, 40, 20],
+                [50, 80, 40],
+                [100, 120, 60],
+                [80, 100, 50],
+                [40, 60, 30],
+                [15, 30, 15],
+                [5, 15, 8],
+                [0, 5, 2],
+            ]
+        )
 
     def test_returns_2d_output(self, sample_infections_3d):
         """3D input should produce 2D output (time, location)."""
@@ -454,7 +486,10 @@ class TestWastewaterStratified:
         )
 
         assert result.ndim == 2
-        assert result.shape == (sample_infections_3d.shape[0], sample_infections_3d.shape[1])
+        assert result.shape == (
+            sample_infections_3d.shape[0],
+            sample_infections_3d.shape[1],
+        )
 
     def test_2d_input_returns_1d(self, sample_infections_2d):
         """2D input (time, age_group) should return 1D output (time,)."""
@@ -652,9 +687,7 @@ class TestEdgeCases:
     def test_negative_infections_normalized(self):
         """Negative infections should be handled (normalized to zero)."""
         infections = np.array([10, -5, 20])
-        reported, _ = generate_reported_cases(
-            infections, rng=np.random.default_rng(42)
-        )
+        reported, _ = generate_reported_cases(infections, rng=np.random.default_rng(42))
 
         # Negative values become zero, so reports should be <= infections
         assert reported[1] == 0
@@ -764,10 +797,12 @@ class TestLoDBehaviors:
 
     def test_stratified_lod_behavior(self):
         """LoD should work identically for stratified generation."""
-        infections_3d = np.array([
-            [[1, 1, 1], [2, 2, 2]],
-            [[5, 5, 5], [10, 10, 10]],
-        ])
+        infections_3d = np.array(
+            [
+                [[1, 1, 1], [2, 2, 2]],
+                [[5, 5, 5], [10, 10, 10]],
+            ]
+        )
 
         result = generate_wastewater_stratified(
             infections_3d,
@@ -859,19 +894,22 @@ class TestMonitoringStartThreshold:
         # Location 0: reaches 100 around day 10
         # Location 1: reaches 50 around day 7
         # Location 2: reaches 25 around day 5
-        return np.array([
-            [[0, 0, 0], [0, 0, 0], [0, 0, 0]],  # Day 0
-            [[1, 1, 1], [2, 2, 2], [1, 1, 1]],  # Day 1: 3, 6, 3
-            [[2, 2, 2], [3, 3, 3], [1, 1, 1]],  # Day 2: 6, 9, 3
-            [[3, 3, 3], [4, 4, 4], [2, 2, 2]],  # Day 3: 9, 12, 6
-            [[4, 4, 4], [5, 5, 5], [2, 2, 2]],  # Day 4: 12, 15, 6
-            [[5, 5, 5], [6, 6, 6], [3, 3, 3]],  # Day 5: 15, 18, 9
-            [[6, 6, 6], [7, 7, 7], [3, 3, 3]],  # Day 6: 18, 21, 9
-            [[7, 7, 7], [8, 8, 8], [4, 4, 4]],  # Day 7: 21, 24, 12
-            [[8, 8, 8], [9, 9, 9], [4, 4, 4]],  # Day 8: 24, 27, 12
-            [[9, 9, 9], [10, 10, 10], [5, 5, 5]],  # Day 9: 27, 30, 15
-            [[10, 10, 10], [11, 11, 11], [5, 5, 5]],  # Day 10: 30, 33, 15
-        ] * 2)  # Double to get 20 days
+        return np.array(
+            [
+                [[0, 0, 0], [0, 0, 0], [0, 0, 0]],  # Day 0
+                [[1, 1, 1], [2, 2, 2], [1, 1, 1]],  # Day 1: 3, 6, 3
+                [[2, 2, 2], [3, 3, 3], [1, 1, 1]],  # Day 2: 6, 9, 3
+                [[3, 3, 3], [4, 4, 4], [2, 2, 2]],  # Day 3: 9, 12, 6
+                [[4, 4, 4], [5, 5, 5], [2, 2, 2]],  # Day 4: 12, 15, 6
+                [[5, 5, 5], [6, 6, 6], [3, 3, 3]],  # Day 5: 15, 18, 9
+                [[6, 6, 6], [7, 7, 7], [3, 3, 3]],  # Day 6: 18, 21, 9
+                [[7, 7, 7], [8, 8, 8], [4, 4, 4]],  # Day 7: 21, 24, 12
+                [[8, 8, 8], [9, 9, 9], [4, 4, 4]],  # Day 8: 24, 27, 12
+                [[9, 9, 9], [10, 10, 10], [5, 5, 5]],  # Day 9: 27, 30, 15
+                [[10, 10, 10], [11, 11, 11], [5, 5, 5]],  # Day 10: 30, 33, 15
+            ]
+            * 2
+        )  # Double to get 20 days
 
     def test_threshold_zero_disables_feature(self, sample_infections_3d):
         """threshold=0 should return all True (monitoring from day 0)."""
@@ -883,8 +921,11 @@ class TestMonitoringStartThreshold:
             rng=np.random.default_rng(42),
         )
 
-        assert mask.shape == (sample_infections_3d.shape[0], sample_infections_3d.shape[1])
-        assert np.all(mask == True)
+        assert mask.shape == (
+            sample_infections_3d.shape[0],
+            sample_infections_3d.shape[1],
+        )
+        assert np.all(mask)
 
     def test_cumulative_threshold_behavior(self, sample_infections_3d):
         """Monitoring should start after cumulative infections reach threshold."""
@@ -906,8 +947,12 @@ class TestMonitoringStartThreshold:
         # So all should reach threshold 50 before day 10
         for loc_idx in range(3):
             first_true = np.argmax(mask[:, loc_idx])
-            assert first_true > 0, "Monitoring should not start on day 0 with threshold=50"
-            assert mask[first_true:, loc_idx].all(), "Once monitoring starts, it should stay active"
+            assert first_true > 0, (
+                "Monitoring should not start on day 0 with threshold=50"
+            )
+            assert mask[first_true:, loc_idx].all(), (
+                "Once monitoring starts, it should stay active"
+            )
 
     def test_per_edar_independence(self, sample_infections_3d):
         """Each EDAR should activate independently based on its own cumulative infections."""
@@ -924,7 +969,9 @@ class TestMonitoringStartThreshold:
 
         # At least some locations should have different activation times
         # (given the structured infection data)
-        assert len(set(activation_times)) >= 2, "Locations should activate independently"
+        assert len(set(activation_times)) >= 2, (
+            "Locations should activate independently"
+        )
 
     def test_stochastic_delay_variation(self):
         """Stochastic delay should create variation in activation times across runs."""
@@ -989,7 +1036,7 @@ class TestMonitoringStartThreshold:
             rng=np.random.default_rng(42),
         )
 
-        assert np.all(mask == False), "All should be False if threshold never reached"
+        assert np.all(not mask), "All should be False if threshold never reached"
 
     def test_negative_threshold_raises_error(self):
         """Negative threshold should raise ValueError."""
@@ -1045,9 +1092,11 @@ class TestMonitoringStartThreshold:
         # Result should have NaN values where monitoring is not active
         for loc_idx in range(3):
             pre_monitoring = ~mask[:, loc_idx]
-            assert np.all(np.isnan(result[pre_monitoring, loc_idx])), \
+            assert np.all(np.isnan(result[pre_monitoring, loc_idx])), (
                 f"Location {loc_idx}: pre-threshold values should be NaN"
+            )
             # Post-threshold values should be non-NaN
             post_monitoring = mask[:, loc_idx]
-            assert np.all(np.isfinite(result[post_monitoring, loc_idx])), \
+            assert np.all(np.isfinite(result[post_monitoring, loc_idx])), (
                 f"Location {loc_idx}: post-threshold values should be finite"
+            )

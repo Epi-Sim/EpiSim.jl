@@ -113,7 +113,7 @@ def analyze_synthetic_sparsity(
     for i in range(len(bins) - 1):
         count = np.sum((run_sparsity >= bins[i]) & (run_sparsity < bins[i + 1]))
         pct = 100 * count / len(run_sparsity)
-        print(f"  [{bins[i]:3d}%, {bins[i+1]:3d}%): {count:3d} runs ({pct:5.1f}%)")
+        print(f"  [{bins[i]:3d}%, {bins[i + 1]:3d}%): {count:3d} runs ({pct:5.1f}%)")
     print()
 
     # Per-region sparsity
@@ -151,7 +151,9 @@ def analyze_synthetic_sparsity(
     }
 
     print(f"Regions with >{high_sparsity_threshold}% sparsity:")
-    print(f"  {high_sparsity_count} / {len(region_sparsity)} ({high_sparsity_pct:.1f}%)")
+    print(
+        f"  {high_sparsity_count} / {len(region_sparsity)} ({high_sparsity_pct:.1f}%)"
+    )
     print()
 
     # Scenario type breakdown
@@ -164,8 +166,12 @@ def analyze_synthetic_sparsity(
         scenario_sparsity = sparsity_meta[mask]
         scenario_strengths = strengths[mask]
         print(f"  {scenario}: {np.sum(mask)} runs")
-        print(f"    Sparsity range: [{scenario_sparsity.min():.3f}, {scenario_sparsity.max():.3f}]")
-        print(f"    Strength range: [{scenario_strengths.min():.2f}, {scenario_strengths.max():.2f}]")
+        print(
+            f"    Sparsity range: [{scenario_sparsity.min():.3f}, {scenario_sparsity.max():.3f}]"
+        )
+        print(
+            f"    Strength range: [{scenario_strengths.min():.2f}, {scenario_strengths.max():.2f}]"
+        )
     print()
 
     ds.close()
@@ -187,16 +193,16 @@ def analyze_synthetic_sparsity(
     }
 
     sparsity_gap = real_sparsity_mean - actual_sparsity
-    sparsity_ratio = real_sparsity_mean / actual_sparsity if actual_sparsity > 0 else float("inf")
+    sparsity_ratio = (
+        real_sparsity_mean / actual_sparsity if actual_sparsity > 0 else float("inf")
+    )
 
     print(f"{'Metric':<35} {'Synthetic':>15} {'Real':>15} {'Gap':>15}")
     print("-" * 80)
     print(
         f"{'Mean sparsity %':<35} {actual_sparsity:>14.2f}% {real_sparsity_mean:>14.2f}% {sparsity_gap:>+14.2f}%"
     )
-    print(
-        f"{'Sparsity ratio (real/synth)':<35} {sparsity_ratio:>15.1f}x"
-    )
+    print(f"{'Sparsity ratio (real/synth)':<35} {sparsity_ratio:>15.1f}x")
     print(
         f"{'Regions with >10% sparsity':<35} {high_sparsity_pct:>14.1f}% {real_high_sparsity_pct:>14.1f}% N/A"
     )
@@ -250,9 +256,13 @@ def analyze_synthetic_sparsity(
     print("=" * 70)
     print()
     print(f"Total runs analyzed: {results['num_runs']}")
-    print(f"Sparsity range in metadata: [{sparsity_meta.min():.3f}, {sparsity_meta.max():.3f}]")
+    print(
+        f"Sparsity range in metadata: [{sparsity_meta.min():.3f}, {sparsity_meta.max():.3f}]"
+    )
     print(f"Actual data sparsity: {actual_sparsity:.2f}%")
-    print(f"Gap to real data: {sparsity_gap:.1f}% (need {sparsity_ratio:.1f}x increase)")
+    print(
+        f"Gap to real data: {sparsity_gap:.1f}% (need {sparsity_ratio:.1f}x increase)"
+    )
     print()
 
     return results

@@ -19,7 +19,6 @@ import sys
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 import xarray as xr
 
 logging.basicConfig(
@@ -81,7 +80,7 @@ def estimate_cases_age_from_population(ds: xr.Dataset) -> xr.Dataset:
     if "population" in ds.data_vars:
         pop = ds["population"]  # (run_id, region_id)
         # Assume uniform age distribution: divide population equally among age groups
-        pop_per_age = pop / n_age_groups
+        pop / n_age_groups
 
         # Estimate cases per age group proportionally
         # This assumes cases are distributed like population (not accurate but a fallback)
@@ -147,8 +146,6 @@ def reprocess_cases_age_from_runs(ds: xr.Dataset, runs_dir: Path) -> xr.Dataset:
         generate_reported_cases,
         load_infections_stratified,
         load_run_artifacts,
-        parse_run_metadata,
-        sanitize_run_id,
     )
     from synthetic_observations import DEFAULT_REPORTED_CASES_CONFIG
 

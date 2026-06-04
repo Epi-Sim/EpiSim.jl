@@ -40,7 +40,13 @@ def benchmark_ipfp_iterations(mobility_csv, metapop_csv, T=180, n_repeats=10):
             original_ipfp = mob_module.ipfp_sparse
 
             def ipfp_with_iter(
-                edgelist, B, O_target, D_target, max_iter=max_iter, tol=1e-6
+                edgelist,
+                B,
+                O_target,
+                D_target,
+                max_iter=max_iter,
+                tol=1e-6,
+                original_ipfp=original_ipfp,
             ):
                 return original_ipfp(
                     edgelist, B, O_target, D_target, max_iter=max_iter, tol=tol
@@ -49,7 +55,7 @@ def benchmark_ipfp_iterations(mobility_csv, metapop_csv, T=180, n_repeats=10):
             mob_module.ipfp_sparse = ipfp_with_iter
 
             start = time.perf_counter()
-            R_series = generator.generate_series(T=T)
+            generator.generate_series(T=T)
             elapsed = time.perf_counter() - start
             times.append(elapsed)
 
@@ -92,7 +98,7 @@ def benchmark_sigma_values(mobility_csv, metapop_csv, T=180):
         )
 
         start = time.perf_counter()
-        R_series = generator.generate_series(T=T)
+        generator.generate_series(T=T)
         elapsed = time.perf_counter() - start
 
         print(
@@ -177,7 +183,7 @@ def profile_components(mobility_csv, metapop_csv):
     times = []
     for _ in range(100):
         start = time.perf_counter()
-        R_new = generator._ipfp(R_baseline, O_t, D_t)
+        generator._ipfp(R_baseline, O_t, D_t)
         times.append(time.perf_counter() - start)
     print(f"IPFP (20 iterations): {np.mean(times) * 1000:.2f}ms")
 
@@ -185,7 +191,7 @@ def profile_components(mobility_csv, metapop_csv):
     times = []
     for _ in range(100):
         start = time.perf_counter()
-        R_t = generator.generate_R_t(t=0)
+        generator.generate_R_t(t=0)
         times.append(time.perf_counter() - start)
     print(f"Full timestep: {np.mean(times) * 1000:.2f}ms")
 
@@ -238,7 +244,7 @@ def benchmark_scales():
 
         start = time.perf_counter()
         try:
-            R_series = generator.generate_series(T=T)
+            generator.generate_series(T=T)
             elapsed = time.perf_counter() - start
             print(
                 f"{desc:25s}: {elapsed:.3f}s for {T} timesteps ({elapsed / T * 1000:.2f}ms per timestep)"

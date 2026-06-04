@@ -14,6 +14,8 @@ from scipy.stats import qmc
 # Ensure we can import episim_python
 sys.path.append(os.path.dirname(__file__))
 
+from typing import Optional
+
 from episim_python.episim_utils import EpiSimConfig
 from episim_python.mobility import MobilityGenerator, load_baseline_mobility
 from failed_profiles_logger import FailedProfilesLogger, scan_and_log_existing_failures
@@ -36,7 +38,7 @@ def generate_profile_standalone(
     data_folder: str,
     output_folder: str,
     baseline_only: bool = False,
-    intervention_profiles: set = None,
+    intervention_profiles: Optional[set] = None,
     mobility_sigma_min: float = 0.0,
     mobility_sigma_max: float = 0.6,
     mobility_generator: str = "calendar_ipfp",
@@ -53,9 +55,9 @@ def generate_profile_standalone(
     mobility_edge_class_mode: str = "quantile_markov",
     mobility_intermit_persistence_min: float = 0.3,
     mobility_intermit_persistence_max: float = 0.9,
-    vacc_start: int = None,
-    vacc_duration: int = None,
-    vacc_rate_per_day: float = None,
+    vacc_start: Optional[int] = None,
+    vacc_duration: Optional[int] = None,
+    vacc_rate_per_day: Optional[float] = None,
 ) -> dict:
     """
     Standalone function to generate a single profile's configuration.
@@ -74,10 +76,18 @@ def generate_profile_standalone(
         generator.mobility_sigma_min = mobility_sigma_min
         generator.mobility_sigma_max = mobility_sigma_max
         generator.mobility_generator = mobility_generator
-        generator.mobility_weekend_volume_factor_min = mobility_weekend_volume_factor_min
-        generator.mobility_weekend_volume_factor_max = mobility_weekend_volume_factor_max
-        generator.mobility_weekday_volume_jitter_min = mobility_weekday_volume_jitter_min
-        generator.mobility_weekday_volume_jitter_max = mobility_weekday_volume_jitter_max
+        generator.mobility_weekend_volume_factor_min = (
+            mobility_weekend_volume_factor_min
+        )
+        generator.mobility_weekend_volume_factor_max = (
+            mobility_weekend_volume_factor_max
+        )
+        generator.mobility_weekday_volume_jitter_min = (
+            mobility_weekday_volume_jitter_min
+        )
+        generator.mobility_weekday_volume_jitter_max = (
+            mobility_weekday_volume_jitter_max
+        )
         generator.mobility_edge_weekend_effect_min = mobility_edge_weekend_effect_min
         generator.mobility_edge_weekend_effect_max = mobility_edge_weekend_effect_max
         generator.mobility_intermit_prob_min = mobility_intermit_prob_min
@@ -638,7 +648,9 @@ class SyntheticDataGenerator:
             else self.mobility_generator
         )
         mobility_calendar_enabled = (
-            profile.get("mobility_calendar_enabled", mobility_generator == "calendar_ipfp")
+            profile.get(
+                "mobility_calendar_enabled", mobility_generator == "calendar_ipfp"
+            )
             if profile
             else mobility_generator == "calendar_ipfp"
         )
@@ -822,11 +834,11 @@ class SyntheticDataGenerator:
         t_inc = profile["t_inc"]
         ratio_beta_a = profile.get("ratio_beta_a", 0.5)
         alpha_scale = profile.get("alpha_scale", 1.0)
-        mu_scale = profile.get("mu_scale", 1.0)
+        profile.get("mu_scale", 1.0)
 
         # Construct Run ID
         # Format: {pid}_{Scenario}_s{strength_int} where strength_int is percent
-        str_pct = int(round(strength * 100))
+        str_pct = round(strength * 100)
         run_id = f"{pid}_{scen_name}{run_suffix}_s{str_pct:02d}"
         if scen_name == "Baseline":
             run_id = f"{pid}_Baseline"
@@ -1700,7 +1712,7 @@ class SyntheticDataGenerator:
         """Extract profile parameters from a generated config file."""
         # Extract epidemic parameters
         epidemic_params = config.get("epidemic_params", {})
-        npi_params = config.get("NPI", {})
+        config.get("NPI", {})
 
         # Calculate derived parameters
         beta_I = epidemic_params.get("βᴵ", 0.5)
@@ -2041,7 +2053,9 @@ if __name__ == "__main__":
     # Validate vaccination args require Vac engine
     vacc_args = [args.vacc_start, args.vacc_duration, args.vacc_rate_per_day]
     if any(v is not None for v in vacc_args) and args.engine != "MMCACovid19Vac":
-        parser.error("--vacc-start/--vacc-duration/--vacc-rate-per-day require --engine MMCACovid19Vac")
+        parser.error(
+            "--vacc-start/--vacc-duration/--vacc-rate-per-day require --engine MMCACovid19Vac"
+        )
 
     # Paths
     PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -2283,7 +2297,7 @@ if __name__ == "__main__":
                 f"Executing batch for {n_baseline_configs} baseline configurations"
             )
             logger.info(
-                f"Mode: Single execution (no retry - pipeline handles global retry)"
+                "Mode: Single execution (no retry - pipeline handles global retry)"
             )
             logger.info(f"{'=' * 60}")
 
@@ -2296,7 +2310,7 @@ if __name__ == "__main__":
             total = success_count + failed_count
             success_rate = success_count / total if total > 0 else 0.0
 
-            logger.info(f"\nBatch Results:")
+            logger.info("\nBatch Results:")
             logger.info(f"  Succeeded: {success_count}")
             logger.info(f"  Failed: {failed_count}")
             logger.info(f"  Success rate: {success_rate:.1%}")

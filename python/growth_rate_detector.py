@@ -89,13 +89,18 @@ def detect_spike_periods_growth_rate(
     # Step 3: Calculate population-relative threshold
     min_cases = max(1.0, min_cases_per_capita * population)
 
-    logger.info(f"Growth-rate detection: GF_threshold={growth_factor_threshold}, "
-                f"min_cases={min_cases:.1f} ({min_cases_per_capita*100:.4f}% of pop={population:.0f})")
+    logger.info(
+        f"Growth-rate detection: GF_threshold={growth_factor_threshold}, "
+        f"min_cases={min_cases:.1f} ({min_cases_per_capita * 100:.4f}% of pop={population:.0f})"
+    )
 
     # Step 4: Find days where BOTH conditions met
     above_threshold = np.zeros(n_days, dtype=bool)
     for t in range(growth_window, n_days):
-        gf_condition = not np.isnan(growth_factor[t]) and growth_factor[t] >= growth_factor_threshold
+        gf_condition = (
+            not np.isnan(growth_factor[t])
+            and growth_factor[t] >= growth_factor_threshold
+        )
         cases_condition = infections_array[t] >= min_cases
         above_threshold[t] = gf_condition and cases_condition
 
@@ -104,7 +109,7 @@ def detect_spike_periods_growth_rate(
     sustained_growth = np.zeros(n_days, dtype=bool)
     for t in range(min_growth_duration, n_days):
         # Check if we have min_growth_duration consecutive days above threshold
-        window_check = above_threshold[t - min_growth_duration + 1:t + 1]
+        window_check = above_threshold[t - min_growth_duration + 1 : t + 1]
         sustained_growth[t] = np.all(window_check)
 
     # Step 6: Merge into spike periods with minimum duration

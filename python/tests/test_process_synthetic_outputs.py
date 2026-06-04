@@ -248,7 +248,9 @@ class TestWriteMobilityTimeVaryingToZarr:
             chunk_size=2,
         )
 
-        written = zarr.open_group(str(output_path), mode="r")["mobility_time_varying"][:]
+        written = zarr.open_group(str(output_path), mode="r")["mobility_time_varying"][
+            :
+        ]
 
         assert written.shape == (1, 2, 2, 3)
         np.testing.assert_allclose(written[0, :, :, 0], base_mobility)
@@ -756,7 +758,11 @@ class TestGenerateWastewaterWithCensoring:
                 "lod_probabilistic": False,
             },
         }
-        wastewater_cfg = {"gamma_shape": 1.0, "gamma_scale": 1.0, "kernel_quantile": 0.95}
+        wastewater_cfg = {
+            "gamma_shape": 1.0,
+            "gamma_scale": 1.0,
+            "kernel_quantile": 0.95,
+        }
 
         wastewater, lod = generate_wastewater_with_censoring(
             infections,
@@ -791,7 +797,11 @@ class TestGenerateWastewaterWithCensoring:
                 "lod_probabilistic": False,
             },
         }
-        wastewater_cfg = {"gamma_shape": 1.0, "gamma_scale": 1.0, "kernel_quantile": 0.95}
+        wastewater_cfg = {
+            "gamma_shape": 1.0,
+            "gamma_scale": 1.0,
+            "kernel_quantile": 0.95,
+        }
 
         wastewater, _ = generate_wastewater_with_censoring(
             infections,

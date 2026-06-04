@@ -65,8 +65,12 @@ class TestInterventionProfileSampling:
         """Same seed = same results."""
         gen = SyntheticDataGenerator.__new__(SyntheticDataGenerator)
 
-        result1 = gen._sample_intervention_profiles(n_profiles=15, fraction=0.5, seed=42)
-        result2 = gen._sample_intervention_profiles(n_profiles=15, fraction=0.5, seed=42)
+        result1 = gen._sample_intervention_profiles(
+            n_profiles=15, fraction=0.5, seed=42
+        )
+        result2 = gen._sample_intervention_profiles(
+            n_profiles=15, fraction=0.5, seed=42
+        )
 
         assert result1 == result2, (
             f"Sampling should be reproducible with same seed, got {result1} vs {result2}"
@@ -76,8 +80,12 @@ class TestInterventionProfileSampling:
         """Different seeds = different results."""
         gen = SyntheticDataGenerator.__new__(SyntheticDataGenerator)
 
-        result1 = gen._sample_intervention_profiles(n_profiles=15, fraction=0.5, seed=42)
-        result2 = gen._sample_intervention_profiles(n_profiles=15, fraction=0.5, seed=123)
+        result1 = gen._sample_intervention_profiles(
+            n_profiles=15, fraction=0.5, seed=42
+        )
+        result2 = gen._sample_intervention_profiles(
+            n_profiles=15, fraction=0.5, seed=123
+        )
 
         # With sufficient n_profiles and fraction, different seeds should produce different results
         # (Though this is probabilistic, so we just check they're likely different)
@@ -128,9 +136,7 @@ class TestMarkerFileCreation:
 
         # Create dummy rosetta csv
         rosetta_csv = data_folder / "rosetta.csv"
-        pd.DataFrame({"id": ["1", "2"], "idx": [1, 2]}).to_csv(
-            rosetta_csv, index=False
-        )
+        pd.DataFrame({"id": ["1", "2"], "idx": [1, 2]}).to_csv(rosetta_csv, index=False)
 
         return {
             "root": tmp_path,
@@ -147,14 +153,13 @@ class TestMarkerFileCreation:
         with patch.object(
             SyntheticDataGenerator, "run_spike_based_interventions"
         ), patch.object(SyntheticDataGenerator, "run_batch_with_retry"):
-
             # Simulate the marker creation logic directly
             intervention_profiles = set()  # Empty set = fraction=0
 
             # This is the logic from synthetic_generator.py lines 1377-1380
             if intervention_profiles is None or len(intervention_profiles) > 0:
                 marker_path = output_folder / ".interventions_pending"
-                with open(marker_path, 'w') as f:
+                with open(marker_path, "w") as f:
                     f.write("")
                 should_create_marker = True
             else:
@@ -175,7 +180,7 @@ class TestMarkerFileCreation:
 
         # This is the logic from synthetic_generator.py lines 1377-1380
         if intervention_profiles is None or len(intervention_profiles) > 0:
-            with open(marker_path, 'w') as f:
+            with open(marker_path, "w") as f:
                 f.write("")
             should_create_marker = True
         else:
@@ -194,7 +199,7 @@ class TestMarkerFileCreation:
 
         # This is the logic from synthetic_generator.py lines 1377-1380
         if intervention_profiles is None or len(intervention_profiles) > 0:
-            with open(marker_path, 'w') as f:
+            with open(marker_path, "w") as f:
                 f.write("")
             should_create_marker = True
         else:
@@ -213,7 +218,7 @@ class TestMarkerFileCreation:
 
         # This is the logic from synthetic_generator.py lines 1377-1380
         if intervention_profiles is None or len(intervention_profiles) > 0:
-            with open(marker_path, 'w') as f:
+            with open(marker_path, "w") as f:
                 f.write("")
             should_create_marker = True
         else:
@@ -240,7 +245,9 @@ class TestPipelineMarkerDetection:
         if intervention_dir.exists():
             marker_file_check = intervention_dir / ".interventions_pending"
             has_interventions = marker_file_check.exists() or any(
-                d.name.startswith("run_") for d in intervention_dir.iterdir() if d.is_dir()
+                d.name.startswith("run_")
+                for d in intervention_dir.iterdir()
+                if d.is_dir()
             )
 
         assert has_interventions, "Should detect interventions when marker exists"
@@ -259,10 +266,14 @@ class TestPipelineMarkerDetection:
         if intervention_dir.exists():
             marker_file_check = intervention_dir / ".interventions_pending"
             has_interventions = marker_file_check.exists() or any(
-                d.name.startswith("run_") for d in intervention_dir.iterdir() if d.is_dir()
+                d.name.startswith("run_")
+                for d in intervention_dir.iterdir()
+                if d.is_dir()
             )
 
-        assert has_interventions, "Should detect interventions when run directories exist"
+        assert has_interventions, (
+            "Should detect interventions when run directories exist"
+        )
 
     def test_detection_with_no_marker_and_no_runs(self, tmp_path):
         """No detection when empty."""
@@ -274,7 +285,9 @@ class TestPipelineMarkerDetection:
         if intervention_dir.exists():
             marker_file_check = intervention_dir / ".interventions_pending"
             has_interventions = marker_file_check.exists() or any(
-                d.name.startswith("run_") for d in intervention_dir.iterdir() if d.is_dir()
+                d.name.startswith("run_")
+                for d in intervention_dir.iterdir()
+                if d.is_dir()
             )
 
         assert not has_interventions, "Should NOT detect interventions when empty"
@@ -288,10 +301,14 @@ class TestPipelineMarkerDetection:
         if intervention_dir.exists():
             marker_file_check = intervention_dir / ".interventions_pending"
             has_interventions = marker_file_check.exists() or any(
-                d.name.startswith("run_") for d in intervention_dir.iterdir() if d.is_dir()
+                d.name.startswith("run_")
+                for d in intervention_dir.iterdir()
+                if d.is_dir()
             )
 
-        assert not has_interventions, "Should NOT detect interventions when directory doesn't exist"
+        assert not has_interventions, (
+            "Should NOT detect interventions when directory doesn't exist"
+        )
 
 
 class TestIntegrationEndToEnd:
@@ -343,9 +360,7 @@ class TestIntegrationEndToEnd:
 
         # Create dummy rosetta csv
         rosetta_csv = data_folder / "rosetta.csv"
-        pd.DataFrame({"id": ["1", "2"], "idx": [1, 2]}).to_csv(
-            rosetta_csv, index=False
-        )
+        pd.DataFrame({"id": ["1", "2"], "idx": [1, 2]}).to_csv(rosetta_csv, index=False)
 
         return {
             "root": tmp_path,
@@ -370,12 +385,10 @@ class TestIntegrationEndToEnd:
 
         # Apply the marker creation logic from synthetic_generator.py
         if intervention_profiles is None or len(intervention_profiles) > 0:
-            with open(marker_path, 'w') as f:
+            with open(marker_path, "w") as f:
                 f.write("")
 
-        assert not marker_path.exists(), (
-            "Marker should NOT exist when fraction=0"
-        )
+        assert not marker_path.exists(), "Marker should NOT exist when fraction=0"
 
     @patch("synthetic_generator.SyntheticDataGenerator.run_spike_based_interventions")
     @patch("synthetic_generator.SyntheticDataGenerator.run_batch_with_retry")
@@ -394,12 +407,10 @@ class TestIntegrationEndToEnd:
 
         # Apply the marker creation logic from synthetic_generator.py
         if intervention_profiles is None or len(intervention_profiles) > 0:
-            with open(marker_path, 'w') as f:
+            with open(marker_path, "w") as f:
                 f.write("")
 
-        assert marker_path.exists(), (
-            "Marker SHOULD exist when fraction=0.5"
-        )
+        assert marker_path.exists(), "Marker SHOULD exist when fraction=0.5"
 
     def test_pipeline_skips_processing_when_no_marker(self, full_setup):
         """Pipeline skips when no marker."""
@@ -412,7 +423,9 @@ class TestIntegrationEndToEnd:
         has_interventions = False
         if intervention_folder.exists():
             has_interventions = marker_file.exists() or any(
-                d.name.startswith("run_") for d in intervention_folder.iterdir() if d.is_dir()
+                d.name.startswith("run_")
+                for d in intervention_folder.iterdir()
+                if d.is_dir()
             )
 
         assert not has_interventions, "Should NOT detect interventions without marker"
@@ -424,7 +437,7 @@ class TestEdgeCases:
     def test_empty_marker_content(self, tmp_path):
         """Marker can be empty."""
         marker_path = tmp_path / ".interventions_pending"
-        with open(marker_path, 'w') as f:
+        with open(marker_path, "w") as f:
             f.write("")
 
         assert marker_path.exists()
@@ -433,7 +446,7 @@ class TestEdgeCases:
     def test_marker_deletion_after_processing(self, tmp_path):
         """Marker cleaned up."""
         marker_path = tmp_path / ".interventions_pending"
-        with open(marker_path, 'w') as f:
+        with open(marker_path, "w") as f:
             f.write("")
 
         assert marker_path.exists()
@@ -453,7 +466,9 @@ class TestEdgeCases:
         assert result == set()
 
         # Test slightly negative (should also return empty)
-        result = gen._sample_intervention_profiles(n_profiles=10, fraction=-0.1, seed=42)
+        result = gen._sample_intervention_profiles(
+            n_profiles=10, fraction=-0.1, seed=42
+        )
         assert result == set()
 
     def test_fraction_boundary_at_one(self):
@@ -484,7 +499,7 @@ class TestEdgeCases:
         marker_path.write_text("existing content")
 
         # Re-create marker (as the code does)
-        with open(marker_path, 'w') as f:
+        with open(marker_path, "w") as f:
             f.write("")
 
         # Should be overwritten with empty content

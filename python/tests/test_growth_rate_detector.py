@@ -24,7 +24,7 @@ class TestExponentialGrowthDetection:
         """Test detection of pure exponential growth (doubling every day)."""
         # Generate 30 days of exponential growth: 1, 2, 4, 8, 16, 32, 64, ...
         t = np.arange(30)
-        infections = 2 ** t
+        infections = 2**t
 
         spikes = detect_spike_periods_growth_rate(
             infections_array=infections,
@@ -60,7 +60,7 @@ class TestExponentialGrowthDetection:
         """Test detection of slow exponential growth (10% daily)."""
         # Generate slow growth: 100, 110, 121, 133, 146, 161, ...
         t = np.arange(60)
-        infections = 100 * (1.1 ** t)
+        infections = 100 * (1.1**t)
 
         spikes = detect_spike_periods_growth_rate(
             infections_array=infections,
@@ -95,7 +95,9 @@ class TestDieOutAndRestart:
         start, end = spikes[0]
         # Spike should start near the exponential growth (with pre-growth window buffer)
         # The algorithm may include a pre-growth window, so start may be slightly before growth
-        assert start >= 0 and start < 10, f"Spike should start near growth, got start={start}"
+        assert start >= 0 and start < 10, (
+            f"Spike should start near growth, got start={start}"
+        )
 
     def test_multiple_die_outs(self):
         """Test handling of multiple die-out and restart cycles."""
@@ -142,7 +144,9 @@ class TestFalsePositives:
         )
 
         # Should not detect sustained growth in noise
-        assert len(spikes) == 0, f"Should not detect spike in noise, got {len(spikes)} spikes"
+        assert len(spikes) == 0, (
+            f"Should not detect spike in noise, got {len(spikes)} spikes"
+        )
 
     def test_small_outbreak_then_decline(self):
         """Test that small outbreaks that decline don't trigger."""
@@ -210,7 +214,9 @@ class TestPopulationRelativeThreshold:
         # Small population should trigger
         assert len(spikes_small) > 0, "Small population should trigger"
         # Large population with very high threshold should not trigger (outbreak too small)
-        assert len(spikes_large) == 0, "Large population should not trigger with small outbreak and very high threshold"
+        assert len(spikes_large) == 0, (
+            "Large population should not trigger with small outbreak and very high threshold"
+        )
 
     def test_custom_per_capita_threshold(self):
         """Test custom per-capita threshold behavior."""
@@ -235,8 +241,9 @@ class TestPopulationRelativeThreshold:
         )
 
         # Lenient should be more permissive
-        assert len(spikes_lenient) >= len(spikes_strict), \
+        assert len(spikes_lenient) >= len(spikes_strict), (
             "Lenient threshold should detect same or more spikes"
+        )
 
 
 class TestGrowthRateCalculation:
@@ -300,8 +307,9 @@ class TestParameterSensitivity:
         )
 
         # Lower threshold should be more permissive
-        assert len(spikes_low) >= len(spikes_high), \
+        assert len(spikes_low) >= len(spikes_high), (
             "Lower growth factor threshold should detect same or more spikes"
+        )
 
     def test_min_growth_duration_impact(self):
         """Test that min_growth_duration affects detection."""
@@ -329,8 +337,9 @@ class TestParameterSensitivity:
         )
 
         # Shorter duration requirement should be more permissive
-        assert len(spikes_short) >= len(spikes_long), \
+        assert len(spikes_short) >= len(spikes_long), (
             "Shorter min_growth_duration should detect same or more spikes"
+        )
 
 
 if __name__ == "__main__":

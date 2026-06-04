@@ -134,7 +134,7 @@ class FailedProfilesLogger:
                     param_stats[key]["max"] = max(param_stats[key]["max"], value)
 
         # Calculate statistics
-        for key, stats in param_stats.items():
+        for _key, stats in param_stats.items():
             values = np.array(stats["values"])
             stats["mean"] = float(np.mean(values))
             stats["std"] = float(np.std(values))
@@ -267,7 +267,11 @@ def scan_and_log_existing_failures(
                 # Extract relevant parameters
                 epi_params = config.get("epidemic_params", {})
                 profile["r0_scale"] = epi_params.get("scale_β", 1.0)
-                profile["alpha_scale"] = epi_params.get("αᵍ", [1.0])[0] / 0.1 if epi_params.get("αᵍ") else 1.0
+                profile["alpha_scale"] = (
+                    epi_params.get("αᵍ", [1.0])[0] / 0.1
+                    if epi_params.get("αᵍ")
+                    else 1.0
+                )
 
                 # Extract rates
                 mu_g = epi_params.get("μᵍ", [0.2])[0]
@@ -294,9 +298,7 @@ def scan_and_log_existing_failures(
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(
-        description="Analyze failed simulation profiles"
-    )
+    parser = argparse.ArgumentParser(description="Analyze failed simulation profiles")
     parser.add_argument(
         "batch_folder",
         nargs="?",

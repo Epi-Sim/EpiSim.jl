@@ -20,19 +20,18 @@ network requirements. To run them, ensure you have network access and run:
 import os
 import tempfile
 from datetime import datetime, timedelta
+from typing import ClassVar
 
 import numpy as np
 import pytest
 import xarray as xr
 
 # Add python directory to path to import episim_python
-sys_path_append = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..")
-)
+sys_path_append = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if sys_path_append not in __import__("sys").path:
     __import__("sys").path.append(sys_path_append)
 
-from episim_python.epi_sim import EpiSim
+from episim_python.epi_sim import EpiSim  # noqa: E402
 
 
 class TestTimeVaryingMobility:
@@ -46,12 +45,14 @@ class TestTimeVaryingMobility:
     SEED_SIZE = 50.0
 
     # Region names and IDs
-    REGION_NAMES = ["Region_A", "Region_B", "Region_C", "Region_D"]
-    REGION_IDS = ["00000", "00001", "00002", "00003"]
-    AGE_GROUPS = ["Y", "M", "O"]
+    REGION_NAMES: ClassVar[list[str]] = ["Region_A", "Region_B", "Region_C", "Region_D"]
+    REGION_IDS: ClassVar[list[str]] = ["00000", "00001", "00002", "00003"]
+    AGE_GROUPS: ClassVar[list[str]] = ["Y", "M", "O"]
 
     # Path to actual Julia binary (not launcher) - avoid network access issues
-    JULIA_BINARY = "/Users/lewis/.julia/juliaup/julia-1.11.5+0.aarch64.apple.darwin14/bin/julia"
+    JULIA_BINARY = (
+        "/Users/lewis/.julia/juliaup/julia-1.11.5+0.aarch64.apple.darwin14/bin/julia"
+    )
 
     @pytest.fixture
     def temp_workspace(self):
@@ -60,6 +61,7 @@ class TestTimeVaryingMobility:
         yield temp_dir
         # Cleanup
         import shutil
+
         shutil.rmtree(temp_dir)
 
     def _create_mobility_netcdf(self, workspace, mode="containment"):
@@ -136,7 +138,9 @@ class TestTimeVaryingMobility:
                     for j in range(M):
                         if i == j:
                             # Last region always stays 100%, others gradually increase to 100%
-                            mobility_data[t, i, j] = 1.0 if i == M - 1 else 0.90 + 0.10 * (1 - factor)
+                            mobility_data[t, i, j] = (
+                                1.0 if i == M - 1 else 0.90 + 0.10 * (1 - factor)
+                            )
                         elif j == i + 1:
                             mobility_data[t, i, j] = 0.10 * factor
                         else:
@@ -155,20 +159,18 @@ class TestTimeVaryingMobility:
         mobility_transposed = mobility_data.transpose(2, 1, 0)  # (dest, origin, date)
 
         ds = xr.Dataset(
-            {
-                "mobility": (["destination", "origin", "date"], mobility_transposed)
-            },
+            {"mobility": (["destination", "origin", "date"], mobility_transposed)},
             coords={
                 "date": (["date"], date_strs),
                 "origin": (["origin"], np.array(self.REGION_IDS)),
                 "destination": (["destination"], np.array(self.REGION_IDS)),
-            }
+            },
         )
 
         # Add attributes
         ds["mobility"].attrs = {
             "description": "Mobility flow probability",
-            "units": "probability"
+            "units": "probability",
         }
 
         # Save to NetCDF
@@ -188,7 +190,9 @@ class TestTimeVaryingMobility:
         with open(seed_path, "w") as f:
             f.write("name,id,idx,Y,M,O\n")
             # Seed infections in region A (middle age group)
-            f.write(f"{self.REGION_NAMES[0]},{self.REGION_IDS[0]},1,0.0,{self.SEED_SIZE},0.0\n")
+            f.write(
+                f"{self.REGION_NAMES[0]},{self.REGION_IDS[0]},1,0.0,{self.SEED_SIZE},0.0\n"
+            )
 
         return seed_path
 
@@ -202,7 +206,9 @@ class TestTimeVaryingMobility:
 
         with open(meta_path, "w") as f:
             f.write("id,area,Y,M,O,total\n")
-            for i, (name, region_id) in enumerate(zip(self.REGION_NAMES, self.REGION_IDS)):
+            for i, (_name, region_id) in enumerate(
+                zip(self.REGION_NAMES, self.REGION_IDS)
+            ):
                 # Equal population in all regions
                 y = 5000
                 m = 8000
@@ -221,13 +227,15 @@ class TestTimeVaryingMobility:
         """
         contact_path = os.path.join(workspace, "contact_matrices_data.csv")
 
-        G = len(self.AGE_GROUPS)
+        len(self.AGE_GROUPS)
         # Simple contact matrix
-        C = np.array([
-            [0.6, 0.3, 0.1],
-            [0.3, 0.5, 0.2],
-            [0.1, 0.2, 0.7],
-        ])
+        C = np.array(
+            [
+                [0.6, 0.3, 0.1],
+                [0.3, 0.5, 0.2],
+                [0.1, 0.2, 0.7],
+            ]
+        )
 
         with open(contact_path, "w") as f:
             f.write("G_labels," + ",".join(self.AGE_GROUPS) + "\n")
@@ -252,11 +260,11 @@ class TestTimeVaryingMobility:
                 for j in range(M):
                     # Julia uses 1-based indexing, so convert Python's 0-based to 1-based
                     if i == j:
-                        f.write(f"{i+1},{j+1},100.0\n")
+                        f.write(f"{i + 1},{j + 1},100.0\n")
                     elif j == i + 1:
-                        f.write(f"{i+1},{j+1},10.0\n")
+                        f.write(f"{i + 1},{j + 1},10.0\n")
                     else:
-                        f.write(f"{i+1},{j+1},0.0\n")
+                        f.write(f"{i + 1},{j + 1},0.0\n")
 
         return mobility_path
 
@@ -279,7 +287,7 @@ class TestTimeVaryingMobility:
                 "save_time_step": -1,
                 "input_format": "csv",
                 "output_folder": "output",
-                "output_format": "netcdf"
+                "output_format": "netcdf",
             },
             "data": {
                 "initial_condition_filename": "seeds.csv",
@@ -343,8 +351,8 @@ class TestTimeVaryingMobility:
                 "percentage_of_vacc_per_day": 0.0,
                 "start_vacc": 0,
                 "dur_vacc": 0,
-                "are_there_vaccines": False  # No actual vaccination for this test
-            }
+                "are_there_vaccines": False,  # No actual vaccination for this test
+            },
         }
 
         return config
@@ -366,7 +374,9 @@ class TestTimeVaryingMobility:
         os.makedirs(instance_folder, exist_ok=True)
 
         # JULIA_PROJECT: Point to the EpiSim.jl project
-        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        project_root = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), "..", "..")
+        )
         os.environ["JULIA_PROJECT"] = project_root
 
         # Initialize EpiSim model
@@ -387,7 +397,9 @@ class TestTimeVaryingMobility:
 
         # Run simulation
         start_date = config["simulation"]["start_date"]
-        final_state, next_date = model.step(start_date, length_days=self.SIMULATION_DAYS)
+        final_state, next_date = model.step(
+            start_date, length_days=self.SIMULATION_DAYS
+        )
 
         # Read observables NetCDF to get infections by region
         output_path = os.path.join(os.path.dirname(final_state), "observables.nc")
@@ -418,19 +430,29 @@ class TestTimeVaryingMobility:
         5. Total infections: time-varying <= static (containment effect)
         """
         # Create test data files
-        mobility_containment_path = self._create_mobility_netcdf(temp_workspace, mode="containment")
-        mobility_static_path = self._create_mobility_netcdf(temp_workspace, mode="static")
-        seed_path = self._create_seed_file(temp_workspace)
-        metapop_path = self._create_metapopulation_csv(temp_workspace)
-        mobility_csv_path = self._create_mobility_csv(temp_workspace)
+        mobility_containment_path = self._create_mobility_netcdf(
+            temp_workspace, mode="containment"
+        )
+        mobility_static_path = self._create_mobility_netcdf(
+            temp_workspace, mode="static"
+        )
+        self._create_seed_file(temp_workspace)
+        self._create_metapopulation_csv(temp_workspace)
+        self._create_mobility_csv(temp_workspace)
 
         # Create configs
-        config_containment = self._create_config(temp_workspace, mobility_containment_path, "time_varying")
-        config_static = self._create_config(temp_workspace, mobility_static_path, "static")
+        config_containment = self._create_config(
+            temp_workspace, mobility_containment_path, "time_varying"
+        )
+        config_static = self._create_config(
+            temp_workspace, mobility_static_path, "static"
+        )
 
         # Run simulations
         print("\n=== Running Time-Varying Mobility Simulation ===")
-        results_tv = self._run_simulation(config_containment, temp_workspace, "time_varying")
+        results_tv = self._run_simulation(
+            config_containment, temp_workspace, "time_varying"
+        )
 
         print("\n=== Running Static Mobility Simulation ===")
         results_static = self._run_simulation(config_static, temp_workspace, "static")
@@ -445,17 +467,27 @@ class TestTimeVaryingMobility:
         for i, name in enumerate(self.REGION_NAMES):
             print(f"{name:8} | {infections_tv[i]:12.1f} | {infections_static[i]:7.1f}")
         print("-" * 35)
-        print(f"Total    | {results_tv['total_infections']:12.1f} | {results_static['total_infections']:7.1f}")
+        print(
+            f"Total    | {results_tv['total_infections']:12.1f} | {results_static['total_infections']:7.1f}"
+        )
 
         # Test assertions
 
         # 1. Region A (seed) has infections in both scenarios
-        assert infections_tv[0] > 0, f"Region A should have infections in time-varying case, got {infections_tv[0]}"
-        assert infections_static[0] > 0, f"Region A should have infections in static case, got {infections_static[0]}"
+        assert infections_tv[0] > 0, (
+            f"Region A should have infections in time-varying case, got {infections_tv[0]}"
+        )
+        assert infections_static[0] > 0, (
+            f"Region A should have infections in static case, got {infections_static[0]}"
+        )
 
         # 2. Region B has infections in both (connected before cutoff)
-        assert infections_tv[1] > 0, f"Region B should have infections in time-varying case, got {infections_tv[1]}"
-        assert infections_static[1] > 0, f"Region B should have infections in static case, got {infections_static[1]}"
+        assert infections_tv[1] > 0, (
+            f"Region B should have infections in time-varying case, got {infections_tv[1]}"
+        )
+        assert infections_static[1] > 0, (
+            f"Region B should have infections in static case, got {infections_static[1]}"
+        )
 
         # 3. Region C has MORE infections in static case
         assert infections_static[2] > infections_tv[2], (
@@ -464,7 +496,9 @@ class TestTimeVaryingMobility:
         )
 
         # 4. Region D has infections ONLY in static case (or significantly more)
-        assert infections_static[3] > 0, f"Region D should have infections in static case, got {infections_static[3]}"
+        assert infections_static[3] > 0, (
+            f"Region D should have infections in static case, got {infections_static[3]}"
+        )
         # Allow for some leakage in time-varying case, but should be much less
         assert infections_tv[3] < infections_static[3] * 0.5, (
             f"Region D should have FEW infections in time-varying case. "
@@ -485,10 +519,12 @@ class TestTimeVaryingMobility:
 
         Expected: infections stay only in region A
         """
-        mobility_shutdown_path = self._create_mobility_netcdf(temp_workspace, mode="shutdown")
-        seed_path = self._create_seed_file(temp_workspace)
-        metapop_path = self._create_metapopulation_csv(temp_workspace)
-        mobility_csv_path = self._create_mobility_csv(temp_workspace)
+        mobility_shutdown_path = self._create_mobility_netcdf(
+            temp_workspace, mode="shutdown"
+        )
+        self._create_seed_file(temp_workspace)
+        self._create_metapopulation_csv(temp_workspace)
+        self._create_mobility_csv(temp_workspace)
 
         config = self._create_config(temp_workspace, mobility_shutdown_path, "shutdown")
         results = self._run_simulation(config, temp_workspace, "shutdown")
@@ -502,7 +538,9 @@ class TestTimeVaryingMobility:
             print(f"{name:8} | {infections[i]:10.1f}")
 
         # Only region A should have significant infections
-        assert infections[0] > 0, f"Region A should have infections, got {infections[0]}"
+        assert infections[0] > 0, (
+            f"Region A should have infections, got {infections[0]}"
+        )
         for i in range(1, self.NUM_REGIONS):
             assert infections[i] < infections[0] * 0.01, (
                 f"Region {self.REGION_NAMES[i]} should have negligible infections with shutdown, "
@@ -538,16 +576,23 @@ class TestTimeVaryingMobility:
         assert "mobility" in ds.variables, "NetCDF should have 'mobility' variable"
 
         # Check dimension sizes
-        assert ds.sizes["date"] == self.SIMULATION_DAYS, f"Should have {self.SIMULATION_DAYS} dates"
-        assert ds.sizes["origin"] == self.NUM_REGIONS, f"Should have {self.NUM_REGIONS} origins"
-        assert ds.sizes["destination"] == self.NUM_REGIONS, f"Should have {self.NUM_REGIONS} destinations"
+        assert ds.sizes["date"] == self.SIMULATION_DAYS, (
+            f"Should have {self.SIMULATION_DAYS} dates"
+        )
+        assert ds.sizes["origin"] == self.NUM_REGIONS, (
+            f"Should have {self.NUM_REGIONS} origins"
+        )
+        assert ds.sizes["destination"] == self.NUM_REGIONS, (
+            f"Should have {self.NUM_REGIONS} destinations"
+        )
 
         # Check mobility data shape
         # NOTE: Data is written transposed (dest, origin, date) for Julia, so xarray reads it as (M, M, T)
         mobility = ds["mobility"].values
         expected_shape = (self.NUM_REGIONS, self.NUM_REGIONS, self.SIMULATION_DAYS)
-        assert mobility.shape == expected_shape, \
+        assert mobility.shape == expected_shape, (
             f"Mobility data should have shape {expected_shape} (dest, origin, date for Julia)"
+        )
 
         # Validate containment mode behavior
         # Days 0-9: normal mobility (90% diagonal, 10% forward)
@@ -556,23 +601,35 @@ class TestTimeVaryingMobility:
         for t in range(self.SIMULATION_DAYS):
             if t < self.MOBILITY_DROP_DAY:
                 # Should have off-diagonal mobility (origin -> dest)
-                assert mobility[1, 0, t] == 0.10, f"Day {t}: Should have 10% forward mobility (region 0 -> 1)"
-                assert mobility[2, 1, t] == 0.10, f"Day {t}: Should have 10% forward mobility (region 1 -> 2)"
+                assert mobility[1, 0, t] == 0.10, (
+                    f"Day {t}: Should have 10% forward mobility (region 0 -> 1)"
+                )
+                assert mobility[2, 1, t] == 0.10, (
+                    f"Day {t}: Should have 10% forward mobility (region 1 -> 2)"
+                )
             else:
                 # Should be diagonal only
                 for i in range(self.NUM_REGIONS):
                     for j in range(self.NUM_REGIONS):
                         if i != j:
-                            assert mobility[j, i, t] == 0.0, f"Day {t}: Should have zero off-diagonal mobility (region {i} -> {j})"
+                            assert mobility[j, i, t] == 0.0, (
+                                f"Day {t}: Should have zero off-diagonal mobility (region {i} -> {j})"
+                            )
 
         # Check date format
         dates = ds.coords["date"].values
         for date_str in dates:
-            assert isinstance(date_str, (str, bytes)), f"Date should be string, got {type(date_str)}"
+            assert isinstance(date_str, (str, bytes)), (
+                f"Date should be string, got {type(date_str)}"
+            )
             # Verify YYYY-MM-DD format
             if isinstance(date_str, str):
-                assert len(date_str) == 10, f"Date string should be 10 characters, got {date_str}"
-                assert date_str[4] == "-" and date_str[7] == "-", f"Date should have YYYY-MM-DD format, got {date_str}"
+                assert len(date_str) == 10, (
+                    f"Date string should be 10 characters, got {date_str}"
+                )
+                assert date_str[4] == "-" and date_str[7] == "-", (
+                    f"Date should have YYYY-MM-DD format, got {date_str}"
+                )
 
         ds.close()
 
@@ -587,7 +644,9 @@ class TestTimeVaryingMobility:
         2. Mobility parameters are correctly set
         """
         # Create test data files
-        mobility_netcdf_path = self._create_mobility_netcdf(temp_workspace, mode="containment")
+        mobility_netcdf_path = self._create_mobility_netcdf(
+            temp_workspace, mode="containment"
+        )
         config = self._create_config(temp_workspace, mobility_netcdf_path, "test")
 
         # Validate configuration
@@ -599,11 +658,17 @@ class TestTimeVaryingMobility:
         assert is_valid, "Configuration should pass schema validation"
 
         # Check mobility-specific parameters
-        assert config["population_params"]["mobility_variation_type"] == "external_netcdf"
-        assert config["population_params"]["mobility_external_file"] == os.path.abspath(mobility_netcdf_path)
+        assert (
+            config["population_params"]["mobility_variation_type"] == "external_netcdf"
+        )
+        assert config["population_params"]["mobility_external_file"] == os.path.abspath(
+            mobility_netcdf_path
+        )
         assert config["population_params"]["mobility_external_variable"] == "mobility"
         assert config["population_params"]["mobility_validate"] is True
-        assert config["simulation"]["engine"] == "MMCACovid19Vac"  # Required for external_netcdf support
+        assert (
+            config["simulation"]["engine"] == "MMCACovid19Vac"
+        )  # Required for external_netcdf support
 
         print("\n=== Configuration validation test passed! ===")
 
@@ -622,7 +687,9 @@ class TestTimeVaryingMobility:
         # NOTE: Data is (dest, origin, date) due to transpose for Julia
         first_day = mobility[:, :, 0]
         for t in range(1, self.SIMULATION_DAYS):
-            assert np.allclose(mobility[:, :, t], first_day), f"Day {t} should have same mobility as day 0"
+            assert np.allclose(mobility[:, :, t], first_day), (
+                f"Day {t} should have same mobility as day 0"
+            )
 
         # Check chain topology: 90% diagonal, 10% forward
         # Indexing is [dest, origin, date], so check mobility[dest, origin]

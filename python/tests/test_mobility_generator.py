@@ -15,23 +15,33 @@ from episim_python.mobility import (
 def test_mobility_generator_basic():
     """Test basic mobility generation with a simple example."""
     # Create sparse edgelist with self-loops and some cross-edges
-    edgelist = np.array([
-        [0, 0], [0, 1],
-        [1, 1], [1, 2],
-        [2, 0], [2, 2],
-    ], dtype=np.int64)
+    edgelist = np.array(
+        [
+            [0, 0],
+            [0, 1],
+            [1, 1],
+            [1, 2],
+            [2, 0],
+            [2, 2],
+        ],
+        dtype=np.int64,
+    )
 
     # Row-stochastic weights
-    baseline_R = np.array([0.9, 0.1,  # Row 0: 90% stay, 10% go to 1
-                          0.8, 0.2,  # Row 1: 80% stay, 20% go to 2
-                          0.05, 0.95])  # Row 2: 5% go to 0, 95% stay
+    baseline_R = np.array(
+        [
+            0.9,
+            0.1,  # Row 0: 90% stay, 10% go to 1
+            0.8,
+            0.2,  # Row 1: 80% stay, 20% go to 2
+            0.05,
+            0.95,
+        ]
+    )  # Row 2: 5% go to 0, 95% stay
 
     # Create generator with some noise
     generator = MobilityGenerator(
-        baseline_R=(edgelist, baseline_R),
-        sigma_O=0.1,
-        sigma_D=0.1,
-        rng_seed=42
+        baseline_R=(edgelist, baseline_R), sigma_O=0.1, sigma_D=0.1, rng_seed=42
     )
 
     # Test single timestep generation
@@ -57,23 +67,42 @@ def test_mobility_generator_basic():
         row_sums = np.zeros(M_check)
         for e, (i, _) in enumerate(edgelist):
             row_sums[i] += R_series[t, e]
-        assert np.allclose(row_sums, 1.0, atol=1e-3), f"Row {t} not stochastic: {row_sums}"
+        assert np.allclose(row_sums, 1.0, atol=1e-3), (
+            f"Row {t} not stochastic: {row_sums}"
+        )
 
     print("✓ Series generation: all timesteps row-stochastic")
 
 
 def test_calendar_ipfp_weekend_reduces_offdiag_and_preserves_rows():
     """Calendar IPFP should suppress weekend travel and keep row-stochasticity."""
-    edgelist = np.array([
-        [0, 0], [0, 1], [0, 2],
-        [1, 0], [1, 1], [1, 2],
-        [2, 0], [2, 1], [2, 2],
-    ], dtype=np.int64)
-    baseline_R = np.array([
-        0.70, 0.20, 0.10,
-        0.15, 0.70, 0.15,
-        0.10, 0.20, 0.70,
-    ])
+    edgelist = np.array(
+        [
+            [0, 0],
+            [0, 1],
+            [0, 2],
+            [1, 0],
+            [1, 1],
+            [1, 2],
+            [2, 0],
+            [2, 1],
+            [2, 2],
+        ],
+        dtype=np.int64,
+    )
+    baseline_R = np.array(
+        [
+            0.70,
+            0.20,
+            0.10,
+            0.15,
+            0.70,
+            0.15,
+            0.10,
+            0.20,
+            0.70,
+        ]
+    )
     generator = MobilityGenerator(
         baseline_R=(edgelist, baseline_R),
         sigma_O=0.0,
@@ -106,10 +135,15 @@ def test_calendar_ipfp_weekend_reduces_offdiag_and_preserves_rows():
 
 def test_calendar_ipfp_is_reproducible_for_same_seed():
     """Same seed and parameters should produce identical calendar trajectories."""
-    edgelist = np.array([
-        [0, 0], [0, 1],
-        [1, 0], [1, 1],
-    ], dtype=np.int64)
+    edgelist = np.array(
+        [
+            [0, 0],
+            [0, 1],
+            [1, 0],
+            [1, 1],
+        ],
+        dtype=np.int64,
+    )
     baseline_R = np.array([0.8, 0.2, 0.1, 0.9])
     kwargs = {
         "baseline_R": (edgelist, baseline_R),
@@ -134,11 +168,17 @@ def test_calendar_ipfp_is_reproducible_for_same_seed():
 def test_mobility_validator():
     """Test mobility validation."""
     M = 3
-    edgelist = np.array([
-        [0, 0], [0, 1],
-        [1, 1], [1, 2],
-        [2, 0], [2, 2],
-    ], dtype=np.int64)
+    edgelist = np.array(
+        [
+            [0, 0],
+            [0, 1],
+            [1, 1],
+            [1, 2],
+            [2, 0],
+            [2, 2],
+        ],
+        dtype=np.int64,
+    )
 
     # Valid row-stochastic matrices
     baseline_R = np.array([0.9, 0.1, 0.8, 0.2, 0.05, 0.95])
@@ -168,11 +208,17 @@ def test_mobility_validator():
 def test_dense_sparse_conversion():
     """Test conversion between dense and sparse formats."""
     M = 3
-    edgelist = np.array([
-        [0, 0], [0, 1],
-        [1, 1], [1, 2],
-        [2, 0], [2, 2],
-    ], dtype=np.int64)
+    edgelist = np.array(
+        [
+            [0, 0],
+            [0, 1],
+            [1, 1],
+            [1, 2],
+            [2, 0],
+            [2, 2],
+        ],
+        dtype=np.int64,
+    )
 
     baseline_R = np.array([0.9, 0.1, 0.8, 0.2, 0.05, 0.95])
 
@@ -188,8 +234,8 @@ def test_dense_sparse_conversion():
     assert R_dense.shape == (M, M), f"Unexpected dense shape: {R_dense.shape}"
 
     # Check some values
-    assert R_dense[0, 0] == 0.9, f"R_dense[0,0] = {R_dense[0,0]}, expected 0.9"
-    assert R_dense[0, 1] == 0.1, f"R_dense[0,1] = {R_dense[0,1]}, expected 0.1"
+    assert R_dense[0, 0] == 0.9, f"R_dense[0,0] = {R_dense[0, 0]}, expected 0.9"
+    assert R_dense[0, 1] == 0.1, f"R_dense[0,1] = {R_dense[0, 1]}, expected 0.1"
     assert R_dense[1, 0] == 0.0, "R_dense[1,0] should be 0"
 
     print("✓ Dense/sparse conversion working correctly")
@@ -202,13 +248,15 @@ def test_load_baseline_mobility():
     import tempfile
 
     # Create sparse format CSV
-    sparse_data = pd.DataFrame({
-        "origin": [0, 0, 1, 1, 2, 2],
-        "destination": [0, 1, 1, 2, 0, 2],
-        "value": [90, 10, 80, 20, 5, 95]
-    })
+    sparse_data = pd.DataFrame(
+        {
+            "origin": [0, 0, 1, 1, 2, 2],
+            "destination": [0, 1, 1, 2, 0, 2],
+            "value": [90, 10, 80, 20, 5, 95],
+        }
+    )
 
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
         sparse_path = f.name
         sparse_data.to_csv(f, index=False)
 
@@ -224,7 +272,9 @@ def test_load_baseline_mobility():
         for e, (i, _j) in enumerate(edgelist):
             row_sums[i] += R_baseline[e]
 
-        assert np.allclose(row_sums, 1.0, atol=1e-3), f"Row sums not stochastic: {row_sums}"
+        assert np.allclose(row_sums, 1.0, atol=1e-3), (
+            f"Row sums not stochastic: {row_sums}"
+        )
 
         print("✓ CSV loading working correctly")
 
@@ -249,31 +299,30 @@ if __name__ == "__main__":
 # Quantile Markov edge-class tests
 # ---------------------------------------------------------------------------
 
+
 def _make_5x5_full_generator(**extra_kwargs):
     """Build a 5x5 fully-connected generator with calendar_ipfp and known weights."""
     M = 5
-    edgelist = np.array(
-        [[i, j] for i in range(M) for j in range(M)], dtype=np.int64
-    )
+    edgelist = np.array([[i, j] for i in range(M) for j in range(M)], dtype=np.int64)
     rng = np.random.default_rng(0)
     raw = rng.random(M * M)
     raw = raw.reshape(M, M)
     raw /= raw.sum(axis=1, keepdims=True)
     baseline_R = raw.ravel()
 
-    kwargs = dict(
-        baseline_R=(edgelist, baseline_R),
-        sigma_O=0.1,
-        sigma_D=0.1,
-        rng_seed=42,
-        generator_mode="calendar_ipfp",
-        start_date="2020-01-06",
-        weekend_volume_factor=0.45,
-        weekday_volume_jitter=0.04,
-        edge_weekend_effect=0.8,
-        intermit_prob=0.15,
-        temporal_rho=0.6,
-    )
+    kwargs = {
+        "baseline_R": (edgelist, baseline_R),
+        "sigma_O": 0.1,
+        "sigma_D": 0.1,
+        "rng_seed": 42,
+        "generator_mode": "calendar_ipfp",
+        "start_date": "2020-01-06",
+        "weekend_volume_factor": 0.45,
+        "weekday_volume_jitter": 0.04,
+        "edge_weekend_effect": 0.8,
+        "intermit_prob": 0.15,
+        "temporal_rho": 0.6,
+    }
     kwargs.update(extra_kwargs)
     return MobilityGenerator(**kwargs), edgelist, baseline_R, M
 
@@ -293,16 +342,16 @@ def test_quantile_markov_classification():
     """Verify edge class assignments from known-weight matrix."""
     M = 4
     # Fully-connected with deliberately varied weights
-    edgelist = np.array(
-        [[i, j] for i in range(M) for j in range(M)], dtype=np.int64
-    )
+    edgelist = np.array([[i, j] for i in range(M) for j in range(M)], dtype=np.int64)
     # Row-stochastic with strong variation
-    W = np.array([
-        [0.80, 0.10, 0.05, 0.05],
-        [0.03, 0.85, 0.07, 0.05],
-        [0.02, 0.03, 0.90, 0.05],
-        [0.04, 0.03, 0.03, 0.90],
-    ])
+    W = np.array(
+        [
+            [0.80, 0.10, 0.05, 0.05],
+            [0.03, 0.85, 0.07, 0.05],
+            [0.02, 0.03, 0.90, 0.05],
+            [0.04, 0.03, 0.03, 0.90],
+        ]
+    )
     baseline_R = W.ravel()
 
     gen = MobilityGenerator(
@@ -334,9 +383,9 @@ def test_quantile_markov_classification():
         for c in range(4)
         if np.any(gen._class_masks[c])
     ]
-    assert all(
-        left >= right for left, right in zip(class_means, class_means[1:])
-    ), f"Class means should be descending by edge weight, got {class_means}"
+    assert all(left >= right for left, right in zip(class_means, class_means[1:])), (
+        f"Class means should be descending by edge weight, got {class_means}"
+    )
 
 
 def test_quantile_markov_row_stochastic():
@@ -352,9 +401,7 @@ def test_quantile_markov_row_stochastic():
     for t in range(14):
         row_sums = np.zeros(M)
         np.add.at(row_sums, edgelist[:, 0], series[t])
-        assert np.allclose(row_sums, 1.0, atol=1e-6), (
-            f"Row sums at t={t}: {row_sums}"
-        )
+        assert np.allclose(row_sums, 1.0, atol=1e-6), f"Row sums at t={t}: {row_sums}"
 
 
 def test_quantile_markov_state_persistence():
@@ -368,7 +415,7 @@ def test_quantile_markov_state_persistence():
     T = 60
     # We need to track edge states; generate series captures them indirectly
     # Use a simple approach: re-generate and track _edge_active_state
-    series = gen.generate_series(T=T, rng_seed=42)
+    gen.generate_series(T=T, rng_seed=42)
 
     # For class-3 edges, infer on/off from weight ratio to baseline
     class3_mask = gen._class_masks[3]
@@ -387,7 +434,9 @@ def test_quantile_markov_state_persistence():
 
     # Lag-1 autocorrelation
     autocorr = np.mean(states[:-1] == states[1:])
-    assert autocorr > 0.7, f"Lag-1 autocorrelation with persistence=0.9: {autocorr:.3f} <= 0.7"
+    assert autocorr > 0.7, (
+        f"Lag-1 autocorrelation with persistence=0.9: {autocorr:.3f} <= 0.7"
+    )
 
     # Compare with low persistence
     gen_low, _, _, _ = _make_5x5_full_generator(
@@ -413,9 +462,7 @@ def test_quantile_markov_cv_by_class():
     """Weak edges should become more variable while trunk edges stay stable."""
     # Use a larger 10x10 matrix with skewed weights to create strong class separation
     M = 10
-    edgelist = np.array(
-        [[i, j] for i in range(M) for j in range(M)], dtype=np.int64
-    )
+    edgelist = np.array([[i, j] for i in range(M) for j in range(M)], dtype=np.int64)
     rng = np.random.default_rng(0)
     raw = rng.random(M * M).reshape(M, M)
     # Create skew: raise to power to make some edges much stronger than others
@@ -423,21 +470,23 @@ def test_quantile_markov_cv_by_class():
     raw /= raw.sum(axis=1, keepdims=True)
     baseline_R = raw.ravel()
 
-    common = dict(
-        baseline_R=(edgelist, baseline_R),
-        sigma_O=0.1,
-        sigma_D=0.1,
-        generator_mode="calendar_ipfp",
-        start_date="2020-01-06",
-        weekend_volume_factor=0.45,
-        weekday_volume_jitter=0.04,
-        edge_weekend_effect=0.8,
-        intermit_prob=0.25,
-        temporal_rho=0.6,
-    )
+    common = {
+        "baseline_R": (edgelist, baseline_R),
+        "sigma_O": 0.1,
+        "sigma_D": 0.1,
+        "generator_mode": "calendar_ipfp",
+        "start_date": "2020-01-06",
+        "weekend_volume_factor": 0.45,
+        "weekday_volume_jitter": 0.04,
+        "edge_weekend_effect": 0.8,
+        "intermit_prob": 0.25,
+        "temporal_rho": 0.6,
+    }
 
     gen_none = MobilityGenerator(**common, edge_class_mode="none")
-    gen_qm = MobilityGenerator(**common, edge_class_mode="quantile_markov", intermit_persistence=0.6)
+    gen_qm = MobilityGenerator(
+        **common, edge_class_mode="quantile_markov", intermit_persistence=0.6
+    )
 
     T = 90
     s_none = gen_none.generate_series(T=T, rng_seed=42)

@@ -22,14 +22,18 @@ def test_assign_sparsity_tiers_deterministic():
     """Test that same seed produces same assignment."""
     sparsity1 = assign_sparsity_tiers(77, [0.05, 0.20, 0.40, 0.60, 0.80], seed=42)
     sparsity2 = assign_sparsity_tiers(77, [0.05, 0.20, 0.40, 0.60, 0.80], seed=42)
-    assert np.array_equal(sparsity1, sparsity2), "Same seed should produce same assignment"
+    assert np.array_equal(sparsity1, sparsity2), (
+        "Same seed should produce same assignment"
+    )
 
 
 def test_assign_sparsity_tiers_different_seeds():
     """Test that different seeds produce different assignments."""
     sparsity1 = assign_sparsity_tiers(50, [0.05, 0.20, 0.40], seed=1)
     sparsity2 = assign_sparsity_tiers(50, [0.05, 0.20, 0.40], seed=2)
-    assert not np.array_equal(sparsity1, sparsity2), "Different seeds should produce different assignments"
+    assert not np.array_equal(sparsity1, sparsity2), (
+        "Different seeds should produce different assignments"
+    )
 
 
 def test_assign_sparsity_tiers_single_tier():

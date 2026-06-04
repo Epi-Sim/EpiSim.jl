@@ -73,7 +73,7 @@ class TestIterativePipeline:
         n_profiles = 10
 
         # 1. Full generation
-        full_profiles = gen.generate_parameter_grid(n_profiles=n_profiles)
+        gen.generate_parameter_grid(n_profiles=n_profiles)
 
         # 2. "Partial" generation (simulating the generator's behavior)
         # The generator always calls generate_parameter_grid(n_profiles) fully,
@@ -243,7 +243,7 @@ class TestIterativePipeline:
 
     def test_zarr_appending(self, mock_paths):
         """Functional test for zarr appending."""
-        output_zarr = mock_paths["output"]  # Actually we want a file path
+        mock_paths["output"]  # Actually we want a file path
         zarr_path = os.path.join(mock_paths["output"], "test.zarr")
 
         # We need to simulate the environment process_synthetic_outputs expects.

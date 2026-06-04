@@ -76,7 +76,9 @@ def _run_metadata(ds: xr.Dataset, run_idx: int) -> dict[str, Any]:
     return metadata
 
 
-def load_zarr_samples(path: str | Path, name: str, max_runs: int = 3) -> list[MobilitySample]:
+def load_zarr_samples(
+    path: str | Path, name: str, max_runs: int = 3
+) -> list[MobilitySample]:
     """Load mobility samples from a zarr store.
 
     Supported layouts:
@@ -103,9 +105,13 @@ def load_zarr_samples(path: str | Path, name: str, max_runs: int = 3) -> list[Mo
                 if "run_id" in ds.coords
                 else [str(i) for i in range(run_count)]
             )
-            dates = _as_datetime_index(ds.coords.get("date", None), int(ds.sizes["date"]))
+            dates = _as_datetime_index(
+                ds.coords.get("date", None), int(ds.sizes["date"])
+            )
             origins = _coord_values(ds, ("origin",), int(ds.sizes["origin"]))
-            targets = _coord_values(ds, ("target", "destination"), int(ds.sizes["target"]))
+            targets = _coord_values(
+                ds, ("target", "destination"), int(ds.sizes["target"])
+            )
             for idx, run_id in enumerate(run_ids):
                 arr = (
                     ds["mobility_time_varying"]
@@ -133,7 +139,9 @@ def load_zarr_samples(path: str | Path, name: str, max_runs: int = 3) -> list[Mo
                 if "run_id" in ds.coords
                 else [str(i) for i in range(run_count)]
             )
-            dates = _as_datetime_index(ds.coords.get("date", None), int(ds.sizes["date"]))
+            dates = _as_datetime_index(
+                ds.coords.get("date", None), int(ds.sizes["date"])
+            )
             origins = _coord_values(ds, ("origin",), base.shape[0])
             targets = _coord_values(ds, ("target", "destination"), base.shape[1])
             for idx, run_id in enumerate(run_ids):
@@ -300,12 +308,16 @@ def absolute_metrics(values: np.ndarray, dates: pd.DatetimeIndex) -> dict[str, A
             float(daily_total.std()), float(daily_total.mean())
         ),
         "absolute_weekend_to_weekday_total_ratio": (
-            _safe_ratio(float(daily_total[weekend].mean()), float(daily_total[weekday].mean()))
+            _safe_ratio(
+                float(daily_total[weekend].mean()), float(daily_total[weekday].mean())
+            )
             if np.any(weekend) and np.any(weekday)
             else float("nan")
         ),
         "absolute_dow_total_range_ratio": (
-            _safe_ratio(max(dow_values), min(dow_values)) if dow_values else float("nan")
+            _safe_ratio(max(dow_values), min(dow_values))
+            if dow_values
+            else float("nan")
         ),
     }
     metrics.update(dow_means)
@@ -359,7 +371,9 @@ def routing_metrics(values: np.ndarray, dates: pd.DatetimeIndex) -> dict[str, An
     for t in range(edge_values.shape[0]):
         total = float(edge_values[t].sum())
         if total > 0:
-            top_k_share.append(float(np.partition(edge_values[t], -top_k)[-top_k:].sum() / total))
+            top_k_share.append(
+                float(np.partition(edge_values[t], -top_k)[-top_k:].sum() / total)
+            )
 
     metrics = {
         "routing_active_nonself_edges": int(active_edges.sum()),
@@ -473,7 +487,9 @@ def write_plots(samples: list[MobilitySample], output_dir: Path) -> None:
     for sample in samples:
         nonself = _nonself_mask(sample.values.shape[1], sample.values.shape[2])
         daily_total = sample.values[:, nonself].sum(axis=1)
-        plt.plot(sample.dates, daily_total, marker="o", linewidth=1.5, label=sample.name)
+        plt.plot(
+            sample.dates, daily_total, marker="o", linewidth=1.5, label=sample.name
+        )
     plt.title("Daily Total Off-Diagonal Mobility")
     plt.ylabel("flow")
     plt.xticks(rotation=45, ha="right")
@@ -489,7 +505,9 @@ def write_plots(samples: list[MobilitySample], output_dir: Path) -> None:
         means = []
         labels = []
         for dow, name in enumerate(DOW_NAMES):
-            selected = np.array([date.weekday() == dow for date in sample.dates], dtype=bool)
+            selected = np.array(
+                [date.weekday() == dow for date in sample.dates], dtype=bool
+            )
             if np.any(selected):
                 labels.append(name)
                 means.append(float(daily_total[selected].mean()))
@@ -584,9 +602,15 @@ def main() -> None:
     args = parser.parse_args()
 
     samples = load_zarr_samples(args.real_zarr, "real", max_runs=1)
-    samples.extend(generate_ipfp_samples(samples[0], parse_sigma_values(args.sigma_values), args.seed))
+    samples.extend(
+        generate_ipfp_samples(
+            samples[0], parse_sigma_values(args.sigma_values), args.seed
+        )
+    )
     if args.synthetic_zarr:
-        samples.extend(load_zarr_samples(args.synthetic_zarr, "synthetic", args.max_runs))
+        samples.extend(
+            load_zarr_samples(args.synthetic_zarr, "synthetic", args.max_runs)
+        )
 
     summaries = [summarize_sample(sample) for sample in samples]
     if args.output_dir:

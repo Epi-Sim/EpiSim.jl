@@ -339,7 +339,6 @@ class TestValidateProfileParameters:
             "r0_scale": 0.8,  # Below 1.0 but above old minimum
             "alpha_scale": 1.0,
             "ratio_beta_a": 0.5,
-            "ratio_beta_a": 0.5,
         }
         result = mock_generator.validate_profile_parameters(profile)
         assert result is True

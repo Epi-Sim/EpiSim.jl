@@ -26,6 +26,7 @@ except ImportError as e:
         f"Schema validation tests will be skipped. "
         f"Install with: pip install jsonschema",
         ImportWarning,
+        stacklevel=2,
     )
     SCHEMA_AVAILABLE = False
 

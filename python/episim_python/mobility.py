@@ -65,9 +65,7 @@ class MobilityGenerator:
         else:
             # Dense format: need to extract edgelist
             if edgelist is None:
-                raise ValueError(
-                    "edgelist must be provided when baseline_R is dense"
-                )
+                raise ValueError("edgelist must be provided when baseline_R is dense")
             self.edgelist = np.asarray(edgelist, dtype=np.int64)
             self.baseline_R = self._dense_to_sparse(
                 np.asarray(baseline_R), self.edgelist
@@ -104,14 +102,16 @@ class MobilityGenerator:
         origins = self.edgelist[:, 0]
         destinations = self.edgelist[:, 1]
         self._origin_to_edges = {i: np.where(origins == i)[0] for i in range(self.M)}
-        self._destination_to_edges = {j: np.where(destinations == j)[0] for j in range(self.M)}
+        self._destination_to_edges = {
+            j: np.where(destinations == j)[0] for j in range(self.M)
+        }
         self._self_edge_mask = origins == destinations
         self._nonself_edge_mask = ~self._self_edge_mask
         nonself_weights = self.baseline_R[self._nonself_edge_mask]
         if len(nonself_weights) > 0:
             weak_threshold = np.nanpercentile(nonself_weights, 35)
-            self._weak_nonself_edge_mask = (
-                self._nonself_edge_mask & (self.baseline_R <= weak_threshold)
+            self._weak_nonself_edge_mask = self._nonself_edge_mask & (
+                self.baseline_R <= weak_threshold
             )
         else:
             self._weak_nonself_edge_mask = np.zeros_like(self.baseline_R, dtype=bool)
@@ -168,9 +168,7 @@ class MobilityGenerator:
         """Determine number of patches from edgelist."""
         return int(np.max(self.edgelist) + 1)
 
-    def _compute_marginals(
-        self, R: np.ndarray
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    def _compute_marginals(self, R: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """
         Compute origin (outflow) and destination (inflow) marginals (vectorized).
 
@@ -209,25 +207,19 @@ class MobilityGenerator:
             D_t: Noisy destination marginals (balanced to match O_t sum)
         """
         if rng is None:
-            seed = (
-                None if self.rng_seed is None else self.rng_seed + t
-            )
+            seed = None if self.rng_seed is None else self.rng_seed + t
             rng = np.random.default_rng(seed)
 
         # Generate unbiased lognormal noise
         if self.sigma_O > 0:
             noise_O = rng.standard_normal(self.M)
-            O_t = self.O_base * np.exp(
-                noise_O * self.sigma_O - (self.sigma_O**2 / 2)
-            )
+            O_t = self.O_base * np.exp(noise_O * self.sigma_O - (self.sigma_O**2 / 2))
         else:
             O_t = self.O_base.copy()
 
         if self.sigma_D > 0:
             noise_D = rng.standard_normal(self.M)
-            D_t = self.D_base * np.exp(
-                noise_D * self.sigma_D - (self.sigma_D**2 / 2)
-            )
+            D_t = self.D_base * np.exp(noise_D * self.sigma_D - (self.sigma_D**2 / 2))
         else:
             D_t = self.D_base.copy()
 
@@ -292,7 +284,9 @@ class MobilityGenerator:
 
     def _calendar_masks(self, rng: np.random.Generator):
         weekend_candidates = self._nonself_edge_mask.copy()
-        weekend_edge_mask = weekend_candidates & (rng.random(len(self.baseline_R)) < 0.5)
+        weekend_edge_mask = weekend_candidates & (
+            rng.random(len(self.baseline_R)) < 0.5
+        )
         if self._edge_class_enabled:
             # Markov state determines off edges (all non-stable classes)
             intermit_edge_mask = (~self._edge_active_state) & (self._edge_class >= 1)
@@ -330,7 +324,9 @@ class MobilityGenerator:
             if np.any(intermit_edge_mask):
                 B_t[intermit_edge_mask] *= self.off_damping
         elif self.intermit_prob > 0 and np.any(intermit_edge_mask):
-            active_today = intermit_edge_mask & (rng.random(len(B_t)) < self.intermit_prob)
+            active_today = intermit_edge_mask & (
+                rng.random(len(B_t)) < self.intermit_prob
+            )
             B_t[active_today] *= 0.02
 
         return np.maximum(B_t, 0.0)
@@ -394,7 +390,9 @@ class MobilityGenerator:
             if np.any(intermit_edge_mask):
                 adjusted[intermit_edge_mask] *= self.off_damping
         elif self.intermit_prob > 0 and np.any(intermit_edge_mask):
-            active_today = intermit_edge_mask & (rng.random(len(adjusted)) < self.intermit_prob)
+            active_today = intermit_edge_mask & (
+                rng.random(len(adjusted)) < self.intermit_prob
+            )
             adjusted[active_today] *= 0.02
 
         # Edge noise: per-class when edge classes enabled, global otherwise
@@ -414,16 +412,13 @@ class MobilityGenerator:
             adjusted[self._nonself_edge_mask] *= noise[self._nonself_edge_mask]
         elif base_sigma > 0:
             noise = np.exp(
-                rng.normal(0.0, base_sigma, len(adjusted))
-                - (base_sigma**2 / 2)
+                rng.normal(0.0, base_sigma, len(adjusted)) - (base_sigma**2 / 2)
             )
             adjusted[self._nonself_edge_mask] *= noise[self._nonself_edge_mask]
 
         return self._normalize_sparse_rows(np.maximum(adjusted, 0.0))
 
-    def _generate_calendar_series(
-        self, T: int, rng: np.random.Generator
-    ) -> np.ndarray:
+    def _generate_calendar_series(self, T: int, rng: np.random.Generator) -> np.ndarray:
         """Generate a calendar-aware IPFP mobility series."""
         R_series = np.zeros((T, len(self.baseline_R)), dtype=np.float64)
         if self._edge_class_enabled:
@@ -551,9 +546,7 @@ class MobilityGenerator:
 
         return R_t
 
-    def generate_series(
-        self, T: int, rng_seed: Optional[int] = None
-    ) -> np.ndarray:
+    def generate_series(self, T: int, rng_seed: Optional[int] = None) -> np.ndarray:
         """
         Generate a full time series of mobility matrices.
 
@@ -717,10 +710,10 @@ class MobilityValidator:
 
         # Check for negative values
         if np.any(R_series < -MobilityValidator.TOLERANCE_NON_NEGATIVE):
-            negative_count = np.sum(R_series < -MobilityValidator.TOLERANCE_NON_NEGATIVE)
-            errors.append(
-                f"Found {negative_count} negative values in mobility series"
+            negative_count = np.sum(
+                R_series < -MobilityValidator.TOLERANCE_NON_NEGATIVE
             )
+            errors.append(f"Found {negative_count} negative values in mobility series")
             return False, errors
 
         # Check row-stochasticity for each timestep
@@ -735,8 +728,8 @@ class MobilityValidator:
         # Check population conservation for each timestep
         for t in range(T):
             R_t = R_series[t]
-            is_conserved, cons_errors = MobilityValidator._validate_population_conservation(
-                R_t, edgelist, M
+            is_conserved, cons_errors = (
+                MobilityValidator._validate_population_conservation(R_t, edgelist, M)
             )
             if not is_conserved:
                 errors.extend([f"[t={t}] {e}" for e in cons_errors])
