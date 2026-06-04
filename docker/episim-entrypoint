@@ -1,0 +1,22 @@
+#!/bin/sh
+set -eu
+
+if [ "$#" -eq 0 ] || [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+    exec episim --help
+fi
+
+case "$1" in
+    run|setup|init)
+        exec episim "$@"
+        ;;
+    batch)
+        shift
+        exec episim-batch "$@"
+        ;;
+    episim|episim-batch|julia|python|python3|bash|sh)
+        exec "$@"
+        ;;
+    *)
+        exec episim "$@"
+        ;;
+esac

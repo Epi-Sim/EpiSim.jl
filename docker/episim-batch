@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+
+exec julia --project="${JULIA_PROJECT:-/opt/episim}" /opt/episim/src/batch_run.jl "$@"

@@ -53,6 +53,7 @@ jobs:
       uses: docker/build-push-action@v5
       with:
         context: .
+        target: episim-runtime
         push: true
         tags: ${{ steps.meta.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}
@@ -61,6 +62,8 @@ jobs:
         platforms: linux/amd64
         build-args: |
           SHOULD_COMPILE=true
+          OCI_REVISION=${{ github.sha }}
+          OCI_VERSION=${{ steps.meta.outputs.version }}
 
     - name: Sign the published Docker image
       env:

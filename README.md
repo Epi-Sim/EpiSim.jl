@@ -39,10 +39,30 @@ A `Dockerfile` is provided for building and running the application in a contain
 
 **Building the Image:**
 
-To build the default image, run:
+To build the default x86 Linux image from this workspace, use the `laptop-home` Docker daemon:
 
 ```bash
-docker build -t episim .
+docker -H ssh://laptop-home build --target episim-runtime --build-arg SHOULD_COMPILE=true -t episim .
+```
+
+For CI validation, build the test target instead:
+
+```bash
+docker -H ssh://laptop-home build --target episim-test --build-arg SHOULD_COMPILE=true -t episim-test .
+```
+
+If you are building on another host, make sure the Docker daemon targets `linux/amd64`; this image intentionally installs the x86_64 Julia runtime.
+
+**Container Command Contract:**
+
+The runtime image uses `episim-entrypoint` as its entrypoint. The stable simulator command is `/usr/local/bin/episim`; batch execution is exposed as `/usr/local/bin/episim-batch`.
+
+```bash
+docker run --rm episim run -c /data/config.json -d /data -i /work/run
+docker run --rm episim setup -n model -M 10 -G 3 -o /work/models
+docker run --rm episim init -c /data/config.json -d /data --seeds /data/seeds.csv -o /work/initial_conditions.nc
+docker run --rm episim batch --batch-folder /work/batch --data-folder /data
+docker run --rm --entrypoint bash episim
 ```
 
 **Verifying the Image:**

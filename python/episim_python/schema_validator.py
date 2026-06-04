@@ -31,10 +31,9 @@ class SchemaValidator:
                                 If None, uses the default template.
         """
         if schema_template_path is None:
-            # Use default template in the same directory as this file
+            # Use the schema template packaged with episim_python.
             schema_template_path = os.path.join(
                 os.path.dirname(__file__),
-                "..",
                 "episim_schema_template.json",
             )
 
