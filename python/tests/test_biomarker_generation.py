@@ -1036,7 +1036,7 @@ class TestMonitoringStartThreshold:
             rng=np.random.default_rng(42),
         )
 
-        assert np.all(not mask), "All should be False if threshold never reached"
+        assert np.all(~mask), "All should be False if threshold never reached"
 
     def test_negative_threshold_raises_error(self):
         """Negative threshold should raise ValueError."""

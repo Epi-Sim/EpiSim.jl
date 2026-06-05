@@ -27,6 +27,7 @@ RUN set -eux; \
     echo "${JULIA_SHA256}  /tmp/julia.tar.gz" | sha256sum -c -; \
     mkdir -p "${JULIA_HOME}"; \
     tar -xzf /tmp/julia.tar.gz -C "${JULIA_HOME}" --strip-components=1; \
+    ln -sf "${JULIA_HOME}/bin/julia" /usr/local/bin/julia; \
     rm /tmp/julia.tar.gz; \
     julia --version
 
