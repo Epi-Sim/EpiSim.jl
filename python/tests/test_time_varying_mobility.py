@@ -18,6 +18,7 @@ network requirements. To run them, ensure you have network access and run:
 """
 
 import os
+import shutil
 import tempfile
 from datetime import datetime, timedelta
 from typing import ClassVar
@@ -49,10 +50,7 @@ class TestTimeVaryingMobility:
     REGION_IDS: ClassVar[list[str]] = ["00000", "00001", "00002", "00003"]
     AGE_GROUPS: ClassVar[list[str]] = ["Y", "M", "O"]
 
-    # Path to actual Julia binary (not launcher) - avoid network access issues
-    JULIA_BINARY = (
-        "/Users/lewis/.julia/juliaup/julia-1.11.5+0.aarch64.apple.darwin14/bin/julia"
-    )
+    JULIA_BINARY_ENV: ClassVar[str] = "EPISIM_TEST_JULIA_BINARY"
 
     @pytest.fixture
     def temp_workspace(self):
@@ -391,9 +389,12 @@ class TestTimeVaryingMobility:
         # Setup model with actual Julia binary (not launcher) to avoid network access
         model.setup(executable_type="interpreter")
 
-        # Override with actual Julia binary path to bypass julialauncher
+        # Use the Julia binary available in the current environment. Developers
+        # can set EPISIM_TEST_JULIA_BINARY to bypass julialauncher locally.
         script_path = os.path.join(project_root, "src", "run.jl")
-        model.executable_path = [self.JULIA_BINARY, script_path]
+        julia_binary = os.environ.get(self.JULIA_BINARY_ENV) or shutil.which("julia")
+        if julia_binary:
+            model.executable_path = [julia_binary, script_path]
 
         # Run simulation
         start_date = config["simulation"]["start_date"]
