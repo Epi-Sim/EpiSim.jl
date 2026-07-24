@@ -135,7 +135,7 @@ function execute_run(args)
     @assert isdir(data_path);
     @assert isdir(instance_path);
     
-    config = JSON.parsefile(config_fname);
+    config = JSON.parsefile(config_fname, dicttype=Dict{String, Any});
     update_config!(config, args)
     engine = validate_config(config)
 
@@ -239,7 +239,7 @@ end
 ## Auxiliary functions
 ## ------------------------------------------------------------
 
-
+## TODO : addd this functions for EpiCommute engine
 
 function create_initial_conditions(engine::MMCACovid19VacEngine, M_coords::Array{String}, G_coords::Array{String}, nᵢᵍ, conditions₀, patches_idxs, output_fname::String)
     
