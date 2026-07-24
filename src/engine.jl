@@ -40,7 +40,15 @@ function validate_config(config, ::MMCACovid19Engine)
     @assert haskey(config, "NPI") 
 end
 
-function read_input_files(::AbstractEngine, config::Dict, data_path::String, instance_path::String)
+function validate_config(config, ::EpiCommuteEngine)
+    @assert haskey(config, "simulation")
+    @assert haskey(config, "data")
+    @assert haskey(config, "epidemic_params")
+    @assert haskey(config, "population_params")
+    @assert haskey(config, "NPI") 
+end
+
+function read_input_files(engine::AbstractEngine, config::Dict, data_path::String, instance_path::String)
     data_dict       = config["data"]
     simulation_dict = config["simulation"]
     pop_params_dict = config["population_params"]
@@ -59,11 +67,15 @@ function read_input_files(::AbstractEngine, config::Dict, data_path::String, ins
     # Containment measures
     #########################################################
 
+    
     # Daily Mobility reduction
     kappa0_filename = get(data_dict, "kappa0_filename", nothing)
     first_day = Date(simulation_dict["start_date"])
-    npi_params = init_NPI_parameters_struct(data_path, npi_params_dict, kappa0_filename, first_day)
-
+    if engine isa EpiCommuteEngine
+        npi_params = EpiCommute.init_NPI_parameters_struct(data_path, npi_params_dict, nothing, first_day)    
+    else 
+        npi_params = MMCACovid19Vac.init_NPI_parameters_struct(data_path, npi_params_dict, kappa0_filename, first_day)
+    end
     # Loading mobility network
     mobility_matrix_filename = joinpath(data_path, data_dict["mobility_matrix_filename"])
     network_df  = CSV.read(mobility_matrix_filename, DataFrame)
@@ -162,6 +174,13 @@ function create_initial_compartments_dict(engine::MMCACovid19Engine, M_coords::A
     return init_compartments_dict
 end
 
+function create_initial_compartments_dict(engine::EpiCommuteEngine, M_coords::Array{String}, G_coords::Array{String}, nᵢᵍ::Array{Float64,2}, conditions₀, patches_idxs)
+
+    init_compartments_dict = EpiCommute.create_initial_compartments_dict(M_coords, G_coords, nᵢᵍ, conditions₀, patches_idxs)
+
+    return init_compartments_dict
+end
+
 
 
 # elseif init_format == "hdf5"
@@ -239,7 +258,12 @@ function run_engine_io(engine::AbstractEngine, config::Dict, data_path::String, 
 
     coords = Dict(:T_coords => T_coords, :G_coords => G_coords, :M_coords => M_coords)
 
-    n_compartments = 11
+    if engine isa EpiCommuteEngine
+        n_compartments = 3
+    else
+        n_compartments = 11
+    end
+    
 
     export_date = nothing
     if time_step_to_save !== nothing
@@ -247,7 +271,7 @@ function run_engine_io(engine::AbstractEngine, config::Dict, data_path::String, 
             time_step_to_save = T
         end
         if time_step_to_save > T
-            @error "Can't save simulation step ($(time_step_to_save)) largest then the last time step ($(T))"
+            @error "Can't save simulation step (init_population_struct$(time_step_to_save)) largest then the last time step ($(T))"
             return 1
         elseif time_step_to_save < 1
             @error "Can't save simulation step ($(time_step_to_save)) smaller then the first time step (1)"
@@ -385,6 +409,14 @@ function init_population_struct(engine::MMCACovid19Engine, G::Int, M::Int,
     return population
 end
 
+function init_population_struct(engine::EpiCommuteEngine, G::Int, M::Int, 
+                                G_coords::Array{String, 1}, pop_params_dict::Dict, 
+                                network_df::DataFrame, metapop_df::DataFrame)
+
+    population = EpiCommute.init_pop_param_struct(G, M, G_coords, pop_params_dict, metapop_df, network_df)
+    return population
+end
+
 """
 Funtion to initialize the epidemic parameters structure for the engine MMCACovid19VacEngine
     Params:
@@ -457,6 +489,14 @@ function init_epidemic_parameters_struct(engine::MMCACovid19Engine, G::Int, M::I
     return epi_params
 end
 
+function init_epidemic_parameters_struct(engine::EpiCommuteEngine, G::Int, M::Int, T::Int, 
+    G_coords::Array{String, 1}, epi_params_dict::Dict)
+
+    epi_params = EpiCommute.init_epi_parameters_struct(G, M, T, epi_params_dict)
+    return epi_params
+end
+
+
 """
 Function to set the initial compartments for the engine MMCACovid19VacEngine
     Params:
@@ -466,7 +506,7 @@ Function to set the initial compartments for the engine MMCACovid19VacEngine
         initial_compartments: Array{Float64, 4}
 """
 function set_compartments!(engine::MMCACovid19VacEngine, epi_params::MMCACovid19Vac.Epidemic_Params, 
-                          population::MMCACovid19Vac.Population_Params, npi_params::NPI_Params,
+                        population::MMCACovid19Vac.Population_Params, npi_params::MMCACovid19Vac.NPI_Params,
                            initial_compartments_dict::Dict{String, Array{Float64, 3}}; scale_by_population = true)
     G = population.G
     M = population.M
@@ -529,7 +569,7 @@ Function to set the initial compartments for the engine MMCACovid19Engine
         initial_compartments: Array{Float64, 3}
 """
 function set_compartments!(engine::MMCACovid19Engine, epi_params::MMCAcovid19.Epidemic_Params, 
-                          population::MMCAcovid19.Population_Params, npi_params::NPI_Params,
+                          population::MMCAcovid19.Population_Params, npi_params::MMCACovid19Vac.NPI_Params,
                           initial_compartments_dict::Dict{String, Array{Float64, 2}}; scale_by_population = true)
 
     n_compartments = 11
@@ -580,11 +620,34 @@ function set_compartments!(engine::MMCACovid19Engine, epi_params::MMCAcovid19.Ep
 
 end
 
+function set_compartments!(engine::EpiCommuteEngine, epi_params::EpiCommute.Epidemic_Params, 
+                          population::EpiCommute.Population_Params, npi_params::EpiCommute.NPI_Params,
+                           initial_compartments_dict::Dict{String, Matrix{Float64}}; scale_by_population = true)
+    M = population.M
+    # Expect arrays or scalars
+    S0 = haskey(initial_compartments_dict, "S") ? initial_compartments_dict["S"] : population.nᵢ
+    I0 = haskey(initial_compartments_dict, "I") ? initial_compartments_dict["I"] : zeros(Float64, M)
+    R0 = haskey(initial_compartments_dict, "R") ? initial_compartments_dict["R"] : zeros(Float64, M)
+
+    for i in 1:M
+        if scale_by_population
+            denom = population.nᵢ[i] > 0 ? population.nᵢ[i] : 1.0
+            epi_params.ρˢ[i, 1] = S0[i] / denom
+            epi_params.ρᴵ[i, 1] = I0[i] / denom
+            epi_params.ρᴿ[i, 1] = R0[i] / denom
+        else
+            epi_params.ρˢ[i, 1] = S0[i]
+            epi_params.ρᴵ[i, 1] = I0[i]
+            epi_params.ρᴿ[i, 1] = R0[i]
+        end
+    end
+end
+
 """
 Run the engine using Julia data structures as inputs. Does not save the output to file.
 """
 function run_engine!(engine::MMCACovid19VacEngine, population::MMCACovid19Vac.Population_Params, 
-                     epi_params::MMCACovid19Vac.Epidemic_Params, npi_params::NPI_Params; 
+                     epi_params::MMCACovid19Vac.Epidemic_Params, npi_params::MMCACovid19Vac.NPI_Params; 
                      verbose = false, vac_params_dict = nothing)
     
 
@@ -617,7 +680,7 @@ end
 Run the engine using Julia data structures as inputs. Does not save the output to file.
 """
 function run_engine!(engine::MMCACovid19Engine, population::MMCAcovid19.Population_Params, 
-                     epi_params::MMCAcovid19.Epidemic_Params, npi_params::NPI_Params; 
+                     epi_params::MMCAcovid19.Epidemic_Params, npi_params::MMCACovid19Vac.NPI_Params; 
                      verbose = false, vac_params_dict = nothing)
     
     
@@ -636,3 +699,12 @@ function run_engine!(engine::MMCACovid19Engine, population::MMCAcovid19.Populati
 
     MMCAcovid19.run_epidemic_spreading_mmca!(epi_params, population, tᶜs, κ₀s, ϕs, δs, verbose=verbose)
 end
+
+function run_engine!(engine::EpiCommuteEngine, population::EpiCommute.Population_Params, 
+                     epi_params::EpiCommute.Epidemic_Params, npi_params::EpiCommute.NPI_Params; 
+                     verbose = false, vac_params_dict = nothing)
+    
+    
+    EpiCommute.run_epidemic_spreading!(epi_params, population, npi_params, verbose=verbose)
+end
+
