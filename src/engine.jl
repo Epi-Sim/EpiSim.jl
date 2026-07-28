@@ -186,8 +186,13 @@ function create_initial_compartments_dict(engine::MMCACovid19Engine, M_coords::A
     return init_compartments_dict
 end
 
-function create_initial_compartments_dict(engine::EpiCommuteEngine, M_coords::Array{String}, G_coords::Array{String}, nᵢᵍ::Array{Float64,2}, conditions₀, patches_idxs)
+function create_initial_compartments_dict(engine::EpiCommuteEngine, M_coords::Array{String}, G_coords::Array{String}, nᵢᵍ::Array{Float64,2}, conditions₀, patches_idxs; scale_seeds = nothing)
 
+    if scale_seeds !== nothing
+        @info "- Scaling initial seeds by factor $(scale_seeds)"
+        conditions₀ .= conditions₀ .* scale_seeds
+    end
+    
     init_compartments_dict = EpiCommute.create_initial_compartments_dict(M_coords, G_coords, nᵢᵍ, conditions₀, patches_idxs)
 
     return init_compartments_dict
