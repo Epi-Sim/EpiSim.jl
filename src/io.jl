@@ -470,3 +470,30 @@ function save_observables(engine::MMCACovid19Engine,
     end
     @debug "- Done saving"
 end
+
+function save_full(engine::EpiCommuteEngine, 
+    epi_params::EpiCommute.Epidemic_Params,
+    population::EpiCommute.Population_Params,
+    output_path::String, output_format::Union{String,AbstractOutputFormat}; kwargs...)
+    
+    format = output_format isa String ? get_output_format(output_format) : output_format
+    _save_full(engine, epi_params, population, output_path, format; kwargs...)
+end
+
+function _save_full(engine::EpiCommuteEngine, 
+    epi_params::EpiCommute.Epidemic_Params,
+    population::EpiCommute.Population_Params,
+    output_path::String, ::NetCDFFormat; 
+    G_coords=String[], M_coords=String[], T_coords=String[])
+    
+    
+    filename = joinpath(output_path, "compartments_full.nc")
+    @info "- Saving full simulation output in NetCDF: $filename"
+    try
+        EpiCommute.save_simulation_netCDF(epi_params, population, filename; G_coords, M_coords, T_coords)
+    catch e
+        @error "Error saving simulation output" exception=(e, catch_backtrace())
+        rethrow(e)
+    end
+    @debug "- Done saving"
+end

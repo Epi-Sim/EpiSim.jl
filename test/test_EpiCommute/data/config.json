@@ -1,0 +1,31 @@
+{
+  "simulation":{
+  	"engine": "EpiCommute",
+  	"start_date": "2020-02-09",
+  	"end_date": "2020-05-19",
+	"save_full_output": true,
+	"save_observables": false,
+	"save_time_step": null,
+	"input_format": "csv",
+	"output_folder": "output",
+	"output_format": "netcdf"
+  },
+  "data": {
+  	"initial_condition_filename": "initial_conditions_seeds.csv",
+  	"metapopulation_data_filename": "metapopulation_data.csv",
+  	"mobility_matrix_filename": "mobility.csv"
+  },
+  "epidemic_params":{
+  	"μ": 0.125,
+  	"R₀": 3.0,
+  	"dt": 0.1,
+  	"dt_save": 1	
+  },
+  "population_params":{
+  	 "G_labels": ["total"],
+	 "mobility_baseline_file": "mobility_baseline.csv",
+	 "subpopulation_sizes_file": "subpopulation_sizes.csv"	 
+   },
+   "NPI":{
+   }
+}

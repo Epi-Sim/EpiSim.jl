@@ -4,6 +4,8 @@ module EpiSim
 using ArgParse
 using Dates, Logging, Printf
 using HDF5, DataFrames, NetCDF
+using EpiCommute
+using MMCACovid19Vac
 
 import JSON
 import CSV

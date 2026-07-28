@@ -10,6 +10,8 @@ DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 DelimitedFiles = "8bb1440f-4735-579b-a4ab-409b98df4dab"
+Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
+EpiCommute = "0fa3e503-6bea-467b-bec9-b2c50c656df0"
 HDF5 = "f67ccb44-e63f-5c2f-98bd-6dc0ccc4ba2f"
 JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
@@ -22,10 +24,14 @@ Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [sources]
+EpiCommute = {rev = "main", url = "https://github.com/Epi-Sim/EpiCommute.jl.git"}
 MMCACovid19Vac = {rev = "main", url = "https://github.com/Epi-Sim/MMCACovid19Vac.jl"}
 MMCAcovid19 = {rev = "master", url = "https://github.com/Epi-Sim/MMCAcovid19.jl"}
 
 [compat]
+ArgParse = "1.2.0"
+Distributions = "0.25.127"
+EpiCommute = "0.1.0"
 MMCACovid19Vac = "0.1.1"
 MMCAcovid19 = "0.1.5"
 Test = "1.11.0"
