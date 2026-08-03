@@ -16,7 +16,7 @@ function update_config!(config, cmd_line_args)
     if cmd_line_args["export-compartments-full"] == true
         config["simulation"]["export_compartments_full"] = true
     end
-    if cmd_line_args["initial-condition"] !== nothing
+    if cmd_line_args["initial-condition"] !== nothing && cmd_line_args["initial-condition"] != ""
         config["data"]["initial_condition_filename"] = cmd_line_args["initial-condition"]
     end
 

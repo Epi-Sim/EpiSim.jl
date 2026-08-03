@@ -1,0 +1,392 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "EpiSim Configuration Schema (Template)",
+  "type": "object",
+  "required": [
+    "epidemic_params",
+    "population_params",
+    "simulation",
+    "data"
+  ],
+  "properties": {
+    "simulation": {
+      "type": "object",
+      "required": [
+        "engine",
+        "start_date",
+        "end_date"
+      ],
+      "properties": {
+        "engine": {
+          "type": "string",
+          "enum": [
+            "MMCACovid19",
+            "MMCACovid19Vac"
+          ]
+        },
+        "start_date": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "end_date": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "save_full_output": {
+          "type": "boolean"
+        },
+        "save_observables": {
+          "type": "boolean"
+        },
+        "save_time_step": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": -1
+        },
+        "output_folder": {
+          "type": "string"
+        },
+        "output_format": {
+          "type": "string",
+          "enum": [
+            "netcdf",
+            "csv",
+            "hdf5"
+          ]
+        },
+        "input_format": {
+          "type": "string",
+          "enum": [
+            "csv",
+            "netcdf"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "data": {
+      "type": "object",
+      "required": [
+        "initial_condition_filename",
+        "metapopulation_data_filename",
+        "mobility_matrix_filename"
+      ],
+      "properties": {
+        "initial_condition_filename": {
+          "type": "string"
+        },
+        "metapopulation_data_filename": {
+          "type": "string"
+        },
+        "mobility_matrix_filename": {
+          "type": "string"
+        },
+        "kappa0_filename": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "epidemic_params": {
+      "type": "object",
+      "properties": {
+        "scale_β": {
+          "type": "number",
+          "minimum": 0
+        },
+        "βᴬ": {
+          "type": "number",
+          "minimum": 0
+        },
+        "βᴵ": {
+          "type": "number",
+          "minimum": 0
+        },
+        "ηᵍ": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0
+          },
+          "minItems": "{GROUP_SIZE}",
+          "maxItems": "{GROUP_SIZE}"
+        },
+        "αᵍ": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0
+          },
+          "minItems": "{GROUP_SIZE}",
+          "maxItems": "{GROUP_SIZE}"
+        },
+        "μᵍ": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0
+          },
+          "minItems": "{GROUP_SIZE}",
+          "maxItems": "{GROUP_SIZE}"
+        },
+        "θᵍ": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0
+          },
+          "minItems": "{GROUP_SIZE}",
+          "maxItems": "{GROUP_SIZE}"
+        },
+        "γᵍ": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0
+          },
+          "minItems": "{GROUP_SIZE}",
+          "maxItems": "{GROUP_SIZE}"
+        },
+        "ζᵍ": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0
+          },
+          "minItems": "{GROUP_SIZE}",
+          "maxItems": "{GROUP_SIZE}"
+        },
+        "λᵍ": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0
+          },
+          "minItems": "{GROUP_SIZE}",
+          "maxItems": "{GROUP_SIZE}"
+        },
+        "ωᵍ": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0
+          },
+          "minItems": "{GROUP_SIZE}",
+          "maxItems": "{GROUP_SIZE}"
+        },
+        "ψᵍ": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0
+          },
+          "minItems": "{GROUP_SIZE}",
+          "maxItems": "{GROUP_SIZE}"
+        },
+        "χᵍ": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0
+          },
+          "minItems": "{GROUP_SIZE}",
+          "maxItems": "{GROUP_SIZE}"
+        },
+        "Λ": {
+          "type": "number",
+          "minimum": 0
+        },
+        "Γ": {
+          "type": "number",
+          "minimum": 0
+        },
+        "rᵛ": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "minItems": "{GROUP_SIZE}",
+          "maxItems": "{GROUP_SIZE}"
+        },
+        "kᵛ": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "minItems": "{GROUP_SIZE}",
+          "maxItems": "{GROUP_SIZE}"
+        },
+        "risk_reduction_dd": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "risk_reduction_h": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "risk_reduction_d": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "population_params": {
+      "type": "object",
+      "required": [
+        "G_labels"
+      ],
+      "properties": {
+        "G_labels": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "C": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "minimum": 0
+            },
+            "minItems": "{GROUP_SIZE}",
+            "maxItems": "{GROUP_SIZE}"
+          },
+          "minItems": "{GROUP_SIZE}",
+          "maxItems": "{GROUP_SIZE}"
+        },
+        "kᵍ": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0
+          },
+          "minItems": "{GROUP_SIZE}",
+          "maxItems": "{GROUP_SIZE}"
+        },
+        "kᵍ_h": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0
+          },
+          "minItems": "{GROUP_SIZE}",
+          "maxItems": "{GROUP_SIZE}"
+        },
+        "kᵍ_w": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0
+          },
+          "minItems": "{GROUP_SIZE}",
+          "maxItems": "{GROUP_SIZE}"
+        },
+        "pᵍ": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "minItems": "{GROUP_SIZE}",
+          "maxItems": "{GROUP_SIZE}"
+        },
+        "ξ": {
+          "type": "number",
+          "minimum": 0
+        },
+        "σ": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "NPI": {
+      "type": "object",
+      "properties": {
+        "κ₀s": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        },
+        "ϕs": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        },
+        "δs": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        },
+        "tᶜs": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "are_there_npi": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "vaccination": {
+      "type": "object",
+      "properties": {
+        "ϵᵍ": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "minItems": "{GROUP_SIZE}",
+          "maxItems": "{GROUP_SIZE}"
+        },
+        "percentage_of_vacc_per_day": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "start_vacc": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "dur_vacc": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "are_there_vaccines": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": true
+}
